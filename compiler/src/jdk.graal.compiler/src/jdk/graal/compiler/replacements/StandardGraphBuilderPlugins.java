@@ -186,6 +186,7 @@ import jdk.graal.compiler.nodes.util.ConstantFoldUtil;
 import jdk.graal.compiler.nodes.util.ConstantReflectionUtil;
 import jdk.graal.compiler.nodes.util.GraphUtil;
 import jdk.graal.compiler.nodes.virtual.EnsureVirtualizedNode;
+import jdk.graal.compiler.replacements.arrayfill.ArrayFillNode;
 import jdk.graal.compiler.replacements.nodes.AESNode;
 import jdk.graal.compiler.replacements.nodes.AESNode.CryptMode;
 import jdk.graal.compiler.replacements.nodes.ArrayEqualsNode;
@@ -412,6 +413,29 @@ public class StandardGraphBuilderPlugins {
         });
     }
 
+    public static class ArrayFillInvocationPlugin extends InvocationPlugin {
+        private final JavaKind kind;
+
+        public ArrayFillInvocationPlugin(JavaKind kind, Type... argumentTypes) {
+            super("fill", argumentTypes);
+            this.kind = kind;
+        }
+
+        @SuppressWarnings("try")
+        @Override
+        public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode arg1, ValueNode value) {
+            if (!b.canMergeIntrinsicReturns()) {
+                return false;
+            }
+            try (InvocationPluginHelper helper = new InvocationPluginHelper(b, targetMethod)) {
+                ValueNode nonNullArray = b.nullCheckedValue(arg1, DeoptimizationAction.None);
+                ValueNode arrayLength = b.add(new ArrayLengthNode(nonNullArray));
+                b.append(new ArrayFillNode(nonNullArray, arrayLength, value, this.kind, b.bci()));
+            }
+            return true;
+        }
+    }
+
     public static class ArrayEqualsInvocationPlugin extends InvocationPlugin {
         private final JavaKind kind;
 
@@ -505,6 +529,9 @@ public class StandardGraphBuilderPlugins {
         r.register(new ArrayEqualsInvocationPlugin(JavaKind.Char, char[].class, char[].class));
         r.register(new ArrayEqualsInvocationPlugin(JavaKind.Int, int[].class, int[].class));
         r.register(new ArrayEqualsInvocationPlugin(JavaKind.Long, long[].class, long[].class));
+
+        r.register(new ArrayFillInvocationPlugin(JavaKind.Byte, byte[].class, byte.class));
+        r.register(new ArrayFillInvocationPlugin(JavaKind.Int, int[].class, int.class));
     }
 
     private static void registerArrayPlugins(InvocationPlugins plugins, Replacements replacements) {

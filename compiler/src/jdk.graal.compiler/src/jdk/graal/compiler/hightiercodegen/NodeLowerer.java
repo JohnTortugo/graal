@@ -97,6 +97,7 @@ import jdk.graal.compiler.nodes.java.StoreFieldNode;
 import jdk.graal.compiler.nodes.java.StoreIndexedNode;
 import jdk.graal.compiler.nodes.memory.ReadNode;
 import jdk.graal.compiler.nodes.spi.ValueProxy;
+import jdk.graal.compiler.replacements.arrayfill.ArrayFillNode;
 import jdk.graal.compiler.replacements.nodes.ArrayEqualsNode;
 import jdk.graal.compiler.replacements.nodes.BasicArrayCopyNode;
 import jdk.graal.compiler.replacements.nodes.BinaryMathIntrinsicNode;
@@ -257,6 +258,8 @@ public abstract class NodeLowerer {
             lower((InstanceOfDynamicNode) node);
         } else if (node instanceof ArrayEqualsNode) {
             lower((ArrayEqualsNode) node);
+        } else if (node instanceof ArrayFillNode) {
+            lower((ArrayFillNode) node);
         } else if (node instanceof NewMultiArrayNode) {
             lower((NewMultiArrayNode) node);
         } else if (node instanceof ObjectClone) {
@@ -406,6 +409,8 @@ public abstract class NodeLowerer {
     protected abstract void lower(NewMultiArrayNode node);
 
     protected abstract void lower(ArrayEqualsNode node);
+
+    protected abstract void lower(ArrayFillNode node);
 
     protected abstract void lower(InstanceOfDynamicNode node);
 

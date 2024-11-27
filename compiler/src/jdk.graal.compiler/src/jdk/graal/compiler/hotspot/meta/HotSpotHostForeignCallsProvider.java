@@ -137,6 +137,7 @@ import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.replacements.StringLatin1InflateNode;
 import jdk.graal.compiler.replacements.StringUTF16CompressNode;
 import jdk.graal.compiler.replacements.arraycopy.ArrayCopyForeignCalls;
+import jdk.graal.compiler.replacements.arrayfill.ArrayFillForeignCalls;
 import jdk.graal.compiler.replacements.nodes.AESNode;
 import jdk.graal.compiler.replacements.nodes.ArrayCompareToForeignCalls;
 import jdk.graal.compiler.replacements.nodes.ArrayCopyWithConversionsForeignCalls;
@@ -686,6 +687,7 @@ public abstract class HotSpotHostForeignCallsProvider extends HotSpotForeignCall
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayIndexOfForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayEqualsForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayEqualsWithMaskForeignCalls.STUBS);
+        linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayFillForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayCompareToForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayRegionCompareToForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayCopyWithConversionsForeignCalls.STUBS);

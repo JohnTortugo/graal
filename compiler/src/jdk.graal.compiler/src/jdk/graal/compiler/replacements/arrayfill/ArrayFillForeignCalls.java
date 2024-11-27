@@ -24,8 +24,35 @@
  */
 package jdk.graal.compiler.replacements.arrayfill;
 
+import jdk.graal.compiler.core.common.LIRKind;
+import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;
+import jdk.graal.compiler.core.common.spi.ForeignCallLinkage;
+import jdk.graal.compiler.core.common.spi.ForeignCallSignature;
 import jdk.graal.compiler.core.common.spi.ForeignCallsProvider;
+import jdk.vm.ci.meta.JavaKind;
 
-public interface ArrayFillForeignCalls extends ForeignCallsProvider, ArrayFillLookup {
+public final class ArrayFillForeignCalls {
+    private static final ForeignCallDescriptor STUB_BYTE_ARRAY_FILL = ForeignCalls.pureFunctionForeignCallDescriptor("byteArrayFill", void.class, Pointer.class, int.class, byte.class);
+    private static final ForeignCallDescriptor STUB_INT_ARRAY_FILL = ForeignCalls.pureFunctionForeignCallDescriptor("intArrayFill", void.class, Pointer.class, int.class, int.class);
+
+    public static final ForeignCallDescriptor[] STUBS = {
+                    STUB_BYTE_ARRAY_FILL,
+                    STUB_INT_ARRAY_FILL,
+    };
+
+    public static ForeignCallDescriptor getArrayFillStub(ArrayFillNode arrayFillNode) {
+        JavaKind kind = arrayFillNode.getElementKind();
+        switch (kind) {
+            case Byte:
+                return STUB_BYTE_ARRAY_FILL;
+            case Int:
+                return STUB_INT_ARRAY_FILL;
+            default:
+                return null;
+        }
+    }
+
+    ForeignCallDescriptor lookupArrayfillDescriptor(JavaKind kind, boolean aligned, boolean disjoint, boolean uninit, LocationIdentity killedLocation) {
+    }
 
 }
