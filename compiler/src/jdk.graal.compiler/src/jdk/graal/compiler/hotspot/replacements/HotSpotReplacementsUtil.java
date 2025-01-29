@@ -685,6 +685,26 @@ public class HotSpotReplacementsUtil {
         return config.g1SATBQueueBufferOffset;
     }
 
+    @Fold
+    public static int shenandoahSATBQueueMarkingOffset(@InjectedParameter GraalHotSpotVMConfig config) {
+        return config.shenandoahSATBQueueMarkingOffset;
+    }
+
+    @Fold
+    public static int shenandoahSATBQueueIndexOffset(@InjectedParameter GraalHotSpotVMConfig config) {
+        return config.shenandoahSATBQueueIndexOffset;
+    }
+
+    @Fold
+    public static int shenandoahSATBQueueBufferOffset(@InjectedParameter GraalHotSpotVMConfig config) {
+        return config.shenandoahSATBQueueBufferOffset;
+    }
+
+    @Fold
+    public static int shenandoahGCStateOffset(@InjectedParameter GraalHotSpotVMConfig config) {
+        return config.shenandoahGCStateOffset;
+    }
+
     public static final LocationIdentity KLASS_SUPER_CHECK_OFFSET_LOCATION = NamedLocationIdentity.immutable("Klass::_super_check_offset");
 
     @Fold
@@ -1046,12 +1066,22 @@ public class HotSpotReplacementsUtil {
         return "referent";
     }
 
+    @Fold
+    public static ResolvedJavaType referenceType(@InjectedParameter MetaAccessProvider metaAccessProvider) {
+        return metaAccessProvider.lookupJavaType(Reference.class);
+    }
+
     public static long referentOffset(@InjectedParameter MetaAccessProvider metaAccessProvider) {
         return referentField(metaAccessProvider).getOffset();
     }
 
     public static ResolvedJavaField referentField(@InjectedParameter MetaAccessProvider metaAccessProvider) {
         return getField(metaAccessProvider.lookupJavaType(Reference.class), referentFieldName());
+    }
+
+    @Fold
+    public static int arrayIndexScale(@InjectedParameter MetaAccessProvider metaAccessProvider, JavaKind elementKind) {
+        return metaAccessProvider.getArrayIndexScale(elementKind);
     }
 
     public static final LocationIdentity OBJ_ARRAY_KLASS_ELEMENT_KLASS_LOCATION = new HotSpotOptimizingLocationIdentity("ObjArrayKlass::_element_klass") {

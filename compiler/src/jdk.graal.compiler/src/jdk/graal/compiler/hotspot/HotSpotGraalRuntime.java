@@ -204,13 +204,11 @@ public final class HotSpotGraalRuntime implements HotSpotGraalRuntimeProvider {
     public enum HotSpotGC {
         // Supported GCs
         Serial("UseSerialGC"),
+        Shenandoah(JavaVersionUtil.JAVA_SPEC > 21, true, flagIsSet("UseShenandoahGC")),
         Parallel("UseParallelGC"),
         G1("UseG1GC"),
         Z(JavaVersionUtil.JAVA_SPEC > 21, true, flagIsSet("UseZGC")),
-        Epsilon(true, true, flagIsSet("UseEpsilonGC")),
-
-        // Unsupported GCs
-        Shenandoah(false, true, flagIsSet("UseShenandoahGC"));
+        Epsilon(true, true, flagIsSet("UseEpsilonGC"));
 
         HotSpotGC(String flag) {
             this(true, true, flagIsSet(flag));

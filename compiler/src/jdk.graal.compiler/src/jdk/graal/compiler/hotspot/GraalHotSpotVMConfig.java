@@ -185,6 +185,10 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
         return notifyAllAddress != 0;
     }
 
+    public final boolean shenandoahLoadRefBarrier = getFlag("ShenandoahLoadRefBarrier", Boolean.class);
+    public final boolean shenandoahSATBBarrier = getFlag("ShenandoahSATBBarrier", Boolean.class);
+    public final boolean shenandoahCASBarrier = getFlag("ShenandoahCASBarrier", Boolean.class);
+
     public final int allocatePrefetchStyle = getFlag("AllocatePrefetchStyle", Integer.class);
     public final int allocatePrefetchInstr = getFlag("AllocatePrefetchInstr", Integer.class);
     public final int allocatePrefetchLines = getFlag("AllocatePrefetchLines", Integer.class);
@@ -451,6 +455,11 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final int g1CardQueueIndexOffset = getConstant("G1ThreadLocalData::dirty_card_queue_index_offset", Integer.class);
     public final int g1CardQueueBufferOffset = getConstant("G1ThreadLocalData::dirty_card_queue_buffer_offset", Integer.class);
 
+    public final int shenandoahSATBQueueMarkingOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_active_offset", Integer.class);
+    public final int shenandoahSATBQueueIndexOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_index_offset", Integer.class);
+    public final int shenandoahSATBQueueBufferOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_buffer_offset", Integer.class);
+    public final int shenandoahGCStateOffset = getConstant("ShenandoahThreadLocalData::gc_state_offset", Integer.class);
+
     public final int klassOffset = getFieldValue("java_lang_Class::_klass_offset", Integer.class, "int");
     public final int arrayKlassOffset = getFieldValue("java_lang_Class::_array_klass_offset", Integer.class, "int");
 
@@ -664,6 +673,9 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final long writeBarrierPreAddress = getAddress("JVMCIRuntime::write_barrier_pre");
     public final long writeBarrierPostAddress = getAddress("JVMCIRuntime::write_barrier_post");
     public final long validateObject = getAddress("JVMCIRuntime::validate_object");
+
+    public final long shenandoahConcmarkBarrierAddress = getAddress("JVMCIRuntime::shenandoah_concmark_barrier");
+    public final long shenandoahLoadReferenceBarrierAddress = getAddress("JVMCIRuntime::shenandoah_load_reference_barrier");
 
     public final long testDeoptimizeCallInt = getAddress("JVMCIRuntime::test_deoptimize_call_int");
 

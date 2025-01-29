@@ -77,6 +77,8 @@ import static jdk.graal.compiler.hotspot.meta.HotSpotForeignCallDescriptor.Trans
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.G1WBPOSTCALL;
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.G1WBPRECALL;
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.VALIDATE_OBJECT;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAHWBPRECALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAHLRBCALL;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_OBJECT;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_PRIMITIVE;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_PRINTF;
@@ -576,6 +578,8 @@ public abstract class HotSpotHostForeignCallsProvider extends HotSpotForeignCall
         linkForeignCall(options, providers, G1WBPRECALL, c.writeBarrierPreAddress, PREPEND_THREAD);
         linkForeignCall(options, providers, G1WBPOSTCALL, c.writeBarrierPostAddress, PREPEND_THREAD);
         linkForeignCall(options, providers, VALIDATE_OBJECT, c.validateObject, PREPEND_THREAD);
+        linkForeignCall(options, providers, SHENANDOAHWBPRECALL, c.shenandoahConcmarkBarrierAddress, PREPEND_THREAD);
+        linkForeignCall(options, providers, SHENANDOAHLRBCALL, c.shenandoahLoadReferenceBarrierAddress, PREPEND_THREAD);
 
         linkForeignCall(options, providers, TEST_DEOPTIMIZE_CALL_INT, c.testDeoptimizeCallInt, PREPEND_THREAD);
 
