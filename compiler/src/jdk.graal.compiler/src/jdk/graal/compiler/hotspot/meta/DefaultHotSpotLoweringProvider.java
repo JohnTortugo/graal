@@ -172,6 +172,7 @@ import jdk.graal.compiler.nodes.gc.SerialWriteBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
 import jdk.graal.compiler.nodes.java.ClassIsAssignableFromNode;
 import jdk.graal.compiler.nodes.java.DynamicNewArrayNode;
@@ -545,6 +546,8 @@ public abstract class DefaultHotSpotLoweringProvider extends DefaultJavaLowering
             shenandoahBarrierSnippets.lower((ShenandoahArrayRangePreWriteBarrier) n, tool);
         } else if (n instanceof ShenandoahPreWriteBarrier) {
             shenandoahBarrierSnippets.lower((ShenandoahPreWriteBarrier) n, tool);
+        } else if (n instanceof ShenandoahPosWriteBarrier) {
+            shenandoahBarrierSnippets.lower((ShenandoahPosWriteBarrier) n, tool);
         } else if (n instanceof ShenandoahReferentFieldReadBarrier) {
             shenandoahBarrierSnippets.lower((ShenandoahReferentFieldReadBarrier) n, tool);
         } else if (n instanceof ShenandoahLoadReferenceBarrier) {

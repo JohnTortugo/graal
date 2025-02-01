@@ -82,9 +82,4 @@ public class NoBarrierSet implements BarrierSet {
     public BarrierType readWriteBarrier(ValueNode object, ValueNode value) {
         return BarrierType.NONE;
     }
-
-    @Override
-    public boolean mayNeedPreWriteBarrier(JavaKind storageKind) {
-        return false;
-    }
 }

@@ -24,6 +24,7 @@
  */
 package jdk.graal.compiler.nodes.gc;
 
+import static jdk.graal.compiler.nodes.NamedLocationIdentity.OFF_HEAP_LOCATION;
 import org.graalvm.word.LocationIdentity;
 
 import jdk.graal.compiler.core.common.memory.BarrierType;
@@ -36,6 +37,7 @@ import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.extended.ArrayRangeWrite;
 import jdk.graal.compiler.nodes.extended.RawStoreNode;
 import jdk.graal.compiler.nodes.java.AbstractCompareAndSwapNode;
+import jdk.graal.compiler.nodes.type.StampTool;
 import jdk.graal.compiler.nodes.java.LoweredAtomicReadAndWriteNode;
 import jdk.graal.compiler.nodes.memory.FixedAccessNode;
 import jdk.graal.compiler.nodes.memory.ReadNode;
@@ -46,57 +48,63 @@ import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
 public class ShenandoahBarrierSet implements BarrierSet {
+    // This is the ResolvedJavaType for Object[]
     private final ResolvedJavaType objectArrayType;
+
+    // This is the ResolvedJavaType for Reference.referent
     private final ResolvedJavaField referentField;
+
+    // This is current JVM SHenandoah configuration
     private final ShenandoahBarrierConfig config;
 
     public ShenandoahBarrierSet(ShenandoahBarrierConfig config, ResolvedJavaType objectArrayType, ResolvedJavaField referentField) {
         this.objectArrayType = objectArrayType;
         this.referentField = referentField;
         this.config = config;
+        System.out.println("new ShenandoahBarrierSet) config: " + config + ", objectArrayType: " + objectArrayType + ", referentField: " + referentField);
     }
 
     @Override
     public void addBarriers(FixedAccessNode n) {
+        System.out.println("addBarriers) Node: " + n + ", barrierType: " + n.getBarrierType());
+
         if (n instanceof ReadNode) {
             addReadNodeBarriers((ReadNode) n);
-        } else if (n instanceof WriteNode) {
-            WriteNode write = (WriteNode) n;
-            addWriteBarriers(write, write.value(), null, true, write.getUsedAsNullCheck());
-        } else if (n instanceof LoweredAtomicReadAndWriteNode) {
-            LoweredAtomicReadAndWriteNode atomic = (LoweredAtomicReadAndWriteNode) n;
-            addWriteBarriers(atomic, atomic.getNewValue(), null, true, atomic.getUsedAsNullCheck());
-        } else if (n instanceof AbstractCompareAndSwapNode) {
-            if (config.isUseCASBarrier()) {
-                GraalError.unimplemented("nope");
-                AbstractCompareAndSwapNode cmpSwap = (AbstractCompareAndSwapNode) n;
-                addWriteBarriers(cmpSwap, cmpSwap.getNewValue(), cmpSwap.getExpectedValue(), false, false);
-            }
-        } else if (n instanceof ArrayRangeWrite) {
-            GraalError.unimplemented("nope");
-            addArrayRangeBarriers((ArrayRangeWrite) n);
-        } else {
-            GraalError.guarantee(n.getBarrierType() == BarrierType.NONE, "missed a node that requires a GC barrier: %s", n.getClass());
-        }
+        } /**
+           * else if (n instanceof WriteNode) { WriteNode write = (WriteNode) n;
+           * addWriteBarriers(write, write.value(), null, true, write.getUsedAsNullCheck()); } else
+           * if (n instanceof LoweredAtomicReadAndWriteNode) { LoweredAtomicReadAndWriteNode atomic
+           * = (LoweredAtomicReadAndWriteNode) n; addWriteBarriers(atomic, atomic.getNewValue(),
+           * null, true, atomic.getUsedAsNullCheck()); } else if (n instanceof
+           * AbstractCompareAndSwapNode) { if (config.isUseCASBarrier()) {
+           * System.out.println("Possibly incomplete."); // GraalError.unimplemented("nope");
+           * AbstractCompareAndSwapNode cmpSwap = (AbstractCompareAndSwapNode) n;
+           * addWriteBarriers(cmpSwap, cmpSwap.getNewValue(), cmpSwap.getExpectedValue(), false,
+           * false); } } else if (n instanceof ArrayRangeWrite) { System.out.println("Possibly
+           * incomplete."); // GraalError.unimplemented("nope");
+           * addArrayRangeBarriers((ArrayRangeWrite) n); } else {
+           * GraalError.guarantee(n.getBarrierType() == BarrierType.NONE, "missed a node that
+           * requires a GC barrier: %s", n.getClass()); }
+           */
     }
 
     private void addReadNodeBarriers(ReadNode node) {
-        GraalError.unimplemented("nope");
+        assert config.useLRB();
         if (node.getBarrierType() != BarrierType.NONE && config.useLRB()) {
             StructuredGraph graph = node.graph();
             ShenandoahLoadReferenceBarrier lrb = graph.add(new ShenandoahLoadReferenceBarrier(node));
-            // value = lrb;
             node.graph().addAfterFixed(node, lrb);
             node.replaceAtMatchingUsages(lrb, n -> n != lrb);
         }
-// if (node.getBarrierType() == BarrierType.WEAK_FIELD || node.getBarrierType() ==
-// BarrierType.MAYBE_WEAK_FIELD) {
-// StructuredGraph graph = node.graph();
-// ShenandoahReferentFieldReadBarrier barrier = graph.add(new
-// ShenandoahReferentFieldReadBarrier(node.getAddress(), value, node.getBarrierType() ==
-// BarrierType.MAYBE_WEAK_FIELD));
-// graph.addAfterFixed(node, barrier);
-// }
+
+        // needs to handle WEAK_REFERS_TO
+
+        /**
+         * if (node.getBarrierType() == BarrierType.WEAK_REFERS_TO ){ StructuredGraph graph =
+         * node.graph(); ShenandoahReferentFieldReadBarrier barrier = graph.add(new
+         * ShenandoahReferentFieldReadBarrier(node.getAddress(), value, node.getBarrierType() ==
+         * BarrierType.MAYBE_WEAK_FIELD)); graph.addAfterFixed(node, barrier); }
+         */
     }
 
     private void addWriteBarriers(FixedAccessNode node, ValueNode writtenValue, ValueNode expectedValue, boolean doLoad, boolean nullCheck) {
@@ -108,13 +116,17 @@ public class ShenandoahBarrierSet implements BarrierSet {
             case FIELD:
             case ARRAY:
             case UNKNOWN:
-                if (isObjectValue(writtenValue)) {
-                    StructuredGraph graph = node.graph();
+                if (writtenValue.stamp(NodeView.DEFAULT) instanceof AbstractObjectStamp) {
                     boolean init = node.getLocationIdentity().isInit();
-                    if (!init && config.useSATB()) {
-                        // The pre barrier does nothing if the value being read is null, so it can
-                        // be explicitly skipped when this is an initializing store.
-                        addPreWriteBarrier(node, node.getAddress(), expectedValue, doLoad, nullCheck, graph);
+                    if (!init) {
+                        if (config.useSATB()) {
+                            // The pre-write barrier does nothing if the value being
+                            // read is null, so it can be explicitly skipped when
+                            // this is an initializing store.
+                            addPreWriteBarrier(node, node.getAddress(), expectedValue, doLoad, nullCheck);
+                        }
+
+                        addPosWriteBarrier(node, node.getAddress(), expectedValue, doLoad, nullCheck);
                     }
                 }
                 break;
@@ -135,149 +147,131 @@ public class ShenandoahBarrierSet implements BarrierSet {
         }
     }
 
-    private static void addPreWriteBarrier(FixedAccessNode node, AddressNode address, ValueNode value, boolean doLoad, boolean nullCheck, StructuredGraph graph) {
+    private static void addPreWriteBarrier(FixedAccessNode node, AddressNode address, ValueNode value, boolean doLoad, boolean nullCheck) {
+        StructuredGraph graph = node.graph();
         ShenandoahPreWriteBarrier preBarrier = graph.add(new ShenandoahPreWriteBarrier(address, value, doLoad, nullCheck));
         preBarrier.setStateBefore(node.stateBefore());
         node.setUsedAsNullCheck(false);
         node.setStateBefore(null);
+
+        // Adds 'preBarrier' before 'node'
         graph.addBeforeFixed(node, preBarrier);
     }
 
-    private static boolean isObjectValue(ValueNode value) {
-        return value.stamp(NodeView.DEFAULT) instanceof AbstractObjectStamp;
+    private static void addPosWriteBarrier(FixedAccessNode node, AddressNode address, ValueNode value, boolean doLoad, boolean nullCheck) {
+        StructuredGraph graph = node.graph();
+        ShenandoahPosWriteBarrier posBarrier = graph.add(new ShenandoahPosWriteBarrier(address, value, doLoad, nullCheck));
+
+        // Adds 'posBarrier' after 'node'
+        node.graph().addAfterFixed(node, posBarrier);
     }
-
-    // public BarrierType fieldLoadBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-    // // if (field.getJavaKind() == JavaKind.Object) {
-    // // if (field.equals(referentField)) {
-    // // return BarrierType.WEAK_FIELD;
-    // // } else {
-    // // return BarrierType.FIELD;
-    // // }
-    // // }
-    // return BarrierType.NONE;
-    // }
-
-    // public BarrierType fieldStoreBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-    // return storageKind == JavaKind.Object ? BarrierType.FIELD : BarrierType.NONE;
-    // }
-
-    // @Override
-    // public BarrierType readBarrierType(RawLoadNode load) {
-    // if (load.object().getStackKind() == JavaKind.Object &&
-    // load.accessKind() == JavaKind.Object &&
-    // !StampTool.isPointerAlwaysNull(load.object())) {
-    // long referentOffset = referentField.getOffset();
-    // assert referentOffset > 0;
-
-    // if (load.offset().isJavaConstant() && referentOffset !=
-    // load.offset().asJavaConstant().asLong()) {
-    // // Reading at a constant offset which is different than the referent field.
-    // return BarrierType.FIELD;
-    // }
-    // ResolvedJavaType referenceType = referentField.getDeclaringClass();
-    // ResolvedJavaType type = StampTool.typeOrNull(load.object());
-    // if (type != null && referenceType.isAssignableFrom(type)) {
-    // // It's definitely a field of a Reference type
-    // if (load.offset().isJavaConstant() && referentOffset ==
-    // load.offset().asJavaConstant().asLong()) {
-    // // Exactly Reference.referent
-    // return BarrierType.WEAK_FIELD;
-    // }
-    // // An unknown offset into Reference
-    // return BarrierType.UNKNOWN;
-    // }
-    // if (type == null || type.isAssignableFrom(referenceType)) {
-    // // The object is a supertype of Reference with an unknown offset or a constant
-    // // offset which is the same as Reference.referent.
-    // return BarrierType.UNKNOWN;
-    // }
-    // }
-    // return BarrierType.NONE;
-    // }
-
-    // @Override
-    // public BarrierType storeBarrierType(RawStoreNode store) {
-    // return store.needsBarrier() ? guessStoreBarrierType(store.object(), store.value()) :
-    // BarrierType.NONE;
-    // }
-
-    // @Override
-    // public BarrierType arrayStoreBarrierType(JavaKind storageKind) {
-    // return storageKind == JavaKind.Object ? BarrierType.ARRAY : BarrierType.NONE;
-    // }
-
-    // @Override
-    // public BarrierType guessStoreBarrierType(ValueNode object, ValueNode value) {
-    // if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object) {
-    // ResolvedJavaType type = StampTool.typeOrNull(object);
-    // if (type != null && type.isArray()) {
-    // return BarrierType.ARRAY;
-    // } else if (type == null || type.isAssignableFrom(objectArrayType)) {
-    // return BarrierType.UNKNOWN;
-    // } else {
-    // return BarrierType.FIELD;
-    // }
-    // }
-    // return BarrierType.NONE;
-    // }
-
-    // @Override
-    // public boolean mayNeedPreWriteBarrier(JavaKind storageKind) {
-    // return arrayStoreBarrierType(storageKind) != BarrierType.NONE;
-    // }
 
     @Override
     public boolean hasWriteBarrier() {
-        // TODO Auto-generated method stub
-        return false;
+        return true;
     }
 
     @Override
     public boolean hasReadBarrier() {
-        // TODO Auto-generated method stub
-        return false;
+        return true;
     }
 
     @Override
     public BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-        // TODO Auto-generated method stub
-        return null;
+        BarrierType type = BarrierType.NONE;
+
+        if (field.getJavaKind() == JavaKind.Object) {
+            if (field.equals(referentField)) {
+                type = BarrierType.WEAK_REFERS_TO;
+            } else {
+                type = BarrierType.FIELD;
+            }
+        }
+
+        System.out.println("fieldReadBarrierType) field: " + field + ", storageKind: " + storageKind + ", barrierType: " + type);
+        return type;
     }
 
     @Override
     public BarrierType fieldWriteBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-        // TODO Auto-generated method stub
-        return null;
+        BarrierType type = storageKind == JavaKind.Object ? BarrierType.FIELD : BarrierType.NONE;
+        System.out.println("fieldWriteBarrierType) field: " + field + ", storageKind: " + storageKind + ", barrierType: " + type);
+        return type;
     }
 
     @Override
     public BarrierType readBarrierType(LocationIdentity location, ValueNode address, Stamp loadStamp) {
-        // TODO Auto-generated method stub
-        return null;
+        BarrierType type = BarrierType.NONE;
+
+        if (location.equals(OFF_HEAP_LOCATION)) {
+            // Off heap locations are never expected to contain objects
+            assert !loadStamp.isObjectStamp() : location;
+            type = BarrierType.NONE;
+        } else if (loadStamp.isObjectStamp()) {
+            if (address.stamp(NodeView.DEFAULT).isObjectStamp()) {
+                // A read of an Object from an Object requires a barrier
+                type = BarrierType.READ;
+            } else if (address instanceof AddressNode) {
+                AddressNode addr = (AddressNode) address;
+                if (addr.getBase().stamp(NodeView.DEFAULT).isObjectStamp()) {
+                    // A read of an Object from an Object requires a barrier
+                    type = BarrierType.READ;
+                }
+            } else {
+                throw GraalError.shouldNotReachHere("Unexpected location type " + loadStamp);
+            }
+        }
+
+        System.out.println("readBarrierType) Location: " + location + ", address: " + address + ", stamp: " + loadStamp + ", barrierType: " + type);
+        return type;
     }
 
     @Override
     public BarrierType writeBarrierType(RawStoreNode store) {
-        // TODO Auto-generated method stub
-        return null;
+        // "object" is the base object relative to where "value" will be stored.
+        ValueNode object = store.object();
+        ValueNode value = store.value();
+        BarrierType type = BarrierType.NONE;
+
+        if (store.needsBarrier()) {
+            if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object) {
+                ResolvedJavaType objType = StampTool.typeOrNull(object);
+                if (objType != null && objType.isArray()) {
+                    type = BarrierType.ARRAY;
+                } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
+                    type = BarrierType.UNKNOWN;
+                } else {
+                    type = BarrierType.FIELD;
+                }
+            }
+        }
+
+        System.out.println("writeBarrierType) store: " + store + ", object: " + object + ", value: " + value + ", barrierType: " + type);
+        return type;
     }
 
     @Override
     public BarrierType arrayWriteBarrierType(JavaKind storageKind) {
-        // TODO Auto-generated method stub
-        return null;
+        BarrierType type = storageKind == JavaKind.Object ? BarrierType.ARRAY : BarrierType.NONE;
+        System.out.println("arrayWriteBarrierType) storageKind: " + storageKind + ", barrierType: " + type);
+        return type;
     }
 
     @Override
     public BarrierType readWriteBarrier(ValueNode object, ValueNode value) {
-        // TODO Auto-generated method stub
-        return null;
-    }
+        BarrierType type = BarrierType.NONE;
+        if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object) {
+            ResolvedJavaType objType = StampTool.typeOrNull(object);
+            if (objType != null && objType.isArray()) {
+                type = BarrierType.ARRAY;
+            } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
+                type = BarrierType.UNKNOWN;
+            } else {
+                type = BarrierType.FIELD;
+            }
+        }
 
-    @Override
-    public boolean mayNeedPreWriteBarrier(JavaKind storageKind) {
-        // TODO Auto-generated method stub
-        return false;
+        System.out.println("readWriteBarrier) object: " + object + ", value: " + value + ", barrierType: " + type);
+        return type;
     }
 }

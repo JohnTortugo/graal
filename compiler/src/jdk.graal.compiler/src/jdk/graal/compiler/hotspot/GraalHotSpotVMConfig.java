@@ -185,6 +185,7 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
         return notifyAllAddress != 0;
     }
 
+    public final String shenandoahGCMode = getFlag("ShenandoahGCMode", String.class);
     public final boolean shenandoahLoadRefBarrier = getFlag("ShenandoahLoadRefBarrier", Boolean.class);
     public final boolean shenandoahSATBBarrier = getFlag("ShenandoahSATBBarrier", Boolean.class);
     public final boolean shenandoahCASBarrier = getFlag("ShenandoahCASBarrier", Boolean.class);
@@ -674,9 +675,12 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final long writeBarrierPostAddress = getAddress("JVMCIRuntime::write_barrier_post");
     public final long validateObject = getAddress("JVMCIRuntime::validate_object");
 
-    public final long shenandoahConcmarkBarrierAddress = getAddress("JVMCIRuntime::shenandoah_concmark_barrier");
-    public final long shenandoahLoadReferenceBarrierAddress = getAddress("JVMCIRuntime::shenandoah_load_reference_barrier");
+    // @Todo:
+    public final long shenandoahConcmarkBarrierAddress = 0xCCCCCCC; // getAddress("JVMCIRuntime::shenandoah_concmark_barrier");
+    public final long shenandoahLoadReferenceBarrierAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong");
+    public final long shenandoahLoadReferenceBarrierStrongAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong_narrow");
 
+    // @formatter:on
     public final long testDeoptimizeCallInt = getAddress("JVMCIRuntime::test_deoptimize_call_int");
 
     public final long registerFinalizerAddress = getAddress("SharedRuntime::register_finalizer");

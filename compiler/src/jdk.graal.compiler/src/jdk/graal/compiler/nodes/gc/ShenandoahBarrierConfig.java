@@ -33,7 +33,6 @@ public class ShenandoahBarrierConfig {
         this.useLRB = useLRB;
         this.useSATB = useSATB;
         this.useCASBarrier = useCASBarrier;
-        System.out.println("ShenandoahBarrierConfig: useLRB: " + useLRB + ", useSATB: " + useSATB + ", useCASBarrier: " + useCASBarrier);
     }
 
     boolean useLRB() {

@@ -27,6 +27,8 @@ package jdk.graal.compiler.nodes.gc;
 import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
+import org.graalvm.word.LocationIdentity;
+
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
@@ -58,9 +60,11 @@ public class ShenandoahLoadReferenceBarrier extends FixedWithNextNode implements
         tool.getLowerer().lower(this, tool);
     }
 
+    /**
+     * @return false because this node does not kills {@link LocationIdentity#INIT_LOCATION}.
+     */
     @Override
     public boolean killsInit() {
-        // TODO Auto-generated method stub
         return false;
     }
 }
