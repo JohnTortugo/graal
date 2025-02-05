@@ -36,19 +36,12 @@ import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 public class ShenandoahReferentFieldReadBarrier extends ObjectWriteBarrierNode {
     public static final NodeClass<ShenandoahReferentFieldReadBarrier> TYPE = NodeClass.create(ShenandoahReferentFieldReadBarrier.class);
 
-    private final boolean dynamicCheck;
-
-    public ShenandoahReferentFieldReadBarrier(AddressNode address, ValueNode expectedObject, boolean dynamicCheck) {
+    public ShenandoahReferentFieldReadBarrier(AddressNode address, ValueNode expectedObject) {
         super(TYPE, address, expectedObject, true);
-        this.dynamicCheck = dynamicCheck;
     }
 
     public ValueNode getExpectedObject() {
         return getValue();
-    }
-
-    public boolean isDynamicCheck() {
-        return dynamicCheck;
     }
 
     @Override

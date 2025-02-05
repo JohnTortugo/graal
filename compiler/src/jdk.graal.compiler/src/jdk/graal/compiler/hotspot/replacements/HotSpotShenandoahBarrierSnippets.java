@@ -37,7 +37,7 @@ import jdk.graal.compiler.hotspot.meta.HotSpotRegistersProvider;
 import jdk.graal.compiler.hotspot.nodes.HotSpotCompressionNode;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
@@ -196,7 +196,7 @@ public final class HotSpotShenandoahBarrierSnippets extends ShenandoahBarrierSni
             lowerer.lower(this, shenandoahArrayRangePreWriteBarrier, barrier, tool);
         }
 
-        public void lower(ShenandoahLoadReferenceBarrier barrier, LoweringTool tool) {
+        public void lower(ShenandoahLoadReferenceBarrierNode barrier, LoweringTool tool) {
             lowerer.lower(this, shenandoahLoadReferenceBarrier, barrier, tool);
         }
     }

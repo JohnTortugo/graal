@@ -40,12 +40,12 @@ import jdk.graal.compiler.nodes.spi.Lowerable;
 import jdk.graal.compiler.nodes.spi.LoweringTool;
 
 @NodeInfo(allowedUsageTypes = {InputType.Memory, InputType.Guard}, cycles = CYCLES_64, size = SIZE_64)
-public class ShenandoahLoadReferenceBarrier extends FixedWithNextNode implements Lowerable, MemoryKill {
-    public static final NodeClass<ShenandoahLoadReferenceBarrier> TYPE = NodeClass.create(ShenandoahLoadReferenceBarrier.class);
+public class ShenandoahLoadReferenceBarrierNode extends FixedWithNextNode implements Lowerable, MemoryKill {
+    public static final NodeClass<ShenandoahLoadReferenceBarrierNode> TYPE = NodeClass.create(ShenandoahLoadReferenceBarrierNode.class);
 
     @Input(InputType.Value) private ValueNode value;
 
-    public ShenandoahLoadReferenceBarrier(ValueNode value) {
+    public ShenandoahLoadReferenceBarrierNode(ValueNode value) {
         super(TYPE, value.stamp(NodeView.DEFAULT));
         this.value = value;
     }

@@ -32,6 +32,7 @@ import jdk.graal.compiler.core.common.type.AbstractObjectStamp;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.nodes.NodeView;
+import jdk.graal.compiler.nodes.FixedWithNextNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.extended.ArrayRangeWrite;
@@ -90,21 +91,16 @@ public class ShenandoahBarrierSet implements BarrierSet {
 
     private void addReadNodeBarriers(ReadNode node) {
         assert config.useLRB();
-        if (node.getBarrierType() != BarrierType.NONE && config.useLRB()) {
-            StructuredGraph graph = node.graph();
-            ShenandoahLoadReferenceBarrier lrb = graph.add(new ShenandoahLoadReferenceBarrier(node));
-            node.graph().addAfterFixed(node, lrb);
-            node.replaceAtMatchingUsages(lrb, n -> n != lrb);
+        assert node.getBarrierType() != BarrierType.UNKNOWN;
+
+        if (node.getBarrierType() == BarrierType.NONE) {
+            return;
         }
 
-        // needs to handle WEAK_REFERS_TO
-
-        /**
-         * if (node.getBarrierType() == BarrierType.WEAK_REFERS_TO ){ StructuredGraph graph =
-         * node.graph(); ShenandoahReferentFieldReadBarrier barrier = graph.add(new
-         * ShenandoahReferentFieldReadBarrier(node.getAddress(), value, node.getBarrierType() ==
-         * BarrierType.MAYBE_WEAK_FIELD)); graph.addAfterFixed(node, barrier); }
-         */
+        StructuredGraph graph = node.graph();
+        FixedWithNextNode lrb = (node.getBarrierType() == BarrierType.REFERENCE_GET) ? graph.add(new ShenandoahReferentFieldReadBarrier(node.getAddress(), node))
+                        : graph.add(new ShenandoahLoadReferenceBarrierNode(node));
+        node.graph().addAfterFixed(node, lrb);
     }
 
     private void addWriteBarriers(FixedAccessNode node, ValueNode writtenValue, ValueNode expectedValue, boolean doLoad, boolean nullCheck) {
@@ -181,11 +177,8 @@ public class ShenandoahBarrierSet implements BarrierSet {
         BarrierType type = BarrierType.NONE;
 
         if (field.getJavaKind() == JavaKind.Object) {
-            if (field.equals(referentField)) {
-                type = BarrierType.WEAK_REFERS_TO;
-            } else {
-                type = BarrierType.FIELD;
-            }
+            // Need to handle the different "Weak" references types.
+            type = BarrierType.FIELD;
         }
 
         System.out.println("fieldReadBarrierType) field: " + field + ", storageKind: " + storageKind + ", barrierType: " + type);
@@ -194,35 +187,38 @@ public class ShenandoahBarrierSet implements BarrierSet {
 
     @Override
     public BarrierType fieldWriteBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-        BarrierType type = storageKind == JavaKind.Object ? BarrierType.FIELD : BarrierType.NONE;
-        System.out.println("fieldWriteBarrierType) field: " + field + ", storageKind: " + storageKind + ", barrierType: " + type);
-        return type;
+        return BarrierType.NONE;
+        // BarrierType type = storageKind == JavaKind.Object ? BarrierType.FIELD : BarrierType.NONE;
+        // System.out.println("fieldWriteBarrierType) field: " + field + ", storageKind: " +
+        // storageKind + ", barrierType: " + type);
+        // return type;
     }
 
     @Override
     public BarrierType readBarrierType(LocationIdentity location, ValueNode address, Stamp loadStamp) {
         BarrierType type = BarrierType.NONE;
 
-        if (location.equals(OFF_HEAP_LOCATION)) {
-            // Off heap locations are never expected to contain objects
-            assert !loadStamp.isObjectStamp() : location;
-            type = BarrierType.NONE;
-        } else if (loadStamp.isObjectStamp()) {
-            if (address.stamp(NodeView.DEFAULT).isObjectStamp()) {
-                // A read of an Object from an Object requires a barrier
-                type = BarrierType.READ;
-            } else if (address instanceof AddressNode) {
-                AddressNode addr = (AddressNode) address;
-                if (addr.getBase().stamp(NodeView.DEFAULT).isObjectStamp()) {
-                    // A read of an Object from an Object requires a barrier
-                    type = BarrierType.READ;
-                }
-            } else {
-                throw GraalError.shouldNotReachHere("Unexpected location type " + loadStamp);
-            }
-        }
+        // if (location.equals(OFF_HEAP_LOCATION)) {
+        // // Off heap locations are never expected to contain objects
+        // assert !loadStamp.isObjectStamp() : location;
+        // type = BarrierType.NONE;
+        // } else if (loadStamp.isObjectStamp()) {
+        // if (address.stamp(NodeView.DEFAULT).isObjectStamp()) {
+        // // A read of an Object from an Object requires a barrier
+        // type = BarrierType.READ;
+        // } else if (address instanceof AddressNode) {
+        // AddressNode addr = (AddressNode) address;
+        // if (addr.getBase().stamp(NodeView.DEFAULT).isObjectStamp()) {
+        // // A read of an Object from an Object requires a barrier
+        // type = BarrierType.READ;
+        // }
+        // } else {
+        // throw GraalError.shouldNotReachHere("Unexpected location type " + loadStamp);
+        // }
+        // }
 
-        System.out.println("readBarrierType) Location: " + location + ", address: " + address + ", stamp: " + loadStamp + ", barrierType: " + type);
+        // System.out.println("readBarrierType) Location: " + location + ", address: " + address +
+        // ", stamp: " + loadStamp + ", barrierType: " + type);
         return type;
     }
 
@@ -233,45 +229,51 @@ public class ShenandoahBarrierSet implements BarrierSet {
         ValueNode value = store.value();
         BarrierType type = BarrierType.NONE;
 
-        if (store.needsBarrier()) {
-            if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object) {
-                ResolvedJavaType objType = StampTool.typeOrNull(object);
-                if (objType != null && objType.isArray()) {
-                    type = BarrierType.ARRAY;
-                } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
-                    type = BarrierType.UNKNOWN;
-                } else {
-                    type = BarrierType.FIELD;
-                }
-            }
-        }
+        // if (store.needsBarrier()) {
+        // if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object)
+        // {
+        // ResolvedJavaType objType = StampTool.typeOrNull(object);
+        // if (objType != null && objType.isArray()) {
+        // type = BarrierType.ARRAY;
+        // } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
+        // type = BarrierType.UNKNOWN;
+        // } else {
+        // type = BarrierType.FIELD;
+        // }
+        // }
+        // }
 
-        System.out.println("writeBarrierType) store: " + store + ", object: " + object + ", value: " + value + ", barrierType: " + type);
+        // System.out.println("writeBarrierType) store: " + store + ", object: " + object + ",
+        // value: " + value + ", barrierType: " + type);
         return type;
     }
 
     @Override
     public BarrierType arrayWriteBarrierType(JavaKind storageKind) {
-        BarrierType type = storageKind == JavaKind.Object ? BarrierType.ARRAY : BarrierType.NONE;
-        System.out.println("arrayWriteBarrierType) storageKind: " + storageKind + ", barrierType: " + type);
-        return type;
+        return BarrierType.NONE;
+        // BarrierType type = storageKind == JavaKind.Object ? BarrierType.ARRAY : BarrierType.NONE;
+        // System.out.println("arrayWriteBarrierType) storageKind: " + storageKind + ", barrierType:
+        // " + type);
+        // return type;
     }
 
     @Override
     public BarrierType readWriteBarrier(ValueNode object, ValueNode value) {
         BarrierType type = BarrierType.NONE;
-        if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object) {
-            ResolvedJavaType objType = StampTool.typeOrNull(object);
-            if (objType != null && objType.isArray()) {
-                type = BarrierType.ARRAY;
-            } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
-                type = BarrierType.UNKNOWN;
-            } else {
-                type = BarrierType.FIELD;
-            }
-        }
+        // if (value.getStackKind() == JavaKind.Object && object.getStackKind() == JavaKind.Object)
+        // {
+        // ResolvedJavaType objType = StampTool.typeOrNull(object);
+        // if (objType != null && objType.isArray()) {
+        // type = BarrierType.ARRAY;
+        // } else if (objType == null || objType.isAssignableFrom(objectArrayType)) {
+        // type = BarrierType.UNKNOWN;
+        // } else {
+        // type = BarrierType.FIELD;
+        // }
+        // }
 
-        System.out.println("readWriteBarrier) object: " + object + ", value: " + value + ", barrierType: " + type);
+        // System.out.println("readWriteBarrier) object: " + object + ", value: " + value + ",
+        // barrierType: " + type);
         return type;
     }
 }

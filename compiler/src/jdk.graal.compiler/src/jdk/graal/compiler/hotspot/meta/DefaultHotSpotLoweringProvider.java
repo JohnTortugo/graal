@@ -170,7 +170,7 @@ import jdk.graal.compiler.nodes.gc.G1ReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.gc.SerialArrayRangeWriteBarrierNode;
 import jdk.graal.compiler.nodes.gc.SerialWriteBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
@@ -550,8 +550,8 @@ public abstract class DefaultHotSpotLoweringProvider extends DefaultJavaLowering
             shenandoahBarrierSnippets.lower((ShenandoahPosWriteBarrier) n, tool);
         } else if (n instanceof ShenandoahReferentFieldReadBarrier) {
             shenandoahBarrierSnippets.lower((ShenandoahReferentFieldReadBarrier) n, tool);
-        } else if (n instanceof ShenandoahLoadReferenceBarrier) {
-            shenandoahBarrierSnippets.lower((ShenandoahLoadReferenceBarrier) n, tool);
+        } else if (n instanceof ShenandoahLoadReferenceBarrierNode) {
+            shenandoahBarrierSnippets.lower((ShenandoahLoadReferenceBarrierNode) n, tool);
         } else if (n instanceof SerialWriteBarrierNode) {
             serialWriteBarrierSnippets.lower((SerialWriteBarrierNode) n, tool);
         } else if (n instanceof SerialArrayRangeWriteBarrierNode) {

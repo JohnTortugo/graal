@@ -21,7 +21,7 @@ import jdk.graal.compiler.nodes.extended.FixedValueAnchorNode;
 import jdk.graal.compiler.nodes.extended.ForeignCallNode;
 import jdk.graal.compiler.nodes.extended.NullCheckNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
@@ -41,6 +41,7 @@ import jdk.vm.ci.meta.ResolvedJavaType;
 public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets implements Snippets {
 
     public static final byte HAS_FORWORDED = 1 << 0;
+    public static final byte WEAK_ROOTS = 1 << 4;
 
     public static final LocationIdentity SATB_QUEUE_MARKING_ACTIVE_LOCATION = NamedLocationIdentity.mutable("Shenandoah-GC-SATB-Marking-Active");
     public static final LocationIdentity SATB_QUEUE_BUFFER_LOCATION = NamedLocationIdentity.mutable("Shenandoah-GC-SATB-Queue-Buffer");
@@ -234,13 +235,21 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         Word thread = getThread();
         verifyOop(value);
 
+        boolean is_narrow = false; // value.stamp(NodeView.DEFAULT) instanceof NarrowOopStamp;
+        boolean is_strong = false;
+        boolean is_weak = false;
+        boolean is_phanton = false;
+
         byte gcStateValue = thread.readByte(gcStateOffset(), GC_STATE_LOCATION);
-        if (probability(NOT_FREQUENT_PROBABILITY, (gcStateValue & HAS_FORWORDED) != (byte) 0)) {
-            Object result = shenandoahLoadReferenceBarrierStub(value);
-            return piCastToSnippetReplaceeStamp(result);
+
+        byte flags = (byte) (HAS_FORWORDED | (is_strong ? 0 : WEAK_ROOTS));
+        boolean stable = (gcStateValue & flags) == (byte) 0;
+        Object result = value;
+        if (!stable) {
+            result = shenandoahLoadReferenceBarrierStub(value);
         }
 
-        return value;
+        return piCastToSnippetReplaceeStamp(result);
     }
 
     protected abstract Word getThread();
@@ -285,21 +294,6 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
     private void log(boolean enabled, String format, long value1, long value2, long value3) {
         if (enabled) {
             printf(printfCallDescriptor(), CStringConstant.cstring(format), value1, value2, value3);
-        }
-    }
-
-    /**
-     * Validation helper method which performs sanity checks on write operations. The addresses of
-     * both the object and the value being written are checked in order to determine if they reside
-     * in a valid heap region. If an object is stale, an invalid access is performed in order to
-     * prematurely crash the VM and debug the stack trace of the faulty method.
-     */
-    private void validateObject(Object parent, Object child) {
-        if (verifyOops() && child != null) {
-            Word parentWord = Word.objectToTrackedPointer(parent);
-            Word childWord = Word.objectToTrackedPointer(child);
-            boolean success = validateOop(validateObjectCallDescriptor(), parentWord, childWord);
-            AssertionNode.dynamicAssert(success, "Verification ERROR, Parent: %p Child: %p\n", parentWord.rawValue(), childWord.rawValue());
         }
     }
 
@@ -400,7 +394,7 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
             }
 
             args.add("expectedObject", expected);
-            args.add("isDynamicCheck", barrier.isDynamicCheck());
+            args.add("isDynamicCheck", false);
             args.add("offset", address.getOffset());
             args.add("traceStartCycle", traceStartCycle(barrier.graph()));
             args.add("counters", counters);
@@ -417,7 +411,7 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
             templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier, SnippetTemplate.DEFAULT_REPLACER, args);
         }
 
-        public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahLoadReferenceBarrier barrier, LoweringTool tool) {
+        public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahLoadReferenceBarrierNode barrier, LoweringTool tool) {
             SnippetTemplate.Arguments args = new SnippetTemplate.Arguments(snippet, barrier.graph().getGuardsStage(), tool.getLoweringStage());
             args.add("value", barrier.getValue());
             templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier, SnippetTemplate.DEFAULT_REPLACER, args);
