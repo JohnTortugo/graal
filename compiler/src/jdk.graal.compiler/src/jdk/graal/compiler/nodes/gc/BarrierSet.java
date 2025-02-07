@@ -38,9 +38,27 @@ import jdk.vm.ci.meta.ResolvedJavaField;
 
 public interface BarrierSet {
 
+    //@formatter:off
+    //// YES YES YES YES YES YES DONE
+
     boolean hasWriteBarrier();
 
     boolean hasReadBarrier();
+
+    /**
+     * Perform verification of inserted or missing barriers.
+     *
+     * @param graph the graph to verify.
+     */
+    default void verifyBarriers(StructuredGraph graph) {
+    }
+
+
+
+    /// NOT NOT NOT NOT NOT NOT DONE
+
+
+
 
     /**
      * Checks whether writing to {@link LocationIdentity#INIT_LOCATION} can be performed with an
@@ -50,41 +68,37 @@ public interface BarrierSet {
         return original;
     }
 
+    // Add the needed GC barriers according to type of 'n'
     void addBarriers(FixedAccessNode n);
 
+    // What type of barrier for a field read
     BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind);
 
+    // What type of barrier for a field write
     BarrierType fieldWriteBarrierType(ResolvedJavaField field, JavaKind storageKind);
 
+    // What type of barrier for a ... ?!
     BarrierType readBarrierType(LocationIdentity location, ValueNode address, Stamp loadStamp);
 
     /**
      * @param location
      */
+    // What type of barrier for ...? apparently to write on Current Thread something
     default BarrierType writeBarrierType(LocationIdentity location) {
         return BarrierType.NONE;
     }
 
+    // What type of barrier for a write to an Unsafe memory region.
     BarrierType writeBarrierType(RawStoreNode store);
 
+    // What type of barrier when writing to an array entry.
     BarrierType arrayWriteBarrierType(JavaKind storageKind);
 
+    // What type of barrier for a read+write happening on the same node - like a CAS
+    // Not sure if only used for reference types, probably not.
     BarrierType readWriteBarrier(ValueNode object, ValueNode value);
 
-    /**
-     * Determine whether writes of the given {@code storageKind} may ever need a pre-write barrier.
-     *
-     * @return {@code false} if no writes of {@code storageKind} ever need a pre-write barrier;
-     *         {@code true} if writes of {@code storageKind} may need a pre-write barrier at least
-     *         under certain circumstances.
-     */
-    boolean mayNeedPreWriteBarrier(JavaKind storageKind);
 
-    /**
-     * Perform verification of inserted or missing barriers.
-     *
-     * @param graph the grraph to verify.
-     */
-    default void verifyBarriers(StructuredGraph graph) {
-    }
+
+    //@formatter:on
 }
