@@ -33,10 +33,10 @@ import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
 @NodeInfo(cycles = CYCLES_64, size = SIZE_64)
-public class ShenandoahReferentFieldReadBarrier extends ObjectWriteBarrierNode {
-    public static final NodeClass<ShenandoahReferentFieldReadBarrier> TYPE = NodeClass.create(ShenandoahReferentFieldReadBarrier.class);
+public class ShenandoahReferentFieldReadBarrierNode extends ObjectWriteBarrierNode {
+    public static final NodeClass<ShenandoahReferentFieldReadBarrierNode> TYPE = NodeClass.create(ShenandoahReferentFieldReadBarrierNode.class);
 
-    public ShenandoahReferentFieldReadBarrier(AddressNode address, ValueNode expectedObject) {
+    public ShenandoahReferentFieldReadBarrierNode(AddressNode address, ValueNode expectedObject) {
         super(TYPE, address, expectedObject, true);
     }
 

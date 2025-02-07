@@ -29,29 +29,38 @@ import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
 import org.graalvm.word.LocationIdentity;
 
+import jdk.graal.compiler.nodes.memory.address.AddressNode;
+import jdk.graal.compiler.nodes.NodeView;
+import jdk.graal.compiler.nodes.memory.ReadNode;
+import jdk.graal.compiler.core.common.memory.BarrierType;
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
 import jdk.graal.compiler.nodes.FixedWithNextNode;
-import jdk.graal.compiler.nodes.NodeView;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.memory.MemoryKill;
 import jdk.graal.compiler.nodes.spi.Lowerable;
 import jdk.graal.compiler.nodes.spi.LoweringTool;
+import jdk.graal.compiler.nodes.type.NarrowOopStamp;
 
-@NodeInfo(allowedUsageTypes = {InputType.Memory, InputType.Guard}, cycles = CYCLES_64, size = SIZE_64)
+@NodeInfo(allowedUsageTypes = {InputType.Memory, InputType.Guard, InputType.Value, InputType.Anchor}, cycles = CYCLES_64, size = SIZE_64)
 public class ShenandoahLoadReferenceBarrierNode extends FixedWithNextNode implements Lowerable, MemoryKill {
     public static final NodeClass<ShenandoahLoadReferenceBarrierNode> TYPE = NodeClass.create(ShenandoahLoadReferenceBarrierNode.class);
 
-    @Input(InputType.Value) private ValueNode value;
+    @Input(InputType.Value) private ReadNode value;
 
-    public ShenandoahLoadReferenceBarrierNode(ValueNode value) {
+    private boolean isNarrowReference = false;
+    private boolean isPhantomReference = false;
+    private boolean isWeakReference = false;
+    private boolean isStrongReference = false;
+
+    public ShenandoahLoadReferenceBarrierNode(ReadNode value) {
         super(TYPE, value.stamp(NodeView.DEFAULT));
         this.value = value;
-    }
-
-    public ValueNode getValue() {
-        return value;
+        this.isNarrowReference = value.stamp(NodeView.DEFAULT) instanceof NarrowOopStamp;
+        this.isStrongReference = value.getBarrierType() == BarrierType.FIELD;
+        this.isWeakReference = value.getBarrierType() == BarrierType.WEAK_REFERS_TO;
+        this.isPhantomReference = value.getBarrierType() == BarrierType.PHANTOM_REFERS_TO;
     }
 
     @Override
@@ -66,5 +75,29 @@ public class ShenandoahLoadReferenceBarrierNode extends FixedWithNextNode implem
     @Override
     public boolean killsInit() {
         return false;
+    }
+
+    public AddressNode getAddress() {
+        return value.getAddress();
+    }
+
+    public ValueNode getValue() {
+        return value;
+    }
+
+    public boolean isNarrowReference() {
+        return isNarrowReference;
+    }
+
+    public boolean isPhantomReference() {
+        return isPhantomReference;
+    }
+
+    public boolean isWeakReference() {
+        return isWeakReference;
+    }
+
+    public boolean isStrongReference() {
+        return isStrongReference;
     }
 }

@@ -1,5 +1,6 @@
 package jdk.graal.compiler.replacements.gc;
 
+import org.graalvm.word.UnsignedWord;
 import static jdk.graal.compiler.nodes.PiNode.piCastToSnippetReplaceeStamp;
 import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.FREQUENT_PROBABILITY;
 import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.NOT_FREQUENT_PROBABILITY;
@@ -7,6 +8,8 @@ import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.probabilit
 
 import org.graalvm.word.LocationIdentity;
 import org.graalvm.word.Pointer;
+
+import jdk.graal.compiler.nodes.memory.address.AddressNode.Address;
 
 import jdk.graal.compiler.api.replacements.Snippet;
 import jdk.graal.compiler.core.common.GraalOptions;
@@ -24,7 +27,7 @@ import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.java.InstanceOfNode;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 import jdk.graal.compiler.nodes.memory.address.OffsetAddressNode;
@@ -230,26 +233,60 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         }
     }
 
+    /**
+     * bla
+     *
+     * @param address
+     * @param value
+     * @param isNarrowReference
+     * @param isStrongReference
+     * @param isWeakReference
+     * @param isPhantomReference
+     * @return blx
+     */
     @Snippet
-    public Object shenandoahLoadReferenceBarrier(Object value) {
-        Word thread = getThread();
+    public Object shenandoahLoadReferenceBarrier(Address address, Object value, boolean isNarrowReference,
+                    boolean isStrongReference, boolean isWeakReference, boolean isPhantomReference) {
         verifyOop(value);
 
-        boolean is_narrow = false; // value.stamp(NodeView.DEFAULT) instanceof NarrowOopStamp;
-        boolean is_strong = false;
-        boolean is_weak = false;
-        boolean is_phanton = false;
-
+        Word thread = getThread();
         byte gcStateValue = thread.readByte(gcStateOffset(), GC_STATE_LOCATION);
+        boolean forwarded_is_zero = (gcStateValue & HAS_FORWORDED) == 0;
+        boolean weak_roots_is_zero = (gcStateValue & WEAK_ROOTS) == 0;
 
-        byte flags = (byte) (HAS_FORWORDED | (is_strong ? 0 : WEAK_ROOTS));
-        boolean stable = (gcStateValue & flags) == (byte) 0;
-        Object result = value;
-        if (!stable) {
-            result = shenandoahLoadReferenceBarrierStub(value);
+        if (isStrongReference) {
+            if (forwarded_is_zero) {
+                return value;
+            }
+        } else {
+            if (weak_roots_is_zero) {
+                if (forwarded_is_zero) {
+                    return value;
+                }
+            }
         }
 
-        return piCastToSnippetReplaceeStamp(result);
+        if (isStrongReference) {
+            Pointer in_cset_fast_test_addr = Word.pointer(gcCSetFastTestAddr());
+            Pointer loadedReference = Word.objectToTrackedPointer(value);
+            UnsignedWord word = loadedReference.unsignedShiftRight(gcRegionSizeBytesShift());
+
+            byte val_to_cmp = in_cset_fast_test_addr.readByte(word);
+            if (val_to_cmp == 0) { // not in cset
+                return value;
+            }
+        }
+
+        // TODO: I think this can be improved but I don't know how.
+        // I expected that we should just "consume" the "value" object here instead of having to
+        // reload it.
+        Word field = Word.fromAddress(address);
+        Object loadedValue = field.readObject(0, BarrierType.NONE, LocationIdentity.any());
+        if (isNarrowReference) {
+            return piCastToSnippetReplaceeStamp(shenandoahNarrowStrongLoadReferenceBarrierStub(loadedValue, Word.fromAddress(address)));
+        } else {
+            return piCastToSnippetReplaceeStamp(shenandoahStrongLoadReferenceBarrierStub(loadedValue, Word.fromAddress(address)));
+        }
     }
 
     protected abstract Word getThread();
@@ -266,9 +303,15 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
 
     protected abstract int gcStateOffset();
 
+    protected abstract int gcRegionSizeBytesShift();
+
+    protected abstract long gcCSetFastTestAddr();
+
     protected abstract ForeignCallDescriptor preWriteBarrierCallDescriptor();
 
-    protected abstract ForeignCallDescriptor loadReferenceBarrierCallDescriptor();
+    protected abstract ForeignCallDescriptor narrowStrongLoadReferenceBarrierCallDescriptor();
+
+    protected abstract ForeignCallDescriptor strongLoadReferenceBarrierCallDescriptor();
 
     // the data below is only needed for the verification logic
     protected abstract boolean verifyOops();
@@ -307,8 +350,12 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         shenandoahPreBarrierStub(preWriteBarrierCallDescriptor(), previousObject);
     }
 
-    private Object shenandoahLoadReferenceBarrierStub(Object value) {
-        return shenandoahLoadReferenceBarrierStub(loadReferenceBarrierCallDescriptor(), value);
+    private Object shenandoahNarrowStrongLoadReferenceBarrierStub(Object src, Word load_addr) {
+        return shenandoahNarrowStrongLoadReferenceBarrierStub(narrowStrongLoadReferenceBarrierCallDescriptor(), src, load_addr);
+    }
+
+    private Object shenandoahStrongLoadReferenceBarrierStub(Object src, Word load_addr) {
+        return shenandoahStrongLoadReferenceBarrierStub(strongLoadReferenceBarrierCallDescriptor(), src, load_addr);
     }
 
     @Node.NodeIntrinsic(ForeignCallNode.class)
@@ -321,7 +368,10 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
     private static native void shenandoahPreBarrierStub(@Node.ConstantNodeParameter ForeignCallDescriptor descriptor, Object object);
 
     @Node.NodeIntrinsic(ForeignCallNode.class)
-    private static native Object shenandoahLoadReferenceBarrierStub(@Node.ConstantNodeParameter ForeignCallDescriptor descriptor, Object value);
+    private static native Object shenandoahNarrowStrongLoadReferenceBarrierStub(@Node.ConstantNodeParameter ForeignCallDescriptor descriptor, Object src, Word load_addr);
+
+    @Node.NodeIntrinsic(ForeignCallNode.class)
+    private static native Object shenandoahStrongLoadReferenceBarrierStub(@Node.ConstantNodeParameter ForeignCallDescriptor descriptor, Object src, Word load_addr);
 
     @Node.NodeIntrinsic(ForeignCallNode.class)
     private static native void printf(@Node.ConstantNodeParameter ForeignCallDescriptor logPrintf, Word format, long v1, long v2, long v3);
@@ -381,7 +431,7 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
             templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier, SnippetTemplate.DEFAULT_REPLACER, args);
         }
 
-        public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahReferentFieldReadBarrier barrier, LoweringTool tool) {
+        public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahReferentFieldReadBarrierNode barrier, LoweringTool tool) {
             SnippetTemplate.Arguments args = new SnippetTemplate.Arguments(snippet, barrier.graph().getGuardsStage(), tool.getLoweringStage());
             // This is expected to be lowered before address lowering
             OffsetAddressNode address = (OffsetAddressNode) barrier.getAddress();
@@ -413,7 +463,12 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
 
         public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahLoadReferenceBarrierNode barrier, LoweringTool tool) {
             SnippetTemplate.Arguments args = new SnippetTemplate.Arguments(snippet, barrier.graph().getGuardsStage(), tool.getLoweringStage());
+            args.add("address", barrier.getAddress());
             args.add("value", barrier.getValue());
+            args.add("isNarrowReference", barrier.isNarrowReference());
+            args.add("isStrongReference", barrier.isStrongReference());
+            args.add("isWeakReference", barrier.isWeakReference());
+            args.add("isPhantomReference", barrier.isPhantomReference());
             templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier, SnippetTemplate.DEFAULT_REPLACER, args);
         }
 

@@ -40,7 +40,7 @@ import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
 import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
 import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrier;
+import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.spi.LoweringTool;
 import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.replacements.ReplacementsUtil;
@@ -56,13 +56,19 @@ import static jdk.graal.compiler.hotspot.meta.HotSpotForeignCallDescriptor.Trans
 import static jdk.graal.compiler.hotspot.meta.HotSpotForeignCallsProviderImpl.NO_LOCATIONS;
 
 public final class HotSpotShenandoahBarrierSnippets extends ShenandoahBarrierSnippets {
-    public static final HotSpotForeignCallDescriptor SHENANDOAHWBPRECALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, KILLED_PRE_WRITE_BARRIER_STUB_LOCATIONS,
-                    "shenandoah_concmark_barrier", void.class, Object.class);
-    public static final HotSpotForeignCallDescriptor SHENANDOAHLRBCALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_load_reference_barrier",
-                    Object.class,
-                    Object.class);
-    public static final HotSpotForeignCallDescriptor VALIDATE_OBJECT = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "validate_object", boolean.class, Word.class,
-                    Word.class);
+
+    //@formatter:off
+    public static final HotSpotForeignCallDescriptor SHENANDOAHWBPRECALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, KILLED_PRE_WRITE_BARRIER_STUB_LOCATIONS, "shenandoah_concmark_barrier", void.class, Object.class);
+
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_STRONG_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_strong_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_NARROW_STRONG_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_narrow_strong_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_WEAK_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_weak_load_reference_barrier", Object.class, Object.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_NARROW_WEAK_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_narrow_weak_load_reference_barrier", Object.class, Object.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_PHANTOM_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_phantom_load_reference_barrier", Object.class, Object.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_NARROW_PHANTOM_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "shenandoah_narrow_phantom_load_reference_barrier", Object.class, Object.class);
+
+    public static final HotSpotForeignCallDescriptor VALIDATE_OBJECT = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "validate_object", boolean.class, Word.class, Word.class);
+    //@formatter:on
 
     private final GraalHotSpotVMConfig config;
     private final Register threadRegister;
@@ -108,13 +114,28 @@ public final class HotSpotShenandoahBarrierSnippets extends ShenandoahBarrierSni
     }
 
     @Override
+    protected int gcRegionSizeBytesShift() {
+        return HotSpotReplacementsUtil.shenandoahGCRegionSizeBytesShift(INJECTED_VMCONFIG);
+    }
+
+    @Override
+    protected long gcCSetFastTestAddr() {
+        return HotSpotReplacementsUtil.shenandoahGCCSetFastTestAddr(INJECTED_VMCONFIG);
+    }
+
+    @Override
     protected ForeignCallDescriptor preWriteBarrierCallDescriptor() {
         return SHENANDOAHWBPRECALL;
     }
 
     @Override
-    protected ForeignCallDescriptor loadReferenceBarrierCallDescriptor() {
-        return SHENANDOAHLRBCALL;
+    protected ForeignCallDescriptor narrowStrongLoadReferenceBarrierCallDescriptor() {
+        return SHENANDOAH_NARROW_STRONG_LRB_CALL;
+    }
+
+    @Override
+    protected ForeignCallDescriptor strongLoadReferenceBarrierCallDescriptor() {
+        return SHENANDOAH_STRONG_LRB_CALL;
     }
 
     @Override
@@ -188,7 +209,7 @@ public final class HotSpotShenandoahBarrierSnippets extends ShenandoahBarrierSni
             lowerer.lower(this, shenandoahPosWriteBarrier, barrier, tool);
         }
 
-        public void lower(ShenandoahReferentFieldReadBarrier barrier, LoweringTool tool) {
+        public void lower(ShenandoahReferentFieldReadBarrierNode barrier, LoweringTool tool) {
             lowerer.lower(this, shenandoahReferentReadBarrier, barrier, tool);
         }
 

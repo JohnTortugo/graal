@@ -460,6 +460,8 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final int shenandoahSATBQueueIndexOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_index_offset", Integer.class);
     public final int shenandoahSATBQueueBufferOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_buffer_offset", Integer.class);
     public final int shenandoahGCStateOffset = getConstant("ShenandoahThreadLocalData::gc_state_offset", Integer.class);
+    public final int shenandoahGCRegionSizeBytesShift = getConstant("ShenandoahHeapRegion::region_size_bytes_shift_jint", Integer.class);
+    public final long shenandoahGCCSetFastTestAddress = getFieldValue("CompilerToVM::Data::ShenandoahInCollectionSetFastTest_address", Long.class, "address");
 
     public final int klassOffset = getFieldValue("java_lang_Class::_klass_offset", Integer.class, "int");
     public final int arrayKlassOffset = getFieldValue("java_lang_Class::_array_klass_offset", Integer.class, "int");
@@ -675,10 +677,17 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final long writeBarrierPostAddress = getAddress("JVMCIRuntime::write_barrier_post");
     public final long validateObject = getAddress("JVMCIRuntime::validate_object");
 
-    // @Todo:
+    // TODO: fix this address
     public final long shenandoahConcmarkBarrierAddress = 0xCCCCCCC; // getAddress("JVMCIRuntime::shenandoah_concmark_barrier");
-    public final long shenandoahLoadReferenceBarrierAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong");
-    public final long shenandoahLoadReferenceBarrierStrongAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong_narrow");
+
+    public final long shenandoahStrongLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong");
+    public final long shenandoahNarrowStrongLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_strong_narrow");
+
+    public final long shenandoahWeakLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_weak");
+    public final long shenandoahNarrowWeakLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_weak_narrow");
+
+    public final long shenandoahPhantomLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_phantom");
+    public final long shenandoahNarrowPhantomLRBAddress = getAddress("JVMCIRuntime::shenandoah_lrb_phantom_narrow");
 
     // @formatter:on
     public final long testDeoptimizeCallInt = getAddress("JVMCIRuntime::test_deoptimize_call_int");

@@ -69,38 +69,56 @@ public class ShenandoahBarrierSet implements BarrierSet {
     public void addBarriers(FixedAccessNode n) {
         System.out.println("addBarriers) Node: " + n + ", barrierType: " + n.getBarrierType());
 
+        if (n.getBarrierType() == BarrierType.NONE) {
+            return;
+        }
+
         if (n instanceof ReadNode) {
             addReadNodeBarriers((ReadNode) n);
-        } /**
-           * else if (n instanceof WriteNode) { WriteNode write = (WriteNode) n;
-           * addWriteBarriers(write, write.value(), null, true, write.getUsedAsNullCheck()); } else
-           * if (n instanceof LoweredAtomicReadAndWriteNode) { LoweredAtomicReadAndWriteNode atomic
-           * = (LoweredAtomicReadAndWriteNode) n; addWriteBarriers(atomic, atomic.getNewValue(),
-           * null, true, atomic.getUsedAsNullCheck()); } else if (n instanceof
-           * AbstractCompareAndSwapNode) { if (config.isUseCASBarrier()) {
-           * System.out.println("Possibly incomplete."); // GraalError.unimplemented("nope");
-           * AbstractCompareAndSwapNode cmpSwap = (AbstractCompareAndSwapNode) n;
-           * addWriteBarriers(cmpSwap, cmpSwap.getNewValue(), cmpSwap.getExpectedValue(), false,
-           * false); } } else if (n instanceof ArrayRangeWrite) { System.out.println("Possibly
-           * incomplete."); // GraalError.unimplemented("nope");
-           * addArrayRangeBarriers((ArrayRangeWrite) n); } else {
-           * GraalError.guarantee(n.getBarrierType() == BarrierType.NONE, "missed a node that
-           * requires a GC barrier: %s", n.getClass()); }
-           */
+        }
+
+        /**
+         * else if (n instanceof WriteNode) { WriteNode write = (WriteNode) n;
+         * addWriteBarriers(write, write.value(), null, true, write.getUsedAsNullCheck()); } else if
+         * (n instanceof LoweredAtomicReadAndWriteNode) { LoweredAtomicReadAndWriteNode atomic =
+         * (LoweredAtomicReadAndWriteNode) n; addWriteBarriers(atomic, atomic.getNewValue(), null,
+         * true, atomic.getUsedAsNullCheck()); } else if (n instanceof AbstractCompareAndSwapNode) {
+         * if (config.isUseCASBarrier()) { System.out.println("Possibly incomplete."); //
+         * GraalError.unimplemented("nope"); AbstractCompareAndSwapNode cmpSwap =
+         * (AbstractCompareAndSwapNode) n; addWriteBarriers(cmpSwap, cmpSwap.getNewValue(),
+         * cmpSwap.getExpectedValue(), false, false); } } else if (n instanceof ArrayRangeWrite) {
+         * System.out.println("Possibly incomplete."); // GraalError.unimplemented("nope");
+         * addArrayRangeBarriers((ArrayRangeWrite) n); } else {
+         * GraalError.guarantee(n.getBarrierType() == BarrierType.NONE, "missed a node that requires
+         * a GC barrier: %s", n.getClass()); }
+         */
     }
 
     private void addReadNodeBarriers(ReadNode node) {
         assert config.useLRB();
         assert node.getBarrierType() != BarrierType.UNKNOWN;
+        assert node.getBarrierType() != BarrierType.NONE;
 
-        if (node.getBarrierType() == BarrierType.NONE) {
+        Stamp stamp = node.getAccessStamp(NodeView.DEFAULT);
+        if (!stamp.isObjectStamp()) {
+            GraalError.guarantee(false, "not an object stamp.");
+            return;
+        }
+
+        ValueNode base = node.getAddress().getBase();
+        if (!base.stamp(NodeView.DEFAULT).isObjectStamp()) {
+            GraalError.guarantee(false, "base not an object stamp.");
             return;
         }
 
         StructuredGraph graph = node.graph();
-        FixedWithNextNode lrb = (node.getBarrierType() == BarrierType.REFERENCE_GET) ? graph.add(new ShenandoahReferentFieldReadBarrier(node.getAddress(), node))
-                        : graph.add(new ShenandoahLoadReferenceBarrierNode(node));
-        node.graph().addAfterFixed(node, lrb);
+        if (node.getBarrierType() == BarrierType.REFERENCE_GET) {
+            ShenandoahReferentFieldReadBarrierNode lrb = new ShenandoahReferentFieldReadBarrierNode(node.getAddress(), node);
+            node.graph().addAfterFixed(node, graph.add(lrb));
+        } else {
+            ShenandoahLoadReferenceBarrierNode lrb = new ShenandoahLoadReferenceBarrierNode(node);
+            node.graph().addAfterFixed(node, graph.add(lrb));
+        }
     }
 
     private void addWriteBarriers(FixedAccessNode node, ValueNode writtenValue, ValueNode expectedValue, boolean doLoad, boolean nullCheck) {
@@ -172,12 +190,18 @@ public class ShenandoahBarrierSet implements BarrierSet {
         return true;
     }
 
+    /**
+     * The methods below this line are for detecting which type of barrier is needed for accessing
+     * some data.
+     */
+
     @Override
     public BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind) {
         BarrierType type = BarrierType.NONE;
 
         if (field.getJavaKind() == JavaKind.Object) {
-            // Need to handle the different "Weak" references types.
+            // TODO: Need to handle the different "Weak" references types.
+            // For now I'll consider all of them as "Strong" references.
             type = BarrierType.FIELD;
         }
 
