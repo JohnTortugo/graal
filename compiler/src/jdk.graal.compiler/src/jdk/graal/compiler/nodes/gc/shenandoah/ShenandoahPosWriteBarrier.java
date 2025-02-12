@@ -22,7 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.graal.compiler.nodes.gc;
+package jdk.graal.compiler.nodes.gc.shenandoah;
 
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.nodeinfo.InputType;
@@ -30,6 +30,9 @@ import jdk.graal.compiler.nodeinfo.NodeInfo;
 import jdk.graal.compiler.nodes.DeoptimizingNode;
 import jdk.graal.compiler.nodes.FrameState;
 import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.gc.ObjectWriteBarrierNode;
+import jdk.graal.compiler.nodes.gc.WriteBarrierNode;
+import jdk.graal.compiler.nodes.gc.WriteBarrierNode.Kind;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 
 import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;

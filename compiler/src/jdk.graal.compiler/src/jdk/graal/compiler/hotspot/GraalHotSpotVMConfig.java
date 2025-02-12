@@ -460,8 +460,8 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final int shenandoahSATBQueueIndexOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_index_offset", Integer.class);
     public final int shenandoahSATBQueueBufferOffset = getConstant("ShenandoahThreadLocalData::satb_mark_queue_buffer_offset", Integer.class);
     public final int shenandoahGCStateOffset = getConstant("ShenandoahThreadLocalData::gc_state_offset", Integer.class);
-    public final int shenandoahGCRegionSizeBytesShift = getConstant("ShenandoahHeapRegion::region_size_bytes_shift_jint", Integer.class);
-    public final long shenandoahGCCSetFastTestAddress = getFieldValue("CompilerToVM::Data::ShenandoahInCollectionSetFastTest_address", Long.class, "address");
+    public final int shenandoahGCRegionSizeBytesShift = getFieldValue("CompilerToVM::Data::shenandoah_region_size_bytes_shift", Integer.class, "jint");
+    public final long shenandoahGCCSetFastTestAddress = getFieldValue("CompilerToVM::Data::shenandoah_in_cset_fast_test_addr", Long.class, "address");
 
     public final int klassOffset = getFieldValue("java_lang_Class::_klass_offset", Integer.class, "int");
     public final int arrayKlassOffset = getFieldValue("java_lang_Class::_array_klass_offset", Integer.class, "int");

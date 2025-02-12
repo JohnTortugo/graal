@@ -22,7 +22,7 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.graal.compiler.nodes.gc;
+package jdk.graal.compiler.nodes.gc.shenandoah;
 
 public class ShenandoahBarrierConfig {
     private final boolean useLRB;

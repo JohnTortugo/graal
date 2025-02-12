@@ -60,8 +60,8 @@ import jdk.graal.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plugi
 import jdk.graal.compiler.nodes.java.AbstractNewObjectNode;
 import jdk.graal.compiler.nodes.loop.LoopsDataProviderImpl;
 import jdk.graal.compiler.nodes.memory.FixedAccessNode;
-import jdk.graal.compiler.nodes.gc.ShenandoahBarrierConfig;
-import jdk.graal.compiler.nodes.gc.ShenandoahBarrierSet;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahBarrierConfig;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahBarrierSet;
 import jdk.graal.compiler.nodes.spi.IdentityHashCodeProvider;
 import jdk.graal.compiler.nodes.spi.LoopsDataProvider;
 import jdk.graal.compiler.nodes.spi.Replacements;
@@ -256,7 +256,15 @@ public abstract class HotSpotBackendFactory implements ArchitectureSpecific {
         ResolvedJavaField referentField = HotSpotReplacementsUtil.referentField(metaAccess);
         if (config.gc == HotSpotGraalRuntime.HotSpotGC.Shenandoah) {
             ShenandoahBarrierConfig shenandoahConfig = new ShenandoahBarrierConfig(config.shenandoahLoadRefBarrier, config.shenandoahSATBBarrier, config.shenandoahCASBarrier);
-            return new ShenandoahBarrierSet(shenandoahConfig, objectArrayType, referentField);
+            return new ShenandoahBarrierSet(shenandoahConfig, objectArrayType, referentField) {
+                @Override
+                protected ValueNode uncompressExpectedValue(ValueNode value) {
+                    if (value != null && (value.stamp(NodeView.DEFAULT) instanceof NarrowOopStamp)) {
+                        return HotSpotCompressionNode.uncompress(value.graph(), value, config.getOopEncoding());
+                    }
+                    return value;
+                }
+            };
         } else if (config.gc == HotSpotGraalRuntime.HotSpotGC.Z) {
             return new HotSpotZBarrierSet(objectArrayType, referentField);
         } else if (config.gc == HotSpotGraalRuntime.HotSpotGC.Epsilon) {

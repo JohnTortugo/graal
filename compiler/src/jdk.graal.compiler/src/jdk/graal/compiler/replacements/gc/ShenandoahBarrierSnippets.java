@@ -23,11 +23,11 @@ import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.extended.FixedValueAnchorNode;
 import jdk.graal.compiler.nodes.extended.ForeignCallNode;
 import jdk.graal.compiler.nodes.extended.NullCheckNode;
-import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
-import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahArrayRangePreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadReferenceBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPosWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.java.InstanceOfNode;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 import jdk.graal.compiler.nodes.memory.address.OffsetAddressNode;
@@ -70,61 +70,63 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
     @Snippet
     public void shenandoahPreWriteBarrier(AddressNode.Address address, Object object, Object expectedObject, @Snippet.ConstantParameter boolean doLoad, @Snippet.ConstantParameter boolean nullCheck,
                     @Snippet.ConstantParameter int traceStartCycle, @Snippet.ConstantParameter ShenandoahBarrierSnippets.Counters counters) {
-        if (nullCheck) {
-            NullCheckNode.nullCheck(address);
-        }
-        Word thread = getThread();
-        verifyOop(object);
-        Word field = Word.fromAddress(address);
-        byte markingValue = thread.readByte(satbQueueMarkingOffset(), SATB_QUEUE_MARKING_ACTIVE_LOCATION);
+        //@formatter:off
+        //if (nullCheck) {
+        //    NullCheckNode.nullCheck(address);
+        //}
+        //Word thread = getThread();
+        //verifyOop(object);
+        //Word field = Word.fromAddress(address);
+        //byte markingValue = thread.readByte(satbQueueMarkingOffset(), SATB_QUEUE_MARKING_ACTIVE_LOCATION);
 
-        boolean trace = isTracingActive(traceStartCycle);
-        int gcCycle = 0;
-        if (trace) {
-            Pointer gcTotalCollectionsAddress = Word.pointer(gcTotalCollectionsAddress());
-            gcCycle = (int) gcTotalCollectionsAddress.readLong(0);
-            log(trace, "[%d] Shenandoah-Pre Thread %p Object %p\n", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(object).rawValue());
-            log(trace, "[%d] Shenandoah-Pre Thread %p Expected Object %p\n", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(expectedObject).rawValue());
-            log(trace, "[%d] Shenandoah-Pre Thread %p Field %p\n", gcCycle, thread.rawValue(), field.rawValue());
-            log(trace, "[%d] Shenandoah-Pre Thread %p Marking %d\n", gcCycle, thread.rawValue(), markingValue);
-            log(trace, "[%d] Shenandoah-Pre Thread %p DoLoad %d\n", gcCycle, thread.rawValue(), doLoad ? 1L : 0L);
-        }
+        //boolean trace = isTracingActive(traceStartCycle);
+        //int gcCycle = 0;
+        //if (trace) {
+        //    Pointer gcTotalCollectionsAddress = Word.pointer(gcTotalCollectionsAddress());
+        //    gcCycle = (int) gcTotalCollectionsAddress.readLong(0);
+        //    log(trace, "[%d] Shenandoah-Pre Thread %p Object %p\n", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(object).rawValue());
+        //    log(trace, "[%d] Shenandoah-Pre Thread %p Expected Object %p\n", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(expectedObject).rawValue());
+        //    log(trace, "[%d] Shenandoah-Pre Thread %p Field %p\n", gcCycle, thread.rawValue(), field.rawValue());
+        //    log(trace, "[%d] Shenandoah-Pre Thread %p Marking %d\n", gcCycle, thread.rawValue(), markingValue);
+        //    log(trace, "[%d] Shenandoah-Pre Thread %p DoLoad %d\n", gcCycle, thread.rawValue(), doLoad ? 1L : 0L);
+        //}
 
-        counters.shenandoahAttemptedPreWriteBarrierCounter.inc();
-        // If the concurrent marker is enabled, the barrier is issued.
-        if (probability(NOT_FREQUENT_PROBABILITY, markingValue != (byte) 0)) {
-            // If the previous value has to be loaded (before the write), the load is issued.
-            // The load is always issued except the cases of CAS and referent field.
-            Object previousObject;
-            if (doLoad) {
-                previousObject = field.readObject(0, BarrierType.NONE, LocationIdentity.any());
-                if (trace) {
-                    log(trace, "[%d] G1-Pre Thread %p Previous Object %p\n ", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(previousObject).rawValue());
-                    verifyOop(previousObject);
-                }
-            } else {
-                previousObject = FixedValueAnchorNode.getObject(expectedObject);
-            }
+        //counters.shenandoahAttemptedPreWriteBarrierCounter.inc();
+        //// If the concurrent marker is enabled, the barrier is issued.
+        //if (probability(NOT_FREQUENT_PROBABILITY, markingValue != (byte) 0)) {
+        //    // If the previous value has to be loaded (before the write), the load is issued.
+        //    // The load is always issued except the cases of CAS and referent field.
+        //    Object previousObject;
+        //    if (doLoad) {
+        //        previousObject = field.readObject(0, BarrierType.NONE, LocationIdentity.any());
+        //        if (trace) {
+        //            log(trace, "[%d] G1-Pre Thread %p Previous Object %p\n ", gcCycle, thread.rawValue(), Word.objectToTrackedPointer(previousObject).rawValue());
+        //            verifyOop(previousObject);
+        //        }
+        //    } else {
+        //        previousObject = FixedValueAnchorNode.getObject(expectedObject);
+        //    }
 
-            counters.shenandoahEffectivePreWriteBarrierCounter.inc();
-            // If the previous value is null the barrier should not be issued.
-            if (probability(FREQUENT_PROBABILITY, previousObject != null)) {
-                counters.shenandoahExecutedPreWriteBarrierCounter.inc();
-                // If the thread-local SATB buffer is full issue a native call which will
-                // initialize a new one and add the entry.
-                Word indexValue = thread.readWord(satbQueueIndexOffset(), SATB_QUEUE_INDEX_LOCATION);
-                if (probability(FREQUENT_PROBABILITY, indexValue.notEqual(0))) {
-                    Word bufferAddress = thread.readWord(satbQueueBufferOffset(), SATB_QUEUE_BUFFER_LOCATION);
-                    Word nextIndex = indexValue.subtract(wordSize());
+        //    counters.shenandoahEffectivePreWriteBarrierCounter.inc();
+        //    // If the previous value is null the barrier should not be issued.
+        //    if (probability(FREQUENT_PROBABILITY, previousObject != null)) {
+        //        counters.shenandoahExecutedPreWriteBarrierCounter.inc();
+        //        // If the thread-local SATB buffer is full issue a native call which will
+        //        // initialize a new one and add the entry.
+        //        Word indexValue = thread.readWord(satbQueueIndexOffset(), SATB_QUEUE_INDEX_LOCATION);
+        //        if (probability(FREQUENT_PROBABILITY, indexValue.notEqual(0))) {
+        //            Word bufferAddress = thread.readWord(satbQueueBufferOffset(), SATB_QUEUE_BUFFER_LOCATION);
+        //            Word nextIndex = indexValue.subtract(wordSize());
 
-                    // Log the object to be marked as well as update the SATB's buffer next index.
-                    bufferAddress.writeWord(nextIndex, Word.objectToTrackedPointer(previousObject), SATB_QUEUE_LOG_LOCATION);
-                    thread.writeWord(satbQueueIndexOffset(), nextIndex, SATB_QUEUE_INDEX_LOCATION);
-                } else {
-                    shenandoahPreBarrierStub(previousObject);
-                }
-            }
-        }
+        //            // Log the object to be marked as well as update the SATB's buffer next index.
+        //            bufferAddress.writeWord(nextIndex, Word.objectToTrackedPointer(previousObject), SATB_QUEUE_LOG_LOCATION);
+        //            thread.writeWord(satbQueueIndexOffset(), nextIndex, SATB_QUEUE_INDEX_LOCATION);
+        //        } else {
+        //            shenandoahPreBarrierStub(previousObject);
+        //        }
+        //    }
+        //}
+        //@formatter:on
     }
 
     @Snippet
@@ -281,12 +283,13 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         // I expected that we should just "consume" the "value" object here instead of having to
         // reload it.
         Word field = Word.fromAddress(address);
+
         Object loadedValue = field.readObject(0, BarrierType.NONE, LocationIdentity.any());
-        if (isNarrowReference) {
-            return piCastToSnippetReplaceeStamp(shenandoahNarrowStrongLoadReferenceBarrierStub(loadedValue, Word.fromAddress(address)));
-        } else {
-            return piCastToSnippetReplaceeStamp(shenandoahStrongLoadReferenceBarrierStub(loadedValue, Word.fromAddress(address)));
-        }
+        // if (isNarrowReference) {
+        // return shenandoahNarrowStrongLoadReferenceBarrierStub(loadedValue, field);
+        // } else {
+        return shenandoahStrongLoadReferenceBarrierStub(loadedValue, field);
+        // }
     }
 
     protected abstract Word getThread();
@@ -462,14 +465,16 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         }
 
         public void lower(SnippetTemplate.AbstractTemplates templates, SnippetTemplate.SnippetInfo snippet, ShenandoahLoadReferenceBarrierNode barrier, LoweringTool tool) {
-            SnippetTemplate.Arguments args = new SnippetTemplate.Arguments(snippet, barrier.graph().getGuardsStage(), tool.getLoweringStage());
-            args.add("address", barrier.getAddress());
-            args.add("value", barrier.getValue());
-            args.add("isNarrowReference", barrier.isNarrowReference());
-            args.add("isStrongReference", barrier.isStrongReference());
-            args.add("isWeakReference", barrier.isWeakReference());
-            args.add("isPhantomReference", barrier.isPhantomReference());
-            templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier, SnippetTemplate.DEFAULT_REPLACER, args);
+            // SnippetTemplate.Arguments args = new SnippetTemplate.Arguments(snippet,
+            // barrier.graph().getGuardsStage(), tool.getLoweringStage());
+            // args.add("address", barrier.getAddress());
+            // args.add("value", barrier.getValue());
+            // args.add("isNarrowReference", barrier.isNarrowReference());
+            // args.add("isStrongReference", barrier.isStrongReference());
+            // args.add("isWeakReference", barrier.isWeakReference());
+            // args.add("isPhantomReference", barrier.isPhantomReference());
+            // templates.template(tool, barrier, args).instantiate(tool.getMetaAccess(), barrier,
+            // SnippetTemplate.DEFAULT_REPLACER, args);
         }
 
         private static int traceStartCycle(StructuredGraph graph) {
@@ -477,5 +482,7 @@ public abstract class ShenandoahBarrierSnippets extends WriteBarrierSnippets imp
         }
 
         protected abstract ValueNode uncompress(ValueNode value);
+
+        protected abstract ValueNode compress(ValueNode value);
     }
 }

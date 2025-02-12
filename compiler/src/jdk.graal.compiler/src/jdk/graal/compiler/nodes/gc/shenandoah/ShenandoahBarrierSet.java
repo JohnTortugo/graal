@@ -22,27 +22,24 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.graal.compiler.nodes.gc;
+package jdk.graal.compiler.nodes.gc.shenandoah;
 
-import static jdk.graal.compiler.nodes.NamedLocationIdentity.OFF_HEAP_LOCATION;
 import org.graalvm.word.LocationIdentity;
 
+import jdk.graal.compiler.nodes.type.NarrowOopStamp;
+import jdk.graal.compiler.nodes.NodeView;
 import jdk.graal.compiler.core.common.memory.BarrierType;
 import jdk.graal.compiler.core.common.type.AbstractObjectStamp;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.nodes.NodeView;
-import jdk.graal.compiler.nodes.FixedWithNextNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.extended.ArrayRangeWrite;
 import jdk.graal.compiler.nodes.extended.RawStoreNode;
-import jdk.graal.compiler.nodes.java.AbstractCompareAndSwapNode;
-import jdk.graal.compiler.nodes.type.StampTool;
-import jdk.graal.compiler.nodes.java.LoweredAtomicReadAndWriteNode;
+import jdk.graal.compiler.nodes.gc.BarrierSet;
 import jdk.graal.compiler.nodes.memory.FixedAccessNode;
 import jdk.graal.compiler.nodes.memory.ReadNode;
-import jdk.graal.compiler.nodes.memory.WriteNode;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.ResolvedJavaField;
@@ -69,10 +66,6 @@ public class ShenandoahBarrierSet implements BarrierSet {
     public void addBarriers(FixedAccessNode n) {
         System.out.println("addBarriers) Node: " + n + ", barrierType: " + n.getBarrierType());
 
-        if (n.getBarrierType() == BarrierType.NONE) {
-            return;
-        }
-
         if (n instanceof ReadNode) {
             addReadNodeBarriers((ReadNode) n);
         }
@@ -97,7 +90,10 @@ public class ShenandoahBarrierSet implements BarrierSet {
     private void addReadNodeBarriers(ReadNode node) {
         assert config.useLRB();
         assert node.getBarrierType() != BarrierType.UNKNOWN;
-        assert node.getBarrierType() != BarrierType.NONE;
+
+        if (node.getBarrierType() == BarrierType.NONE) {
+            return;
+        }
 
         Stamp stamp = node.getAccessStamp(NodeView.DEFAULT);
         if (!stamp.isObjectStamp()) {
@@ -112,13 +108,23 @@ public class ShenandoahBarrierSet implements BarrierSet {
         }
 
         StructuredGraph graph = node.graph();
-        if (node.getBarrierType() == BarrierType.REFERENCE_GET) {
-            ShenandoahReferentFieldReadBarrierNode lrb = new ShenandoahReferentFieldReadBarrierNode(node.getAddress(), node);
-            node.graph().addAfterFixed(node, graph.add(lrb));
-        } else {
-            ShenandoahLoadReferenceBarrierNode lrb = new ShenandoahLoadReferenceBarrierNode(node);
-            node.graph().addAfterFixed(node, graph.add(lrb));
-        }
+        ShenandoahLoadReferenceBarrierNode lrb = new ShenandoahLoadReferenceBarrierNode(
+                        node.getAddress(),
+                        uncompressExpectedValue(node),
+                        node.stamp(NodeView.DEFAULT) instanceof NarrowOopStamp,
+                        node.getBarrierType() == BarrierType.FIELD,
+                        node.getBarrierType() == BarrierType.WEAK_REFERS_TO,
+                        node.getBarrierType() == BarrierType.PHANTOM_REFERS_TO);
+        ShenandoahLoadReferenceBarrierNode barrier = graph.add(lrb);
+        graph.addAfterFixed(node, barrier);
+    }
+
+    /**
+     * The expected value argument might be in compressed form and some barriers (e.g., LRB) only
+     * work on uncompressed references.
+     */
+    protected ValueNode uncompressExpectedValue(ValueNode value) {
+        return value;
     }
 
     private void addWriteBarriers(FixedAccessNode node, ValueNode writtenValue, ValueNode expectedValue, boolean doLoad, boolean nullCheck) {
@@ -194,14 +200,12 @@ public class ShenandoahBarrierSet implements BarrierSet {
      * The methods below this line are for detecting which type of barrier is needed for accessing
      * some data.
      */
-
     @Override
     public BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind) {
         BarrierType type = BarrierType.NONE;
 
+        // TODO: handle out of heap (native) pointers, etc.
         if (field.getJavaKind() == JavaKind.Object) {
-            // TODO: Need to handle the different "Weak" references types.
-            // For now I'll consider all of them as "Strong" references.
             type = BarrierType.FIELD;
         }
 

@@ -36,11 +36,11 @@ import jdk.graal.compiler.hotspot.meta.HotSpotProviders;
 import jdk.graal.compiler.hotspot.meta.HotSpotRegistersProvider;
 import jdk.graal.compiler.hotspot.nodes.HotSpotCompressionNode;
 import jdk.graal.compiler.nodes.ValueNode;
-import jdk.graal.compiler.nodes.gc.ShenandoahArrayRangePreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahLoadReferenceBarrierNode;
-import jdk.graal.compiler.nodes.gc.ShenandoahPreWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahPosWriteBarrier;
-import jdk.graal.compiler.nodes.gc.ShenandoahReferentFieldReadBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahArrayRangePreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadReferenceBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPosWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.spi.LoweringTool;
 import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.replacements.ReplacementsUtil;
@@ -234,6 +234,12 @@ public final class HotSpotShenandoahBarrierSnippets extends ShenandoahBarrierSni
         public ValueNode uncompress(ValueNode expected) {
             assert oopEncoding != null;
             return HotSpotCompressionNode.uncompress(expected.graph(), expected, oopEncoding);
+        }
+
+        @Override
+        public ValueNode compress(ValueNode expected) {
+            assert oopEncoding != null;
+            return HotSpotCompressionNode.compress(expected.graph(), expected, oopEncoding);
         }
     }
 }

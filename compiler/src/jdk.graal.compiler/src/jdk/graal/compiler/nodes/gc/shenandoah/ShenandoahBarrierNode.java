@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2021, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,30 +22,42 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.graal.compiler.nodes.gc;
+package jdk.graal.compiler.nodes.gc.shenandoah;
 
+import jdk.graal.compiler.core.common.type.StampFactory;
 import jdk.graal.compiler.graph.NodeClass;
+import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
+import jdk.graal.compiler.nodes.FixedWithNextNode;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
+import jdk.graal.compiler.nodes.spi.Lowerable;
+import jdk.graal.compiler.nodes.spi.LoweringTool;
 
-import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
-import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
+@NodeInfo
+public abstract class ShenandoahBarrierNode extends FixedWithNextNode implements Lowerable {
+    public static final NodeClass<ShenandoahBarrierNode> TYPE = NodeClass.create(ShenandoahBarrierNode.class);
 
-@NodeInfo(cycles = CYCLES_64, size = SIZE_64)
-public class ShenandoahReferentFieldReadBarrierNode extends ObjectWriteBarrierNode {
-    public static final NodeClass<ShenandoahReferentFieldReadBarrierNode> TYPE = NodeClass.create(ShenandoahReferentFieldReadBarrierNode.class);
+    @OptionalInput protected ValueNode value;
+    @Input(InputType.Association) protected AddressNode address;
 
-    public ShenandoahReferentFieldReadBarrierNode(AddressNode address, ValueNode expectedObject) {
-        super(TYPE, address, expectedObject, true);
-    }
-
-    public ValueNode getExpectedObject() {
-        return getValue();
+    protected ShenandoahBarrierNode(NodeClass<? extends ShenandoahBarrierNode> c, AddressNode address, ValueNode value) {
+        super(c, StampFactory.forVoid());
+        this.address = address;
+        this.value = value;
     }
 
     @Override
-    public Kind getKind() {
-        return Kind.PRE_BARRIER;
+    public void lower(LoweringTool tool) {
+        assert graph().getGuardsStage().areFrameStatesAtDeopts();
+        tool.getLowerer().lower(this, tool);
+    }
+
+    public AddressNode getAddress() {
+        return address;
+    }
+
+    public ValueNode getValue() {
+        return value;
     }
 }

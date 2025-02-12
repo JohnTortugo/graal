@@ -22,61 +22,25 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package jdk.graal.compiler.nodes.gc;
+package jdk.graal.compiler.nodes.gc.shenandoah;
 
 import jdk.graal.compiler.graph.NodeClass;
-import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
-import jdk.graal.compiler.nodes.DeoptimizingNode;
-import jdk.graal.compiler.nodes.FrameState;
 import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.gc.ArrayRangeWriteBarrierNode;
+import jdk.graal.compiler.nodes.gc.WriteBarrierNode;
+import jdk.graal.compiler.nodes.gc.WriteBarrierNode.Kind;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 
 import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
 @NodeInfo(cycles = CYCLES_64, size = SIZE_64)
-public class ShenandoahPreWriteBarrier extends ObjectWriteBarrierNode implements DeoptimizingNode.DeoptBefore {
+public class ShenandoahArrayRangePreWriteBarrier extends ArrayRangeWriteBarrierNode {
+    public static final NodeClass<ShenandoahArrayRangePreWriteBarrier> TYPE = NodeClass.create(ShenandoahArrayRangePreWriteBarrier.class);
 
-    public static final NodeClass<ShenandoahPreWriteBarrier> TYPE = NodeClass.create(ShenandoahPreWriteBarrier.class);
-
-    @OptionalInput(InputType.State) private FrameState stateBefore;
-    private final boolean nullCheck;
-    private final boolean doLoad;
-
-    public ShenandoahPreWriteBarrier(AddressNode address, ValueNode expectedObject, boolean doLoad, boolean nullCheck) {
-        super(TYPE, address, expectedObject, true);
-        assert doLoad == (expectedObject == null);
-        this.doLoad = doLoad;
-        this.nullCheck = nullCheck;
-    }
-
-    public ValueNode getExpectedObject() {
-        return getValue();
-    }
-
-    public boolean doLoad() {
-        return doLoad;
-    }
-
-    public boolean getNullCheck() {
-        return nullCheck;
-    }
-
-    @Override
-    public boolean canDeoptimize() {
-        return nullCheck;
-    }
-
-    @Override
-    public FrameState stateBefore() {
-        return stateBefore;
-    }
-
-    @Override
-    public void setStateBefore(FrameState state) {
-        updateUsages(stateBefore, state);
-        stateBefore = state;
+    public ShenandoahArrayRangePreWriteBarrier(AddressNode address, ValueNode length, int elementStride) {
+        super(TYPE, address, length, elementStride);
     }
 
     @Override

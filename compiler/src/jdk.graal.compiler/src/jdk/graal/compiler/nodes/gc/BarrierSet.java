@@ -53,7 +53,8 @@ public interface BarrierSet {
     default void verifyBarriers(StructuredGraph graph) {
     }
 
-
+    // What type of barrier for reading a static or instance field
+    BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind);
 
     /// NOT NOT NOT NOT NOT NOT DONE
 
@@ -71,8 +72,6 @@ public interface BarrierSet {
     // Add the needed GC barriers according to type of 'n'
     void addBarriers(FixedAccessNode n);
 
-    // What type of barrier for a field read
-    BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind);
 
     // What type of barrier for a field write
     BarrierType fieldWriteBarrierType(ResolvedJavaField field, JavaKind storageKind);
