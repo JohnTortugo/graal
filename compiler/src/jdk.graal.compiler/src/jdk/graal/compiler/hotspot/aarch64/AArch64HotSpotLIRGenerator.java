@@ -38,6 +38,8 @@ import java.util.Arrays;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
+import jdk.graal.compiler.hotspot.aarch64.shenandoah.AArch64HotSpotShenandoahBarrierSetLIRTool;
+import jdk.graal.compiler.lir.aarch64.shenandoah.AArch64ShenandoahBarrierSetLIRGenerator;
 import jdk.graal.compiler.asm.Label;
 import jdk.graal.compiler.asm.aarch64.AArch64Address;
 import jdk.graal.compiler.asm.aarch64.AArch64Assembler.ConditionFlag;
@@ -118,6 +120,9 @@ public class AArch64HotSpotLIRGenerator extends AArch64LIRGenerator implements H
         }
         if (config.gc == HotSpotGraalRuntime.HotSpotGC.Z) {
             return new AArch64HotSpotZBarrierSetLIRGenerator(config, providers);
+        }
+        if (config.gc == HotSpotGraalRuntime.HotSpotGC.Shenandoah) {
+            return new AArch64ShenandoahBarrierSetLIRGenerator(new AArch64HotSpotShenandoahBarrierSetLIRTool(config, providers));
         }
         return null;
     }

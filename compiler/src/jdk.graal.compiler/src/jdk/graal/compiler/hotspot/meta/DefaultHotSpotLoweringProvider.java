@@ -91,6 +91,7 @@ import jdk.graal.compiler.hotspot.replacements.HotSpotHashCodeSnippets;
 import jdk.graal.compiler.hotspot.replacements.HotSpotIsArraySnippets;
 import jdk.graal.compiler.hotspot.replacements.HotSpotReplacementsUtil;
 import jdk.graal.compiler.hotspot.replacements.HotSpotSerialWriteBarrierSnippets;
+import jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets;
 import jdk.graal.compiler.hotspot.replacements.HubGetClassNode;
 import jdk.graal.compiler.hotspot.replacements.InstanceOfSnippets;
 import jdk.graal.compiler.hotspot.replacements.KlassLayoutHelperNode;
@@ -168,6 +169,11 @@ import jdk.graal.compiler.nodes.gc.G1PreWriteBarrierNode;
 import jdk.graal.compiler.nodes.gc.G1ReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.gc.SerialArrayRangeWriteBarrierNode;
 import jdk.graal.compiler.nodes.gc.SerialWriteBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahArrayRangePreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadReferenceBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPosWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahPreWriteBarrier;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahReferentFieldReadBarrierNode;
 import jdk.graal.compiler.nodes.java.ClassIsAssignableFromNode;
 import jdk.graal.compiler.nodes.java.DynamicNewArrayNode;
 import jdk.graal.compiler.nodes.java.DynamicNewArrayWithExceptionNode;
@@ -278,6 +284,7 @@ public abstract class DefaultHotSpotLoweringProvider extends DefaultJavaLowering
     protected MonitorSnippets.Templates monitorSnippets;
     protected HotSpotSerialWriteBarrierSnippets.Templates serialWriteBarrierSnippets;
     protected HotSpotG1WriteBarrierSnippets.Templates g1WriteBarrierSnippets;
+    protected HotSpotShenandoahBarrierSnippets.Templates shenandoahBarrierSnippets;
     protected LoadExceptionObjectSnippets.Templates exceptionObjectSnippets;
     protected AssertionSnippets.Templates assertionSnippets;
     protected LogSnippets.Templates logSnippets;
@@ -329,6 +336,7 @@ public abstract class DefaultHotSpotLoweringProvider extends DefaultJavaLowering
         allocationSnippets = allocationSnippetTemplates;
         monitorSnippets = new MonitorSnippets.Templates(options, runtime, providers, config);
         g1WriteBarrierSnippets = new HotSpotG1WriteBarrierSnippets.Templates(options, runtime, providers, config);
+        shenandoahBarrierSnippets = new HotSpotShenandoahBarrierSnippets.Templates(options, runtime, providers, config);
         serialWriteBarrierSnippets = new HotSpotSerialWriteBarrierSnippets.Templates(options, runtime, providers);
         exceptionObjectSnippets = new LoadExceptionObjectSnippets.Templates(options, providers);
         assertionSnippets = new AssertionSnippets.Templates(options, providers);
@@ -534,6 +542,16 @@ public abstract class DefaultHotSpotLoweringProvider extends DefaultJavaLowering
             if (!GraalOptions.AssemblyGCBarriers.getValue(n.getOptions())) {
                 g1WriteBarrierSnippets.lower((G1ReferentFieldReadBarrierNode) n, tool);
             }
+        } else if (n instanceof ShenandoahArrayRangePreWriteBarrier) {
+            shenandoahBarrierSnippets.lower((ShenandoahArrayRangePreWriteBarrier) n, tool);
+        } else if (n instanceof ShenandoahPreWriteBarrier) {
+            shenandoahBarrierSnippets.lower((ShenandoahPreWriteBarrier) n, tool);
+        } else if (n instanceof ShenandoahPosWriteBarrier) {
+            shenandoahBarrierSnippets.lower((ShenandoahPosWriteBarrier) n, tool);
+        } else if (n instanceof ShenandoahReferentFieldReadBarrierNode) {
+            shenandoahBarrierSnippets.lower((ShenandoahReferentFieldReadBarrierNode) n, tool);
+        } else if (n instanceof ShenandoahLoadReferenceBarrierNode) {
+            shenandoahBarrierSnippets.lower((ShenandoahLoadReferenceBarrierNode) n, tool);
         } else if (n instanceof SerialWriteBarrierNode) {
             serialWriteBarrierSnippets.lower((SerialWriteBarrierNode) n, tool);
         } else if (n instanceof SerialArrayRangeWriteBarrierNode) {

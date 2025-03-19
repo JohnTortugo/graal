@@ -77,6 +77,13 @@ import static jdk.graal.compiler.hotspot.meta.HotSpotForeignCallDescriptor.Trans
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.G1WBPOSTCALL;
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.G1WBPRECALL;
 import static jdk.graal.compiler.hotspot.replacements.HotSpotG1WriteBarrierSnippets.VALIDATE_OBJECT;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAHWBPRECALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_STRONG_LRB_CALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_NARROW_STRONG_LRB_CALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_WEAK_LRB_CALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_NARROW_WEAK_LRB_CALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_PHANTOM_LRB_CALL;
+import static jdk.graal.compiler.hotspot.replacements.HotSpotShenandoahBarrierSnippets.SHENANDOAH_NARROW_PHANTOM_LRB_CALL;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_OBJECT;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_PRIMITIVE;
 import static jdk.graal.compiler.hotspot.replacements.Log.LOG_PRINTF;
@@ -184,6 +191,20 @@ public abstract class HotSpotHostForeignCallsProvider extends HotSpotForeignCall
                     void.class, Object.class);
     public static final HotSpotForeignCallDescriptor G1WBPOSTCALL_STACK_ONLY = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS, "write_barrier_post-stack-only",
                     void.class, Word.class);
+
+    /*
+     * Functions from ShenandoahRuntime
+     */
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_STRONG_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS,
+                    "shenandoah_strong_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_NARROW_STRONG_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS,
+                    "shenandoah_narrow_strong_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_WEAK_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS,
+                    "shenandoah_weak_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_NARROW_WEAK_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS,
+                    "shenandoah_narrow_weak_load_reference_barrier", Object.class, Object.class, Word.class);
+    public static final HotSpotForeignCallDescriptor SHENANDOAH_PHANTOM_LRB_CALL = new HotSpotForeignCallDescriptor(LEAF_NO_VZERO, NO_SIDE_EFFECT, NO_LOCATIONS,
+                    "shenandoah_phantom_load_reference_barrier", Object.class, Object.class, Word.class);
 
     /*
      * Functions from ZBarrierSetRuntime.
@@ -576,6 +597,13 @@ public abstract class HotSpotHostForeignCallsProvider extends HotSpotForeignCall
         linkForeignCall(options, providers, G1WBPRECALL, c.writeBarrierPreAddress, PREPEND_THREAD);
         linkForeignCall(options, providers, G1WBPOSTCALL, c.writeBarrierPostAddress, PREPEND_THREAD);
         linkForeignCall(options, providers, VALIDATE_OBJECT, c.validateObject, PREPEND_THREAD);
+        linkForeignCall(options, providers, SHENANDOAHWBPRECALL, c.shenandoahConcmarkBarrierAddress, PREPEND_THREAD);
+
+        linkStackOnlyForeignCall(options, providers, SHENANDOAH_STRONG_LRB_CALL, c.shenandoahStrongLRBAddress, DONT_PREPEND_THREAD);
+        linkStackOnlyForeignCall(options, providers, SHENANDOAH_NARROW_STRONG_LRB_CALL, c.shenandoahNarrowStrongLRBAddress, DONT_PREPEND_THREAD);
+        linkStackOnlyForeignCall(options, providers, SHENANDOAH_WEAK_LRB_CALL, c.shenandoahWeakLRBAddress, DONT_PREPEND_THREAD);
+        linkStackOnlyForeignCall(options, providers, SHENANDOAH_NARROW_WEAK_LRB_CALL, c.shenandoahNarrowWeakLRBAddress, DONT_PREPEND_THREAD);
+        linkStackOnlyForeignCall(options, providers, SHENANDOAH_PHANTOM_LRB_CALL, c.shenandoahPhantomLRBAddress, DONT_PREPEND_THREAD);
 
         linkForeignCall(options, providers, TEST_DEOPTIMIZE_CALL_INT, c.testDeoptimizeCallInt, PREPEND_THREAD);
 

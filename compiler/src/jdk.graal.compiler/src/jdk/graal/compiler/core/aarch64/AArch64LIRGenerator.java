@@ -466,6 +466,9 @@ public abstract class AArch64LIRGenerator extends LIRGenerator {
          */
         assert aVal.getPlatformKind() == bVal.getPlatformKind() : aVal + " " + bVal;
         int cmpBitSize = cmpKind.getSizeInBytes() * Byte.SIZE;
+        if (!(cmpBitSize >= 32 && cmpKind == aVal.getPlatformKind())) {
+            System.out.println("cmpBitSize: " + cmpBitSize + ", cmpKind: " + cmpKind + ", platKind: " + aVal.getPlatformKind());
+        }
         GraalError.guarantee(cmpBitSize >= 32 && cmpKind == aVal.getPlatformKind(), "Unexpected comparison parameters.");
 
         /*

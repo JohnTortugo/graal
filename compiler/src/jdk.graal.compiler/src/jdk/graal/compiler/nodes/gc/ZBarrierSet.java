@@ -53,9 +53,9 @@ import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
 /**
- * Base class for the barrier set for generational ZGC. This provides the basic every that every
- * read or write of an object from the heap should have an associated read barrier. Barriers for
- * non-heap locations like handles can be handled by subclasses.
+ * Base class for the barrier set for generational ZGC. This provides the basic that every read or
+ * write of an object from the heap should have an associated read barrier. Barriers for non-heap
+ * locations like handles can be handled by subclasses.
  */
 public class ZBarrierSet implements BarrierSet {
 
@@ -161,11 +161,6 @@ public class ZBarrierSet implements BarrierSet {
 
     @Override
     public void addBarriers(FixedAccessNode n) {
-    }
-
-    @Override
-    public boolean mayNeedPreWriteBarrier(JavaKind storageKind) {
-        return false;
     }
 
     @Override
