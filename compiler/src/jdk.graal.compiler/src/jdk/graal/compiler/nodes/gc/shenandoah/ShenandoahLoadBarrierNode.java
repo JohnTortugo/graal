@@ -4,25 +4,18 @@ import jdk.graal.compiler.core.common.memory.BarrierType;
 import jdk.graal.compiler.core.common.type.AbstractObjectStamp;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.debug.GraalError;
-import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.lir.gen.ShenandoahBarrierSetLIRGeneratorTool;
 import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
-import jdk.graal.compiler.nodeinfo.StructuralInput;
-import jdk.graal.compiler.nodes.FixedNode;
-import jdk.graal.compiler.nodes.FixedWithNextNode;
 import jdk.graal.compiler.nodes.NodeView;
 import jdk.graal.compiler.nodes.ValueNode;
-import jdk.graal.compiler.nodes.calc.UnaryNode;
 import jdk.graal.compiler.nodes.memory.LIRLowerableAccess;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
-import jdk.graal.compiler.nodes.spi.CanonicalizerTool;
 import jdk.graal.compiler.nodes.spi.LIRLowerable;
 import jdk.graal.compiler.nodes.spi.NodeLIRBuilderTool;
 
 import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
-import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_16;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
 @NodeInfo(cycles = CYCLES_64, size = SIZE_64)
