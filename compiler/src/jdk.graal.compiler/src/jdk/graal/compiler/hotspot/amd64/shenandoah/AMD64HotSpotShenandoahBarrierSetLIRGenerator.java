@@ -96,7 +96,7 @@ public class AMD64HotSpotShenandoahBarrierSetLIRGenerator implements ShenandoahB
         AllocatableValue addressValue = lirTool.newVariable(address.getValueKind());
         lirTool.emitMove(addressValue, address);
 
-        ForeignCallLinkage callTarget = lirTool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_PRE_BARRIER);
+        ForeignCallLinkage callTarget = lirTool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_WRITE_BARRIER_PRE);
         lirTool.getResult().getFrameMapBuilder().callsMethod(callTarget.getOutgoingCallingConvention());
         lirTool.append(new AMD64ShenandoahPreWriteBarrierOp(config, providers, addressValue, expectedObject, temp, temp2, temp3, callTarget, nonNull));
     }

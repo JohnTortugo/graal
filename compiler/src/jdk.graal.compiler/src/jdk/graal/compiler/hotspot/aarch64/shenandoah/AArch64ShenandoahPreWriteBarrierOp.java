@@ -1,6 +1,5 @@
 /*
- * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -57,23 +56,19 @@ public class AArch64ShenandoahPreWriteBarrierOp extends AArch64LIRInstruction {
     private final GraalHotSpotVMConfig config;
     private final HotSpotProviders providers;
 
-    @Alive
-    private Value address;
+    @Alive private Value address;
 
-    @Alive({OperandFlag.REG, OperandFlag.ILLEGAL})
-    private Value expectedObject;
+    @Alive({OperandFlag.REG, OperandFlag.ILLEGAL}) private Value expectedObject;
 
-    @Temp
-    private Value temp;
+    @Temp private Value temp;
 
-    @Temp({OperandFlag.REG, OperandFlag.ILLEGAL})
-    private Value temp2;
+    @Temp({OperandFlag.REG, OperandFlag.ILLEGAL}) private Value temp2;
 
     private final ForeignCallLinkage callTarget;
     private final boolean nonNull;
 
     public AArch64ShenandoahPreWriteBarrierOp(GraalHotSpotVMConfig config, HotSpotProviders providers,
-                                              AllocatableValue address, AllocatableValue expectedObject, AllocatableValue temp, AllocatableValue temp2, ForeignCallLinkage callTarget, boolean nonNull) {
+                    AllocatableValue address, AllocatableValue expectedObject, AllocatableValue temp, AllocatableValue temp2, ForeignCallLinkage callTarget, boolean nonNull) {
         super(TYPE);
         this.config = config;
         this.providers = providers;
@@ -99,7 +94,6 @@ public class AArch64ShenandoahPreWriteBarrierOp extends AArch64LIRInstruction {
 
     @Override
     protected void emitCode(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
-        //System.out.println("Emitting Shenandoah SATB barrier");
         Register storeAddress = asRegister(address);
         Register thread = providers.getRegisters().getThreadRegister();
         Register tmp = asRegister(temp);
@@ -136,7 +130,7 @@ public class AArch64ShenandoahPreWriteBarrierOp extends AArch64LIRInstruction {
             if (VerifyAssemblyGCBarriers.getValue(crb.getOptions())) {
                 try (AArch64MacroAssembler.ScratchRegister sc1 = masm.getScratchRegister()) {
                     Register tmp2 = sc1.getRegister();
-                    verifyOop(masm, previousValue, tmp, tmp2, false, true);
+                    verifyOop(masm, previousValue, tmp, tmp2, false);
                 }
             }
 
@@ -183,7 +177,7 @@ public class AArch64ShenandoahPreWriteBarrierOp extends AArch64LIRInstruction {
         });
     }
 
-    private void verifyOop(AArch64MacroAssembler masm, Register previousValue, Register tmp, Register tmp2, boolean compressed, boolean nonNull) {
-        ((AArch64HotSpotMacroAssembler) masm).verifyOop(previousValue, tmp, tmp2, compressed, nonNull);
+    private static void verifyOop(AArch64MacroAssembler masm, Register previousValue, Register tmp, Register tmp2, boolean compressed) {
+        ((AArch64HotSpotMacroAssembler) masm).verifyOop(previousValue, tmp, tmp2, compressed, true);
     }
 }

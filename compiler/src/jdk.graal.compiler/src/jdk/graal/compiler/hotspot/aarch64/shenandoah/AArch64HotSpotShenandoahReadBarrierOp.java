@@ -1,6 +1,5 @@
 /*
- * Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -84,6 +83,7 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
             return this.value;
         }
     }
+
     enum GCState {
         HAS_FORWARDED(1 << GCStateBitPos.HAS_FORWARDED_BITPOS.value),
         MARKING(1 << GCStateBitPos.MARKING_BITPOS.value),
@@ -94,9 +94,16 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
         OLD_MARKING(1 << GCStateBitPos.OLD_MARKING_BITPOS.value);
 
         private final int value;
-        GCState(int val) { this.value = val; }
-        public int getValue() { return this.value; }
+
+        GCState(int val) {
+            this.value = val;
+        }
+
+        public int getValue() {
+            return this.value;
+        }
     }
+
     private final HotSpotProviders providers;
     private final GraalHotSpotVMConfig config;
 
@@ -110,10 +117,10 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
     boolean notNull;
 
     public AArch64HotSpotShenandoahReadBarrierOp(GraalHotSpotVMConfig config, HotSpotProviders providers,
-                                                 AllocatableValue result, AllocatableValue object, AArch64AddressValue loadAddress,
-                                                 ForeignCallLinkage callTarget,
-                                                 ShenandoahLoadBarrierNode.ReferenceStrength strength,
-                                                 boolean notNull) {
+                    AllocatableValue result, AllocatableValue object, AArch64AddressValue loadAddress,
+                    ForeignCallLinkage callTarget,
+                    ShenandoahLoadBarrierNode.ReferenceStrength strength,
+                    boolean notNull) {
         super(TYPE);
         this.providers = providers;
         this.config = config;
@@ -137,8 +144,8 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
             Register thread = providers.getRegisters().getThreadRegister();
 
             Label done = new Label();
-            Label cset_check = new Label();
-            Label slow_path = new Label();
+            Label csetCheck = new Label();
+            Label slowPath = new Label();
 
             // Move object to result, in case the heap is stable and no barrier needs to be called.
             masm.mov(64, resultRegister, objectRegister);
@@ -160,12 +167,12 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
                 // Two tests because HAS_FORWARDED | WEAK_ROOTS currently is not representable
                 // as a single immediate.
                 masm.tst(64, rscratch1, GCState.HAS_FORWARDED.value);
-                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, slow_path);
+                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, slowPath);
                 masm.tst(64, rscratch1, GCState.WEAK_ROOTS.value);
-                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, slow_path);
+                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, slowPath);
             } else {
                 masm.tst(64, rscratch1, GCState.HAS_FORWARDED.value);
-                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, cset_check);
+                masm.branchConditionally(AArch64Assembler.ConditionFlag.NE, csetCheck);
             }
             masm.bind(done);
 
@@ -175,11 +182,11 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
                     try (AArch64MacroAssembler.ScratchRegister tmp1 = masm.getScratchRegister(); AArch64MacroAssembler.ScratchRegister tmp2 = masm.getScratchRegister()) {
                         Register rtmp1 = tmp1.getRegister();
                         Register rtmp2 = tmp2.getRegister();
-                        masm.bind(cset_check);
+                        masm.bind(csetCheck);
                         masm.mov(rtmp1, HotSpotReplacementsUtil.shenandoahGCCSetFastTestAddr(config));
                         masm.lsr(64, rtmp2, objectRegister, HotSpotReplacementsUtil.shenandoahGCRegionSizeBytesShift(config));
                         masm.ldr(8, rtmp2, AArch64Address.createRegisterOffsetAddress(8, rtmp1, rtmp2, false));
-                        masm.cbnz(8, rtmp2, slow_path);
+                        masm.cbnz(8, rtmp2, slowPath);
                         masm.jmp(done);
                     }
                 });
@@ -189,7 +196,7 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
                 try (AArch64MacroAssembler.ScratchRegister tmp1 = masm.getScratchRegister(); AArch64MacroAssembler.ScratchRegister tmp2 = masm.getScratchRegister()) {
                     Register rtmp1 = tmp1.getRegister();
                     Register rtmp2 = tmp2.getRegister();
-                    masm.bind(slow_path);
+                    masm.bind(slowPath);
                     CallingConvention cc = callTarget.getOutgoingCallingConvention();
                     assert cc.getArgumentCount() == 2 : "Expecting callTarget to have only 2 parameters. It has " + cc.getArgumentCount();
 
