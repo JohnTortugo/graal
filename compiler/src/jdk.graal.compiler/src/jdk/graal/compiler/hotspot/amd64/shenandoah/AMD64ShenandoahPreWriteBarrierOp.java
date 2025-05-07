@@ -172,7 +172,7 @@ public class AMD64ShenandoahPreWriteBarrierOp extends AMD64LIRInstruction {
         });
     }
 
-    private void verifyOop(AMD64MacroAssembler masm, Register previousValue, Register tmp, Register tmp2) {
+    private static void verifyOop(AMD64MacroAssembler masm, Register previousValue, Register tmp, Register tmp2) {
         ((AMD64HotSpotMacroAssembler) masm).verifyOop(previousValue, tmp, tmp2, false, true);
     }
 }

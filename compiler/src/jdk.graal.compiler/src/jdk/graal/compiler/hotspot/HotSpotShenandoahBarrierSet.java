@@ -25,10 +25,7 @@
 package jdk.graal.compiler.hotspot;
 
 import jdk.graal.compiler.core.common.CompressEncoding;
-import jdk.graal.compiler.core.common.type.ObjectStamp;
 import jdk.graal.compiler.hotspot.nodes.HotSpotCompressionNode;
-import jdk.graal.compiler.nodes.NodeView;
-import jdk.graal.compiler.nodes.type.NarrowOopStamp;
 import org.graalvm.word.LocationIdentity;
 
 import jdk.graal.compiler.core.common.memory.BarrierType;
@@ -84,7 +81,6 @@ public class HotSpotShenandoahBarrierSet extends ShenandoahBarrierSet {
     @Override
     protected ValueNode maybeUncompressReference(ValueNode value, boolean narrow) {
         if (value != null && narrow) {
-            //System.out.println("Uncompressing " + value);
             return HotSpotCompressionNode.uncompressWithoutUnique(value.graph(), value, oopEncoding);
         }
         return value;
@@ -93,7 +89,6 @@ public class HotSpotShenandoahBarrierSet extends ShenandoahBarrierSet {
     @Override
     protected ValueNode maybeCompressReference(ValueNode value, boolean narrow) {
         if (value != null && narrow) {
-            //System.out.println("Compressing " + value);
             return HotSpotCompressionNode.compressWithoutUnique(value.graph(), value, oopEncoding);
         }
         return value;

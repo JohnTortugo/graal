@@ -19,15 +19,17 @@ import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_64;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_64;
 
 @NodeInfo(cycles = CYCLES_64, size = SIZE_64)
-public final class ShenandoahLoadBarrierNode extends ValueNode implements LIRLowerable {
-    public static final NodeClass<ShenandoahLoadBarrierNode> TYPE = NodeClass.create(ShenandoahLoadBarrierNode.class);
+public final class ShenandoahLoadRefBarrierNode extends ValueNode implements LIRLowerable {
+    public static final NodeClass<ShenandoahLoadRefBarrierNode> TYPE = NodeClass.create(ShenandoahLoadRefBarrierNode.class);
 
     @Input
     private ValueNode value;
 
     public enum ReferenceStrength {
-        STRONG, WEAK, PHANTOM;
-    };
+        STRONG, 
+        WEAK, 
+        PHANTOM;
+    }
 
     @Input(InputType.Association)
     private AddressNode address;
@@ -44,22 +46,16 @@ public final class ShenandoahLoadBarrierNode extends ValueNode implements LIRLow
         };
     }
 
-    public ShenandoahLoadBarrierNode(ValueNode value, AddressNode address, BarrierType barrierType, boolean narrow) {
+    public ShenandoahLoadRefBarrierNode(ValueNode value, AddressNode address, BarrierType barrierType, boolean narrow) {
         super(TYPE, value.stamp(NodeView.DEFAULT));
         this.value = value;
         this.address = address;
         this.strength = getReferenceStrength(barrierType);
         this.narrow = narrow;
-        //System.out.println("New ShenandoahLoadBarrierNode");
     }
 
     @Override
     public void generate(NodeLIRBuilderTool gen) {
-//        System.out.println("generate LRB for input: " + value);
-//        System.out.println("usages:");
-//        for (Node usage : usages()) {
-//            System.out.println("usage: " + usage);
-//        }
         Stamp stamp;
         if (value instanceof LIRLowerableAccess accessValue) {
             stamp = accessValue.getAccessStamp(NodeView.DEFAULT);

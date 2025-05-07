@@ -39,7 +39,7 @@ import jdk.graal.compiler.lir.amd64.AMD64AddressValue;
 import jdk.graal.compiler.lir.amd64.AMD64Call;
 import jdk.graal.compiler.lir.amd64.AMD64LIRInstruction;
 import jdk.graal.compiler.lir.asm.CompilationResultBuilder;
-import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadRefBarrierNode;
 
 import jdk.vm.ci.code.CallingConvention;
 import jdk.vm.ci.code.Register;
@@ -103,7 +103,7 @@ public class AMD64HotSpotShenandoahReadBarrierOp extends AMD64LIRInstruction {
     private final HotSpotProviders providers;
     private final GraalHotSpotVMConfig config;
     private final ForeignCallLinkage callTarget;
-    private final ShenandoahLoadBarrierNode.ReferenceStrength strength;
+    private final ShenandoahLoadRefBarrierNode.ReferenceStrength strength;
     private final boolean notNull;
 
     @Temp({REG})
@@ -123,7 +123,7 @@ public class AMD64HotSpotShenandoahReadBarrierOp extends AMD64LIRInstruction {
 
     public AMD64HotSpotShenandoahReadBarrierOp(GraalHotSpotVMConfig config, HotSpotProviders providers,
                                                  AllocatableValue result, AllocatableValue object, AMD64AddressValue loadAddress,
-                                                 ForeignCallLinkage callTarget,  ShenandoahLoadBarrierNode.ReferenceStrength strength,
+                                                 ForeignCallLinkage callTarget,  ShenandoahLoadRefBarrierNode.ReferenceStrength strength,
                                                  AllocatableValue tmp, AllocatableValue tmp2, boolean notNull) {
         super(TYPE);
         this.providers = providers;
@@ -162,7 +162,7 @@ public class AMD64HotSpotShenandoahReadBarrierOp extends AMD64LIRInstruction {
 
         // Check for heap stability
         masm.movb(rtmp1, new AMD64Address(thread, HotSpotReplacementsUtil.shenandoahGCStateOffset(config)));
-        if (strength != ShenandoahLoadBarrierNode.ReferenceStrength.STRONG) {
+        if (strength != ShenandoahLoadRefBarrierNode.ReferenceStrength.STRONG) {
             // This is needed because in a short-cut cycle we may get a trailing
             // weak-roots phase but no evacuation/update-refs phase, and during that,
             // we need to take the LRB to report null for unreachable weak-refs.
@@ -174,7 +174,7 @@ public class AMD64HotSpotShenandoahReadBarrierOp extends AMD64LIRInstruction {
         masm.bind(done);
 
         // Check for object in collection set in an out-of-line mid-path.
-        if (strength == ShenandoahLoadBarrierNode.ReferenceStrength.STRONG) {
+        if (strength == ShenandoahLoadRefBarrierNode.ReferenceStrength.STRONG) {
             crb.getLIR().addSlowPath(this, () -> {
                 masm.bind(csetCheck);
 

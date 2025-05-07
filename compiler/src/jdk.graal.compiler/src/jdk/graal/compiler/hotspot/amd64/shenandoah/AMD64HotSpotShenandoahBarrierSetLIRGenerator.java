@@ -25,26 +25,16 @@
  */
 package jdk.graal.compiler.hotspot.amd64.shenandoah;
 
-import jdk.graal.compiler.asm.amd64.AMD64Address;
 import jdk.graal.compiler.core.amd64.AMD64LIRGenerator;
-import jdk.graal.compiler.core.amd64.AMD64ReadBarrierSetLIRGenerator;
-import jdk.graal.compiler.core.common.CompressEncoding;
 import jdk.graal.compiler.core.common.LIRKind;
-import jdk.graal.compiler.core.common.memory.BarrierType;
-import jdk.graal.compiler.core.common.memory.MemoryExtendKind;
-import jdk.graal.compiler.core.common.memory.MemoryOrderMode;
 import jdk.graal.compiler.core.common.spi.ForeignCallLinkage;
-import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.hotspot.GraalHotSpotVMConfig;
 import jdk.graal.compiler.hotspot.meta.HotSpotHostForeignCallsProvider;
 import jdk.graal.compiler.hotspot.meta.HotSpotProviders;
-import jdk.graal.compiler.lir.LIRFrameState;
-import jdk.graal.compiler.lir.Variable;
 import jdk.graal.compiler.lir.amd64.AMD64AddressValue;
-import jdk.graal.compiler.lir.amd64.AMD64Move;
 import jdk.graal.compiler.lir.gen.LIRGeneratorTool;
 import jdk.graal.compiler.lir.gen.ShenandoahBarrierSetLIRGeneratorTool;
-import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadRefBarrierNode;
 import jdk.vm.ci.amd64.AMD64Kind;
 import jdk.vm.ci.meta.AllocatableValue;
 import jdk.vm.ci.meta.PlatformKind;
@@ -59,7 +49,7 @@ public class AMD64HotSpotShenandoahBarrierSetLIRGenerator implements ShenandoahB
     private final GraalHotSpotVMConfig config;
     private final HotSpotProviders providers;
 
-    private ForeignCallLinkage getReadBarrierStub(LIRGeneratorTool tool, ShenandoahLoadBarrierNode.ReferenceStrength strength, boolean narrow) {
+    private static ForeignCallLinkage getReadBarrierStub(LIRGeneratorTool tool, ShenandoahLoadRefBarrierNode.ReferenceStrength strength, boolean narrow) {
         return switch (strength) {
             case STRONG  -> narrow ? tool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_LOAD_BARRIER_NARROW) :
                                      tool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_LOAD_BARRIER);
@@ -71,7 +61,7 @@ public class AMD64HotSpotShenandoahBarrierSetLIRGenerator implements ShenandoahB
     }
 
     @Override
-    public Value emitLoadReferenceBarrier(LIRGeneratorTool tool, Value obj, Value address, ShenandoahLoadBarrierNode.ReferenceStrength strength, boolean narrow, boolean notNull) {
+    public Value emitLoadReferenceBarrier(LIRGeneratorTool tool, Value obj, Value address, ShenandoahLoadRefBarrierNode.ReferenceStrength strength, boolean narrow, boolean notNull) {
         PlatformKind platformKind = obj.getPlatformKind();
         LIRKind kind = LIRKind.reference(platformKind);
         Value result = tool.newVariable(tool.toRegisterKind(kind));
@@ -96,7 +86,7 @@ public class AMD64HotSpotShenandoahBarrierSetLIRGenerator implements ShenandoahB
         AllocatableValue addressValue = lirTool.newVariable(address.getValueKind());
         lirTool.emitMove(addressValue, address);
 
-        ForeignCallLinkage callTarget = lirTool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_PRE_BARRIER);
+        ForeignCallLinkage callTarget = lirTool.getForeignCalls().lookupForeignCall(HotSpotHostForeignCallsProvider.SHENANDOAH_WRITE_BARRIER_PRE);
         lirTool.getResult().getFrameMapBuilder().callsMethod(callTarget.getOutgoingCallingConvention());
         lirTool.append(new AMD64ShenandoahPreWriteBarrierOp(config, providers, addressValue, expectedObject, temp, temp2, temp3, callTarget, nonNull));
     }
@@ -107,14 +97,5 @@ public class AMD64HotSpotShenandoahBarrierSetLIRGenerator implements ShenandoahB
         AllocatableValue tmp = lirTool.newVariable(LIRKind.value(AMD64Kind.QWORD));
         AllocatableValue tmp2 = lirTool.newVariable(LIRKind.value(AMD64Kind.QWORD));
         lirTool.append(new AMD64HotSpotShenandoahCardBarrierOp(config, providers, addr, tmp, tmp2));
-    }
-
-    private static ShenandoahLoadBarrierNode.ReferenceStrength getReferenceStrength(BarrierType barrierType) {
-        return switch (barrierType) {
-            case READ, NONE -> ShenandoahLoadBarrierNode.ReferenceStrength.STRONG;
-            case REFERENCE_GET, WEAK_REFERS_TO -> ShenandoahLoadBarrierNode.ReferenceStrength.WEAK;
-            case PHANTOM_REFERS_TO -> ShenandoahLoadBarrierNode.ReferenceStrength.PHANTOM;
-            case ARRAY, FIELD, UNKNOWN, POST_INIT_WRITE, AS_NO_KEEPALIVE_WRITE -> throw GraalError.shouldNotReachHere("Unexpected barrier type: " + barrierType);
-        };
     }
 }

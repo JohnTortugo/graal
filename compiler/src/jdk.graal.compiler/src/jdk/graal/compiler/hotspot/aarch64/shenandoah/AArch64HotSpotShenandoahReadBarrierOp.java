@@ -38,7 +38,7 @@ import jdk.graal.compiler.lir.aarch64.AArch64AddressValue;
 import jdk.graal.compiler.lir.aarch64.AArch64Call;
 import jdk.graal.compiler.lir.aarch64.AArch64LIRInstruction;
 import jdk.graal.compiler.lir.asm.CompilationResultBuilder;
-import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadBarrierNode;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahLoadRefBarrierNode;
 
 import jdk.vm.ci.code.CallingConvention;
 import jdk.vm.ci.code.Register;
@@ -106,13 +106,13 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
 
     protected final ForeignCallLinkage callTarget;
 
-    ShenandoahLoadBarrierNode.ReferenceStrength strength;
+    ShenandoahLoadRefBarrierNode.ReferenceStrength strength;
     boolean notNull;
 
     public AArch64HotSpotShenandoahReadBarrierOp(GraalHotSpotVMConfig config, HotSpotProviders providers,
                                                  AllocatableValue result, AllocatableValue object, AArch64AddressValue loadAddress,
                                                  ForeignCallLinkage callTarget,
-                                                 ShenandoahLoadBarrierNode.ReferenceStrength strength,
+                                                 ShenandoahLoadRefBarrierNode.ReferenceStrength strength,
                                                  boolean notNull) {
         super(TYPE);
         this.providers = providers;
@@ -152,7 +152,7 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
             int gcStateOffset = HotSpotReplacementsUtil.shenandoahGCStateOffset(config);
             AArch64Address gcState = masm.makeAddress(8, thread, gcStateOffset);
             masm.ldr(8, rscratch1, gcState);
-            if (strength != ShenandoahLoadBarrierNode.ReferenceStrength.STRONG) {
+            if (strength != ShenandoahLoadRefBarrierNode.ReferenceStrength.STRONG) {
                 // This is needed because in a short-cut cycle we may get a trailing
                 // weak-roots phase but no evacuation/update-refs phase, and during that,
                 // we need to take the LRB to report null for unreachable weak-refs.
@@ -170,7 +170,7 @@ public class AArch64HotSpotShenandoahReadBarrierOp extends AArch64LIRInstruction
             masm.bind(done);
 
             // Check for object in collection set in an out-of-line mid-path.
-            if (strength == ShenandoahLoadBarrierNode.ReferenceStrength.STRONG) {
+            if (strength == ShenandoahLoadRefBarrierNode.ReferenceStrength.STRONG) {
                 crb.getLIR().addSlowPath(this, () -> {
                     try (AArch64MacroAssembler.ScratchRegister tmp1 = masm.getScratchRegister(); AArch64MacroAssembler.ScratchRegister tmp2 = masm.getScratchRegister()) {
                         Register rtmp1 = tmp1.getRegister();
