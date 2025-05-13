@@ -27,6 +27,7 @@ package jdk.graal.compiler.hotspot;
 import java.lang.annotation.Annotation;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.List;
 
 import jdk.graal.compiler.core.common.LibGraalSupport;
 import jdk.graal.compiler.debug.GraalError;
@@ -57,6 +58,11 @@ public final class SnippetResolvedJavaType implements ResolvedJavaType {
     private final Class<?> javaClass;
     private SnippetResolvedJavaMethod[] methods;
     private SnippetResolvedJavaType arrayOfType;
+
+    @Override
+    public List<ResolvedJavaMethod> getAllMethods(boolean forceLink) {
+        return null;
+    }
 
     public SnippetResolvedJavaType(Class<?> javaClass) {
         this.javaClass = javaClass;

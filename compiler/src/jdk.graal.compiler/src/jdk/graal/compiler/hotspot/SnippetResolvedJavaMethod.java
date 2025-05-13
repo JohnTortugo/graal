@@ -61,6 +61,11 @@ public final class SnippetResolvedJavaMethod implements ResolvedJavaMethod {
     }
 
     @Override
+    public boolean isDeclared() {
+        return false;
+    }
+
+    @Override
     public byte[] getCode() {
         return null;
     }
