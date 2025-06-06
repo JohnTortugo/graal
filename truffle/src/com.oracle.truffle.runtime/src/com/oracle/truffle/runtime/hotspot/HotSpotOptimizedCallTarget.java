@@ -68,6 +68,7 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
     private static final InstalledCode INVALID_CODE = new InstalledCode(null);
 
     private static final int gcUnlinkingColdReason;
+    private static final int jvmciReplacingWithnewCode;
 
     private static final HotSpotVMConfigAccess vmConfigAccess;
 
@@ -118,12 +119,14 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         setSpeculationLog = method;
         method = null;
         try {
-            method = InstalledCode.class.getDeclaredMethod("invalidate", boolean.class);
+            method = InstalledCode.class.getDeclaredMethod("invalidate", boolean.class, int.class);
         } catch (NoSuchMethodException e) {
+            e.printStackTrace();
         }
         invalidateInstalledCode = method;
         vmConfigAccess = new HotSpotVMConfigAccess(HotSpotJVMCIRuntime.runtime().getConfigStore());
-        gcUnlinkingColdReason = vmConfigAccess.getConstant("nmethod::NMethodChangeReason::gc_unlinking_cold", Integer.class);
+        gcUnlinkingColdReason = vmConfigAccess.getConstant("nmethod::ChangeReason::GC_unlinking_cold", Integer.class);
+        jvmciReplacingWithnewCode = vmConfigAccess.getConstant("nmethod::ChangeReason::JVMCI_replacing_with_new_code", Integer.class);
     }
 
     /**
@@ -153,7 +156,7 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
     private void invalidateExistingCode() {
         if (this.installedCode != INVALID_CODE && invalidateInstalledCode != null) {
             try {
-                invalidateInstalledCode.invoke(this.installedCode, false);
+                invalidateInstalledCode.invoke(this.installedCode, false, jvmciReplacingWithnewCode);
                 this.installedCode = INVALID_CODE;
             } catch (Error e) {
                 throw e;
@@ -194,10 +197,12 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
     @Override
     public boolean isValid() {
         boolean isValid = installedCode.isValid();
-        if (!isValid && installedCode != INVALID_CODE && installedCode.getStatusReason() == gcUnlinkingColdReason) {
+        if (!isValid && installedCode != INVALID_CODE && installedCode.getChangeReason() == gcUnlinkingColdReason) {
             invalidateExistingCode();
             resetCompilationProfile();
             runtime().getListener().onProfileReset(this);
+        } else if (!isValid && installedCode != INVALID_CODE) {
+            System.out.println("ChangeReason is " + installedCode.getChangeReason());
         }
         return isValid;
     }
@@ -220,6 +225,6 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
 
     protected void notifyDeoptimized(VirtualFrame frame) {
         runtime().getListener().onCompilationDeoptimized(this, frame,
-                installedCode.getStatusReasonDescription());
+                installedCode.getChangeReasonDescription());
     }
 }

@@ -29,6 +29,7 @@ import static jdk.graal.compiler.replacements.classfile.ClassfileConstant.CONSTA
 
 import java.io.DataInputStream;
 import java.io.IOException;
+import java.util.List;
 
 import jdk.graal.compiler.core.common.LibGraalSupport;
 import jdk.graal.compiler.debug.GraalError;
@@ -71,6 +72,11 @@ class ClassfileConstantPool implements ConstantPool, ConstantPoolPatch {
         public static final int CHECKCAST = 192; // 0xC0
         public static final int INSTANCEOF = 193; // 0xC1
         public static final int MULTIANEWARRAY = 197; // 0xC5
+    }
+
+    @Override
+    public List<BootstrapMethodInvocation> lookupBootstrapMethodInvocations(boolean invokeDynamic) {
+        return null;
     }
 
     ClassfileConstantPool(DataInputStream stream, ClassfileBytecodeProvider context) throws IOException {

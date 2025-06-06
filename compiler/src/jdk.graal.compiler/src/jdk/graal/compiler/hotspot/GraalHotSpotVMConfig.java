@@ -692,30 +692,6 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final long jvmtiVThreadMount = getAddress("SharedRuntime::notify_jvmti_vthread_mount");
     public final long jvmtiVThreadUnmount = getAddress("SharedRuntime::notify_jvmti_vthread_unmount");
 
-    public final int installedCodeStatusReason_C1Deoptimize = getConstant("nmethod::NMethodChangeReason::C1_deoptimize", Integer.class);
-    public final int installedCodeStatusReason_C1Codepatch = getConstant("nmethod::NMethodChangeReason::C1_codepatch", Integer.class);
-    public final int installedCodeStatusReason_C1PredicateFailedTrap = getConstant("nmethod::NMethodChangeReason::C1_predicate_failed_trap", Integer.class);
-    public final int installedCodeStatusReason_C1DeoptimizeForPatching = getConstant("nmethod::NMethodChangeReason::C1_deoptimize_for_patching", Integer.class);
-    public final int installedCodeStatusReason_CIReplay = getConstant("nmethod::NMethodChangeReason::CI_replay", Integer.class);
-    public final int installedCodeStatusReason_MarkedForDeoptimization = getConstant("nmethod::NMethodChangeReason::marked_for_deoptimization", Integer.class);
-    public final int installedCodeStatusReason_NotUsed = getConstant("nmethod::NMethodChangeReason::not_used", Integer.class);
-    public final int installedCodeStatusReason_OSRInvalidationForCompilingWithc1 = getConstant("nmethod::NMethodChangeReason::OSR_invalidation_for_compiling_with_C1", Integer.class);
-    public final int installedCodeStatusReason_OSRInvalidationBackBranch = getConstant("nmethod::NMethodChangeReason::OSR_invalidation_back_branch", Integer.class);
-    public final int installedCodeStatusReason_JVMCIReprofile = getConstant("nmethod::NMethodChangeReason::JVMCI_reprofile", Integer.class);
-    public final int installedCodeStatusReason_JVMCIMaterializeVirtualObject = getConstant("nmethod::NMethodChangeReason::JVMCI_materialize_virtual_object", Integer.class);
-    public final int installedCodeStatusReason_JVMCIInvalidateNmethodMirror = getConstant("nmethod::NMethodChangeReason::JVMCI_invalidate_nmethod_mirror", Integer.class);
-    public final int installedCodeStatusReason_JVMCIRegisterMethod = getConstant("nmethod::NMethodChangeReason::JVMCI_register_method", Integer.class);
-    public final int installedCodeStatusReason_OSRInvalidationOfLowerLevel = getConstant("nmethod::NMethodChangeReason::OSR_invalidation_of_lower_level", Integer.class);
-    public final int installedCodeStatusReason_SetNativeFunction = getConstant("nmethod::NMethodChangeReason::set_native_function", Integer.class);
-    public final int installedCodeStatusReason_WhiteboxDeoptimization = getConstant("nmethod::NMethodChangeReason::whitebox_deoptimization", Integer.class);
-    public final int installedCodeStatusReason_MissingExceptionHandler = getConstant("nmethod::NMethodChangeReason::missing_exception_handler", Integer.class);
-    public final int installedCodeStatusReason_UncommonTrap = getConstant("nmethod::NMethodChangeReason::uncommon_trap", Integer.class);
-    public final int installedCodeStatusReason_Zombie = getConstant("nmethod::NMethodChangeReason::zombie", Integer.class);
-    public final int installedCodeStatusReason_GCUnlinking = getConstant("nmethod::NMethodChangeReason::gc_unlinking", Integer.class);
-    public final int installedCodeStatusReason_GCUnlinkingCold = getConstant("nmethod::NMethodChangeReason::gc_unlinking_cold", Integer.class);
-    public final int installedCodeStatusReason_JVMCINewInstallation = getConstant("nmethod::NMethodChangeReason::JVMCI_new_installation", Integer.class);
-    public final int installedCodeStatusReason_JVMCIReplacingWithNewCode = getConstant("nmethod::NMethodChangeReason::JVMCI_replacing_with_new_code", Integer.class);
-   
     public boolean supportJVMTIVThreadNotification() {
         return jvmtiVThreadStart != 0L && jvmtiVThreadEnd != 0L && jvmtiVThreadMount != 0L && jvmtiVThreadUnmount != 0L;
     }
