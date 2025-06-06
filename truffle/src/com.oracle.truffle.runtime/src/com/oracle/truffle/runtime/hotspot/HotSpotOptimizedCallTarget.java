@@ -50,10 +50,10 @@ import com.oracle.truffle.runtime.OptimizedCallTarget;
 import com.oracle.truffle.runtime.TruffleCallBoundary;
 
 import jdk.vm.ci.code.InstalledCode;
+import jdk.vm.ci.hotspot.HotSpotJVMCIRuntime;
 import jdk.vm.ci.hotspot.HotSpotNmethod;
 import jdk.vm.ci.hotspot.HotSpotSpeculationLog;
 import jdk.vm.ci.hotspot.HotSpotVMConfigAccess;
-import jdk.vm.ci.hotspot.HotSpotJVMCIRuntime;
 import jdk.vm.ci.meta.SpeculationLog;
 
 /**
@@ -121,7 +121,6 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         try {
             method = InstalledCode.class.getDeclaredMethod("invalidate", boolean.class, int.class);
         } catch (NoSuchMethodException e) {
-            e.printStackTrace();
         }
         invalidateInstalledCode = method;
         vmConfigAccess = new HotSpotVMConfigAccess(HotSpotJVMCIRuntime.runtime().getConfigStore());
@@ -201,8 +200,6 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
             invalidateExistingCode();
             resetCompilationProfile();
             runtime().getListener().onProfileReset(this);
-        } else if (!isValid && installedCode != INVALID_CODE) {
-            System.out.println("ChangeReason is " + installedCode.getChangeReason());
         }
         return isValid;
     }

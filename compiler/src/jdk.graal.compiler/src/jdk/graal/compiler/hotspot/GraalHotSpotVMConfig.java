@@ -309,7 +309,6 @@ public class GraalHotSpotVMConfig extends GraalHotSpotVMConfigAccess {
     public final int jfrThreadLocalVthreadOffset = getFieldOffset("JfrThreadLocal::_vthread", Integer.class, "bool");
 
     public final int threadObjectResultOffset = getFieldOffset("JavaThread::_vm_result_oop", Integer.class, "oop");
-
     public final int jvmciCountersThreadOffset = getFieldOffset("JavaThread::_jvmci_counters", Integer.class, "jlong*");
 
     public final int jvmciReserved0Offset = getFieldOffset("JavaThread::_jvmci_reserved0", Integer.class, "jlong");
