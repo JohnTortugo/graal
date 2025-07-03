@@ -42,6 +42,7 @@ package com.oracle.truffle.runtime.hotspot;
 
 import java.lang.reflect.Method;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.compiler.TruffleCompiler;
 import com.oracle.truffle.runtime.EngineData;
@@ -111,7 +112,7 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         setSpeculationLog = method;
         method = null;
         try {
-            method = InstalledCode.class.getDeclaredMethod("invalidate", boolean.class);
+            method = InstalledCode.class.getDeclaredMethod("invalidate", boolean.class, int.class);
         } catch (NoSuchMethodException e) {
         }
         invalidateInstalledCode = method;
@@ -122,20 +123,11 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
      */
     public void setInstalledCode(InstalledCode code) {
         assert code != null : "code must never become null";
-        InstalledCode oldCode = this.installedCode;
-        if (oldCode == code) {
+        if (this.installedCode == code) {
             return;
         }
 
-        if (oldCode != INVALID_CODE && invalidateInstalledCode != null) {
-            try {
-                invalidateInstalledCode.invoke(oldCode, false);
-            } catch (Error e) {
-                throw e;
-            } catch (Throwable throwable) {
-                throw new InternalError(throwable);
-            }
-        }
+        invalidateExistingCode();
 
         // A default nmethod can be called from entry points in the VM (e.g., Method::_code)
         // and so allowing it to be installed here would invalidate the truth of
@@ -149,6 +141,20 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         }
 
         this.installedCode = code;
+    }
+
+    private void invalidateExistingCode() {
+        if (this.installedCode != INVALID_CODE && invalidateInstalledCode != null) {
+            try {
+                invalidateInstalledCode.invoke(this.installedCode, false,
+                                ((HotSpotTruffleRuntime) runtime()).getJVMCIReplacedMethodInvalidationReason());
+                this.installedCode = INVALID_CODE;
+            } catch (Error e) {
+                throw e;
+            } catch (Throwable throwable) {
+                throw new InternalError(throwable);
+            }
+        }
     }
 
     /**
@@ -174,9 +180,23 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         }
     }
 
+    /**
+     * This method will reset the execution profile counters of this call target if the installed
+     * code was invalidated because it became cold.
+     *
+     * @return whether the currently installed code is valid/executable.
+     */
     @Override
     public boolean isValid() {
-        return installedCode.isValid();
+        boolean isValid = installedCode.isValid();
+        if (!isValid && installedCode != INVALID_CODE) {
+            if (((HotSpotNmethod) installedCode).getInvalidationReason() == ((HotSpotTruffleRuntime) runtime()).getColdMethodInvalidationReason()) {
+                invalidateExistingCode();
+                resetCompilationProfile();
+                runtime().getListener().onProfileReset(this);
+            }
+        }
+        return isValid;
     }
 
     @Override
@@ -195,4 +215,8 @@ public final class HotSpotOptimizedCallTarget extends OptimizedCallTarget {
         return HotSpotTruffleRuntimeServices.getCompilationSpeculationLog(this);
     }
 
+    protected void notifyDeoptimized(VirtualFrame frame) {
+        runtime().getListener().onCompilationDeoptimized(this, frame,
+                        ((HotSpotNmethod) installedCode).getInvalidationReasonDescription());
+    }
 }
