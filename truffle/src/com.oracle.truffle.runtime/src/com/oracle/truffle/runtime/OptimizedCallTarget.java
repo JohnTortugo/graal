@@ -842,8 +842,8 @@ public abstract class OptimizedCallTarget implements TruffleCompilable, RootCall
         throw rethrow(profiledT);
     }
 
-    private void notifyDeoptimized(VirtualFrame frame) {
-        runtime().getListener().onCompilationDeoptimized(this, frame);
+    protected void notifyDeoptimized(VirtualFrame frame) {
+        runtime().getListener().onCompilationDeoptimized(this, frame, null);
     }
 
     protected static OptimizedTruffleRuntime runtime() {
