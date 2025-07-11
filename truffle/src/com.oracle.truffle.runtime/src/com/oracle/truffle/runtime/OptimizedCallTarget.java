@@ -1055,7 +1055,8 @@ public abstract class OptimizedCallTarget implements TruffleCompilable, RootCall
                 String failureReason = String.format("Maximum compilation count %d reached.", engine.maximumCompilations);
 
                 // If the bailout is not permanent, i.e., this method is blocked for new
-                // compilations only for a period, then I bump the {@code successfulCompilationsCount}
+                // compilations only for a period, then I bump the {@code
+                // successfulCompilationsCount}
                 // counter by one to indicate that the method is temporarily blocked for new
                 // compilations. Since there is a time window set, this value will eventually be
                 // reset to zero, so its temporary value should be imaterial.
