@@ -932,6 +932,23 @@ abstract class PolyglotValueDispatch extends AbstractValueDispatch {
     }
 
     @Override
+    public Object asProxyDatapathObject(Object languageContext, Object receiver) {
+        PolyglotLanguageContext context = (PolyglotLanguageContext) languageContext;
+        Object prev = hostEnter(context);
+        try {
+            return asProxyDatapathObjectUnsupported(context, receiver);
+        } catch (Throwable e) {
+            throw guestToHostException(context, e, true);
+        } finally {
+            hostLeave(context, prev);
+        }
+    }
+
+    protected static Object asProxyDatapathObjectUnsupported(PolyglotLanguageContext context, Object receiver) {
+        throw cannotConvert(context, receiver, null, "asProxyDatapathObject()", "isProxyDatapathObject()", "Value is not a Datapath proxy object.");
+    }
+
+    @Override
     public LocalDate asDate(Object languageContext, Object receiver) {
         PolyglotLanguageContext context = (PolyglotLanguageContext) languageContext;
         Object prev = hostEnter(context);
@@ -2028,6 +2045,16 @@ abstract class PolyglotValueDispatch extends AbstractValueDispatch {
         }
 
         @Override
+        public boolean isProxyDatapathObject(Object languageContext, Object receiver) {
+            return EngineAccessor.HOST.isDisconnectedHostProxy(receiver);
+        }
+
+        @Override
+        public Object asProxyDatapathObject(Object languageContext, Object receiver) {
+            return EngineAccessor.HOST.unboxDisconnectedHostProxy(receiver);
+        }
+
+        @Override
         public <T> T asClass(Object languageContext, Object receiver, Class<T> targetType) {
             return asImpl(languageContext, receiver, targetType);
         }
@@ -2040,7 +2067,9 @@ abstract class PolyglotValueDispatch extends AbstractValueDispatch {
 
         <T> T asImpl(Object languageContext, Object receiver, Class<T> targetType) {
             Object hostValue;
-            if (isProxyObject(languageContext, receiver)) {
+            if (isProxyDatapathObject(languageContext, receiver)) {
+                hostValue = asProxyDatapathObject(languageContext, receiver);
+            } else if (isProxyObject(languageContext, receiver)) {
                 hostValue = asProxyObject(languageContext, receiver);
             } else if (isHostObject(languageContext, receiver)) {
                 hostValue = asHostObject(languageContext, receiver);
@@ -2620,6 +2649,28 @@ abstract class PolyglotValueDispatch extends AbstractValueDispatch {
                 return getEngine().host.unboxProxyObject(receiver);
             } else {
                 return super.asProxyObject(languageContext, receiver);
+            }
+        }
+
+        @Override
+        public boolean isProxyDatapathObject(Object languageContext, Object receiver) {
+            PolyglotLanguageContext context = (PolyglotLanguageContext) languageContext;
+            Object prev = hostEnter(context);
+            try {
+                return getEngine().host.isHostProxy(receiver);
+            } catch (Throwable e) {
+                throw guestToHostException(context, e, true);
+            } finally {
+                hostLeave(context, prev);
+            }
+        }
+
+        @Override
+        public Object asProxyDatapathObject(Object languageContext, Object receiver) {
+            if (isProxyDatapathObject(languageContext, receiver)) {
+                return getEngine().host.unboxProxyDatapathObject(receiver);
+            } else {
+                return super.asProxyDatapathObject(languageContext, receiver);
             }
         }
 

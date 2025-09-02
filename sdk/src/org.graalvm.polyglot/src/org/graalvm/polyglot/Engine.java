@@ -126,6 +126,7 @@ import org.graalvm.polyglot.proxy.ProxyIterable;
 import org.graalvm.polyglot.proxy.ProxyIterator;
 import org.graalvm.polyglot.proxy.ProxyNativeObject;
 import org.graalvm.polyglot.proxy.ProxyObject;
+import org.graalvm.polyglot.proxy.ProxyDatapathObject;
 import org.graalvm.polyglot.proxy.ProxyTime;
 import org.graalvm.polyglot.proxy.ProxyTimeZone;
 
@@ -1443,6 +1444,11 @@ public final class Engine implements AutoCloseable {
         }
 
         @Override
+        public boolean isProxyDatapathObject(Object proxy) {
+            return proxy instanceof ProxyDatapathObject;
+        }
+
+        @Override
         public boolean isProxyTime(Object proxy) {
             return proxy instanceof ProxyTime;
         }
@@ -1510,6 +1516,11 @@ public final class Engine implements AutoCloseable {
         @Override
         public Class<?> getProxyObjectClass() {
             return ProxyObject.class;
+        }
+
+        @Override
+        public Class<?> getProxyDatapathObjectClass() {
+            return ProxyDatapathObject.class;
         }
 
         @Override
@@ -1589,6 +1600,35 @@ public final class Engine implements AutoCloseable {
         @Override
         public Object callProxyObjectHasMember(Object proxy, String member) {
             return ((ProxyObject) proxy).hasMember(member);
+        }
+
+        @Override
+        public Object callProxyDatapathObjectMemberKeys(Object proxy) {
+            Object result = ((ProxyDatapathObject) proxy).getMemberKeys();
+            if (result == null) {
+                result = EMPTY;
+            }
+            return result;
+        }
+
+        @Override
+        public Object callProxyDatapathObjectGetMember(Object proxy, String member) {
+            return ((ProxyDatapathObject) proxy).getMember(member);
+        }
+
+        @Override
+        public void callProxyDatapathObjectPutMember(Object proxy, String member, Object value) {
+            ((ProxyDatapathObject) proxy).putMember(member, (Value) value);
+        }
+
+        @Override
+        public boolean callProxyDatapathObjectRemoveMember(Object proxy, String member) {
+            return ((ProxyDatapathObject) proxy).removeMember(member);
+        }
+
+        @Override
+        public Object callProxyDatapathObjectHasMember(Object proxy, String member) {
+            return ((ProxyDatapathObject) proxy).hasMember(member);
         }
 
         @Override

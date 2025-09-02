@@ -326,6 +326,8 @@ public abstract class AbstractPolyglotImpl {
 
         public abstract boolean isProxyObject(Object proxy);
 
+        public abstract boolean isProxyDatapathObject(Object proxy);
+
         public abstract boolean isProxyTime(Object proxy);
 
         public abstract boolean isProxyTimeZone(Object proxy);
@@ -353,6 +355,8 @@ public abstract class AbstractPolyglotImpl {
         public abstract Class<?> getProxyNativeObjectClass();
 
         public abstract Class<?> getProxyObjectClass();
+
+        public abstract Class<?> getProxyDatapathObjectClass();
 
         public abstract Class<?> getProxyTimeClass();
 
@@ -383,6 +387,16 @@ public abstract class AbstractPolyglotImpl {
         public abstract boolean callProxyObjectRemoveMember(Object proxy, String member);
 
         public abstract Object callProxyObjectHasMember(Object proxy, String string);
+
+        public abstract Object callProxyDatapathObjectMemberKeys(Object proxy);
+
+        public abstract Object callProxyDatapathObjectGetMember(Object proxy, String member);
+
+        public abstract void callProxyDatapathObjectPutMember(Object proxy, String member, Object value);
+
+        public abstract boolean callProxyDatapathObjectRemoveMember(Object proxy, String member);
+
+        public abstract Object callProxyDatapathObjectHasMember(Object proxy, String string);
 
         public abstract ZoneId callProxyTimeZoneAsTimeZone(Object proxy);
 
@@ -1096,6 +1110,8 @@ public abstract class AbstractPolyglotImpl {
 
         public abstract Object unboxProxyObject(Object hostValue);
 
+        public abstract Object unboxProxyDatapathObject(Object hostValue);
+
         public abstract Throwable unboxHostException(Throwable hostValue);
 
         public abstract Object toHostObject(Object context, Object value);
@@ -1307,9 +1323,15 @@ public abstract class AbstractPolyglotImpl {
             return false;
         }
 
+        public boolean isProxyDatapathObject(Object context, Object receiver) {
+            return false;
+        }
+
         public abstract Object asHostObject(Object context, Object receiver);
 
         public abstract Object asProxyObject(Object context, Object receiver);
+
+        public abstract Object asProxyDatapathObject(Object context, Object receiver);
 
         public abstract String toString(Object context, Object receiver);
 

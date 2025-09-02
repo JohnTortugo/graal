@@ -1617,6 +1617,22 @@ public final class Value extends AbstractValue {
     }
 
     /**
+     * Returns <code>true</code> if this value represents a {@link Proxy}. The proxy instance can be
+     * unboxed using {@link #asProxyDatapathObject()}.
+     *
+     * @throws PolyglotException if a guest language error occurred during execution.
+     * @throws IllegalStateException if the underlying context was closed.
+     * @since 19.0
+     */
+    public boolean isProxyDatapathObject() {
+        try {
+            return dispatch.isProxyDatapathObject(this.context, receiver);
+        } finally {
+            Reference.reachabilityFence(creatorContext);
+        }
+    }
+
+    /**
      * Returns the unboxed instance of the {@link Proxy}. Proxies are not automatically boxed to
      * {@link #isHostObject() host objects} on host language call boundaries (Java methods).
      *
@@ -1629,6 +1645,24 @@ public final class Value extends AbstractValue {
     public <T extends Proxy> T asProxyObject() {
         try {
             return (T) dispatch.asProxyObject(this.context, receiver);
+        } finally {
+            Reference.reachabilityFence(creatorContext);
+        }
+    }
+
+    /**
+     * Returns the unboxed instance of the {@link Proxy}. Proxies are not automatically boxed to
+     * {@link #isHostObject() host objects} on host language call boundaries (Java methods).
+     *
+     * @throws UnsupportedOperationException if a value is not a proxy object.
+     * @throws PolyglotException if a guest language error occurred during execution.
+     * @throws IllegalStateException if the underlying context was closed.
+     * @since 19.0
+     */
+    @SuppressWarnings("unchecked")
+    public <T extends Proxy> T asProxyDatapathObject() {
+        try {
+            return (T) dispatch.asProxyDatapathObject(this.context, receiver);
         } finally {
             Reference.reachabilityFence(creatorContext);
         }

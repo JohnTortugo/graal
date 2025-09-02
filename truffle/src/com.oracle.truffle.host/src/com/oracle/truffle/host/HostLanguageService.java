@@ -181,6 +181,11 @@ public class HostLanguageService extends AbstractHostLanguageService {
     }
 
     @Override
+    public Object unboxProxyDatapathObject(Object hostValue) {
+        return HostProxy.toProxyHostObject(language, hostValue);
+    }
+
+    @Override
     public Throwable unboxHostException(Throwable hostValue) {
         if (hostValue instanceof HostException) {
             return ((HostException) hostValue).getOriginal();

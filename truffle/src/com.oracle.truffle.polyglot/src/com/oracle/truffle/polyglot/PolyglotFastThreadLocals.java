@@ -400,11 +400,21 @@ final class PolyglotFastThreadLocals {
         return LANGUAGE_START + (staticIndex * LANGUAGE_ELEMENTS) + offset;
     }
 
+    private static int myFloorDiv(long x, long y) {
+        long q = x / y;
+        long r = x % y;
+        if ((r != 0) && ((x ^ y) < 0)) {
+            q--;
+        }
+        return (int) q;
+    }
+
     private static int resolveLanguageIndex(int index) {
         if (index < LANGUAGE_START || index >= LANGUAGE_START + ((LanguageCache.getMaxStaticIndex() + 1) * LANGUAGE_ELEMENTS)) {
             throw CompilerDirectives.shouldNotReachHere("invalid fast thread local index");
         }
-        return Math.floorDiv(index - LANGUAGE_START, LANGUAGE_ELEMENTS);
+        return (index - LANGUAGE_START) / LANGUAGE_ELEMENTS;
+        // return myFloorDiv((long) (index - LANGUAGE_START), (long) LANGUAGE_ELEMENTS);
     }
 
     static int computePELanguageIndex(Class<? extends TruffleLanguage<?>> languageClass, int offset) {

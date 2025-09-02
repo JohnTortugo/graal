@@ -1,4 +1,5 @@
 /*
+ *
  * Copyright (c) 2017, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -242,7 +243,7 @@ final class HostProxy implements TruffleObject {
 
     @ExportMessage
     boolean hasMembers(@Shared("cache") @Cached(value = "this.context.getGuestToHostCache()", allowUncached = true) GuestToHostCodeCache cache) {
-        return cache.api.isProxyObject(proxy);
+        return cache.api.isProxyObject(proxy) || cache.api.isProxyDatapathObject(proxy);
     }
 
     @ExportMessage
@@ -252,6 +253,38 @@ final class HostProxy implements TruffleObject {
                     @Shared("cache") @Cached(value = "this.context.getGuestToHostCache()", allowUncached = true) GuestToHostCodeCache cache) throws UnsupportedMessageException {
         if (cache.api.isProxyObject(proxy)) {
             Object result = guestToHostCall(library, cache.memberKeys, context, proxy);
+            assert result != null;
+            Object guestValue = context.toGuestValue(library, result);
+            InteropLibrary interop = InteropLibrary.getFactory().getUncached();
+            if (!interop.hasArrayElements(guestValue)) {
+                if (guestValue instanceof HostObject) {
+                    HostObject hostObject = (HostObject) guestValue;
+                    if (hostObject.obj.getClass().isArray() && !hostObject.getHostClassCache().isArrayAccess()) {
+                        throw illegalProxy(context, "getMemberKeys() returned a Java array %s, but allowArrayAccess in HostAccess is false.", context.asValue(library, guestValue).toString());
+                    } else if (hostObject.obj instanceof List && !hostObject.getHostClassCache().isListAccess()) {
+                        throw illegalProxy(context, "getMemberKeys() returned a Java List %s, but allowListAccess in HostAccess is false.", context.asValue(library, guestValue).toString());
+                    }
+                }
+                throw illegalProxy(context, "getMemberKeys() returned invalid value %s but must return an array of member key Strings.",
+                                context.asValue(library, guestValue).toString());
+            }
+            // Todo: Use interop to determine an array element type when the GR-5737 is resolved.
+            for (int i = 0; i < interop.getArraySize(guestValue); i++) {
+                try {
+                    Object element = interop.readArrayElement(guestValue, i);
+                    if (!interop.isString(element)) {
+                        throw illegalProxy(context, "getMemberKeys() returned invalid value %s but must return an array of member key Strings.",
+                                        context.asValue(library, guestValue).toString());
+                    }
+                } catch (UnsupportedOperationException e) {
+                    CompilerDirectives.shouldNotReachHere(e);
+                } catch (InvalidArrayIndexException e) {
+                    continue;
+                }
+            }
+            return guestValue;
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            Object result = guestToHostCall(library, cache.memberKeysDatapath, context, proxy);
             assert result != null;
             Object guestValue = context.toGuestValue(library, result);
             InteropLibrary interop = InteropLibrary.getFactory().getUncached();
@@ -304,6 +337,9 @@ final class HostProxy implements TruffleObject {
             }
             Object result = guestToHostCall(library, cache.getMember, context, proxy, member);
             return context.toGuestValue(library, result);
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            Object result = guestToHostCall(library, cache.getMemberDatapath, context, proxy, member);
+            return context.toGuestValue(library, result);
         } else {
             throw UnsupportedMessageException.create();
         }
@@ -317,6 +353,9 @@ final class HostProxy implements TruffleObject {
         if (cache.api.isProxyObject(proxy)) {
             Object castValue = context.asValue(library, value);
             guestToHostCall(library, cache.putMember, context, proxy, member, castValue);
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            Object castValue = context.asValue(library, value);
+            guestToHostCall(library, cache.putMemberDatapath, context, proxy, member, castValue);
         } else {
             throw UnsupportedMessageException.create();
         }
@@ -329,6 +368,22 @@ final class HostProxy implements TruffleObject {
                     @Shared("cache") @Cached(value = "this.context.getGuestToHostCache()", allowUncached = true) GuestToHostCodeCache cache)
                     throws UnsupportedMessageException, UnsupportedTypeException, ArityException, UnknownIdentifierException {
         if (cache.api.isProxyObject(proxy)) {
+            if (!isMemberExisting(member, library, cache)) {
+                throw UnknownIdentifierException.create(member);
+            }
+            Object memberObject;
+            try {
+                memberObject = readMember(member, library, cache);
+            } catch (UnsupportedOperationException e) {
+                throw UnsupportedMessageException.create();
+            }
+            memberObject = context.toGuestValue(library, memberObject);
+            if (executables.isExecutable(memberObject)) {
+                return executables.execute(memberObject, arguments);
+            } else {
+                throw UnsupportedMessageException.create();
+            }
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
             if (!isMemberExisting(member, library, cache)) {
                 throw UnknownIdentifierException.create(member);
             }
@@ -362,6 +417,14 @@ final class HostProxy implements TruffleObject {
                     return false;
                 }
             }
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            if (isMemberExisting(member, library, cache)) {
+                try {
+                    return executables.isExecutable(readMember(member, library, cache));
+                } catch (UnsupportedMessageException | UnknownIdentifierException e) {
+                    return false;
+                }
+            }
         }
         return false;
     }
@@ -379,6 +442,14 @@ final class HostProxy implements TruffleObject {
             if (!result) {
                 throw UnknownIdentifierException.create(member);
             }
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            if (!isMemberExisting(member, library, cache)) {
+                throw UnknownIdentifierException.create(member);
+            }
+            boolean result = (boolean) guestToHostCall(library, cache.removeMemberDatapath, context, proxy, member);
+            if (!result) {
+                throw UnknownIdentifierException.create(member);
+            }
         } else {
             throw UnsupportedMessageException.create();
         }
@@ -392,6 +463,8 @@ final class HostProxy implements TruffleObject {
                     @Shared("cache") @Cached(value = "this.context.getGuestToHostCache()", allowUncached = true) GuestToHostCodeCache cache) {
         if (cache.api.isProxyObject(proxy)) {
             return (boolean) guestToHostCall(library, cache.hasMember, context, proxy, member);
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
+            return (boolean) guestToHostCall(library, cache.hasMemberDatapath, context, proxy, member);
         } else {
             return false;
         }
@@ -402,6 +475,8 @@ final class HostProxy implements TruffleObject {
     boolean isMemberInsertable(String member, @CachedLibrary("this") InteropLibrary library,
                     @Shared("cache") @Cached(value = "this.context.getGuestToHostCache()", allowUncached = true) GuestToHostCodeCache cache) {
         if (cache.api.isProxyObject(proxy)) {
+            return !isMemberExisting(member, library, cache);
+        } else if (cache.api.isProxyDatapathObject(proxy)) {
             return !isMemberExisting(member, library, cache);
         } else {
             return false;

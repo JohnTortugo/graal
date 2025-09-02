@@ -49,6 +49,7 @@ import java.time.ZoneId;
 import java.util.NoSuchElementException;
 
 import org.graalvm.polyglot.impl.AbstractPolyglotImpl.APIAccess;
+import org.graalvm.polyglot.proxy.ProxyDatapathObject;
 
 import com.oracle.truffle.api.CallTarget;
 import com.oracle.truffle.api.CompilerDirectives;
@@ -289,6 +290,67 @@ final class GuestToHostCodeCache extends GuestToHostCodeCacheBase {
         @TruffleBoundary
         protected Object executeImpl(Object proxy, Object[] arguments) {
             return api.callProxyObjectHasMember(proxy, (String) arguments[ARGUMENT_OFFSET]);
+        }
+    }.getCallTarget();
+
+    final CallTarget memberKeysDatapath = new GuestToHostRootNode(api.getProxyDatapathObjectClass(), "getMemberKeys") {
+
+        @Override
+        @TruffleBoundary
+        protected Object executeImpl(Object proxy, Object[] arguments) {
+            return api.callProxyDatapathObjectMemberKeys(proxy);
+        }
+    }.getCallTarget();
+
+    final CallTarget getMemberDatapath = new GuestToHostRootNode(api.getProxyDatapathObjectClass(), "getMember") {
+        @Override
+        protected Object executeImpl(Object proxy, Object[] arguments) throws UnsupportedMessageException {
+            ProxyDatapathObject dpProxy = (ProxyDatapathObject) proxy;
+            return dpProxy.fields.get((String) arguments[ARGUMENT_OFFSET]);
+        }
+    }.getCallTarget();
+
+    final CallTarget putMemberDatapath = new GuestToHostRootNode(api.getProxyDatapathObjectClass(), "putMember") {
+
+        @Override
+        protected Object executeImpl(Object proxy, Object[] arguments) throws UnsupportedMessageException {
+            try {
+                boundaryPutMember(proxy, (String) arguments[ARGUMENT_OFFSET], arguments[ARGUMENT_OFFSET + 1]);
+            } catch (UnsupportedOperationException e) {
+                throw UnsupportedMessageException.create();
+            }
+            return null;
+        }
+
+        @TruffleBoundary
+        private void boundaryPutMember(Object proxy, String member, Object value) {
+            api.callProxyDatapathObjectPutMember(proxy, member, value);
+        }
+    }.getCallTarget();
+
+    final CallTarget removeMemberDatapath = new GuestToHostRootNode(api.getProxyDatapathObjectClass(), "removeMember") {
+
+        @Override
+        protected Object executeImpl(Object proxy, Object[] arguments) throws UnsupportedMessageException {
+            try {
+                return removeBoundary(proxy, (String) arguments[ARGUMENT_OFFSET]);
+            } catch (UnsupportedOperationException e) {
+                throw UnsupportedMessageException.create();
+            }
+        }
+
+        @TruffleBoundary
+        private boolean removeBoundary(Object proxy, String member) {
+            return api.callProxyDatapathObjectRemoveMember(proxy, member);
+        }
+    }.getCallTarget();
+
+    final CallTarget hasMemberDatapath = new GuestToHostRootNode(api.getProxyDatapathObjectClass(), "hasMember") {
+
+        @Override
+        @TruffleBoundary
+        protected Object executeImpl(Object proxy, Object[] arguments) {
+            return api.callProxyDatapathObjectHasMember(proxy, (String) arguments[ARGUMENT_OFFSET]);
         }
     }.getCallTarget();
 
