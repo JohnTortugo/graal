@@ -1096,6 +1096,8 @@ public abstract class AbstractPolyglotImpl {
 
         public abstract Object unboxProxyObject(Object hostValue);
 
+        public abstract Object unboxDatapathProxyObject(Object hostValue);
+
         public abstract Throwable unboxHostException(Throwable hostValue);
 
         public abstract Object toHostObject(Object context, Object value);
@@ -1113,6 +1115,8 @@ public abstract class AbstractPolyglotImpl {
         public abstract Object createHostAdapter(Object hostContextObject, Object[] types, Object classOverrides);
 
         public abstract boolean isHostProxy(Object value);
+
+        public abstract boolean isDatapathProxy(Object value);
 
         public abstract Error toHostResourceError(Throwable hostException);
 
@@ -1307,9 +1311,15 @@ public abstract class AbstractPolyglotImpl {
             return false;
         }
 
+        public boolean isDatapathProxyObject(Object context, Object receiver) {
+            return false;
+        }
+
         public abstract Object asHostObject(Object context, Object receiver);
 
         public abstract Object asProxyObject(Object context, Object receiver);
+
+        public abstract Object asDatapathProxyObject(Object context, Object receiver);
 
         public abstract String toString(Object context, Object receiver);
 

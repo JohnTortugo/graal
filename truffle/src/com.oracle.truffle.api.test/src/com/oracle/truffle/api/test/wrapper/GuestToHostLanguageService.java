@@ -120,6 +120,11 @@ public class GuestToHostLanguageService extends AbstractHostLanguageService {
     }
 
     @Override
+    public Object unboxDatapathProxyObject(Object hostValue) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Throwable unboxHostException(Throwable hostValue) {
         throw new UnsupportedOperationException();
     }
@@ -161,6 +166,11 @@ public class GuestToHostLanguageService extends AbstractHostLanguageService {
 
     @Override
     public boolean isHostProxy(Object value) {
+        return false;
+    }
+
+    @Override
+    public boolean isDatapathProxy(Object value) {
         return false;
     }
 
