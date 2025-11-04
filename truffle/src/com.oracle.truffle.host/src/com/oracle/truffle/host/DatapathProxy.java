@@ -1,7 +1,9 @@
 package com.oracle.truffle.host;
 
 import java.util.HashMap;
+
 import java.util.Map;
+import java.util.function.Function;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.interop.InteropLibrary;
@@ -12,30 +14,32 @@ import com.oracle.truffle.api.library.ExportLibrary;
 import com.oracle.truffle.api.library.ExportMessage;
 
 @ExportLibrary(InteropLibrary.class)
-@SuppressWarnings("unused")
 public final class DatapathProxy implements TruffleObject {
+    private final Object term;
+    private final String ionType;
     private final Map<String, Object> fields;
+    private final Function<String, Object> computeIfAbsent;
 
-    public DatapathProxy(Object... values) {
-        this.fields = new HashMap<>();
-        for (int i = 0; i < values.length; i++) {
-            this.fields.put("field" + (i + 1), values[i]);
-        }
+    public DatapathProxy(Object term, Map<String, Object> fields, Function<String, Object> computeIfAbsent, String ionType) {
+        this.term = term;
+        this.fields = fields;
+        this.computeIfAbsent = computeIfAbsent;
+        this.ionType = ionType;
     }
 
     @ExportMessage
-    Object readMember(String member) throws UnsupportedMessageException, UnknownIdentifierException {
+    Object readMember(String member) {
         return read(member);
     }
 
     @ExportMessage
-    void writeMember(String member, Object value) throws UnsupportedMessageException {
+    void writeMember(String member, Object value) {
         write(member, value);
     }
 
     @TruffleBoundary(allowInlining = true)
     public Object read(String member) {
-        return this.fields.get(member);
+        return this.fields.computeIfAbsent(member, this.computeIfAbsent);
     }
 
     @TruffleBoundary(allowInlining = true)
@@ -59,13 +63,13 @@ public final class DatapathProxy implements TruffleObject {
     }
 
     @ExportMessage
-    final boolean isMemberModifiable(String member) {
-        return true;
+    boolean isMemberModifiable(String member) {
+        return false;
     }
 
     @ExportMessage
-    final boolean isMemberInsertable(String member) {
-        return true;
+    boolean isMemberInsertable(String member) {
+        return false;
     }
 
     public static boolean isDatapathProxyGuestObject(HostLanguage language, Object value) {
@@ -75,5 +79,13 @@ public final class DatapathProxy implements TruffleObject {
 
     public static Object toDatapathProxyObject(HostLanguage language, Object value) {
         return HostLanguage.unwrapIfScoped(language, value);
+    }
+
+    public Object getTerm() {
+        return this.term;
+    }
+
+    public String getIonType() {
+        return this.ionType;
     }
 }
