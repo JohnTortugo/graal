@@ -24,7 +24,6 @@
  */
 package com.oracle.svm.interpreter.metadata;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Modifier;
 import java.util.function.Function;
 
@@ -34,6 +33,7 @@ import org.graalvm.nativeimage.Platforms;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.registry.SymbolsSupport;
+import com.oracle.svm.core.invoke.ResolvedMember;
 import com.oracle.svm.core.layeredimagesingleton.MultiLayeredImageSingleton;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.espresso.classfile.descriptors.Name;
@@ -49,7 +49,7 @@ import jdk.vm.ci.meta.PrimitiveConstant;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.UnresolvedJavaType;
 
-public class InterpreterResolvedJavaField implements ResolvedJavaField, CremaFieldAccess {
+public class InterpreterResolvedJavaField extends InterpreterAnnotated implements ResolvedJavaField, CremaFieldAccess, ResolvedMember {
     public static final InterpreterResolvedJavaField[] EMPTY_ARRAY = new InterpreterResolvedJavaField[0];
 
     // Special offset values
@@ -321,21 +321,6 @@ public class InterpreterResolvedJavaField implements ResolvedJavaField, CremaFie
 
     @Override
     public final boolean isSynthetic() {
-        throw VMError.intentionallyUnimplemented();
-    }
-
-    @Override
-    public final <T extends Annotation> T getAnnotation(Class<T> annotationClass) {
-        throw VMError.intentionallyUnimplemented();
-    }
-
-    @Override
-    public final Annotation[] getAnnotations() {
-        throw VMError.intentionallyUnimplemented();
-    }
-
-    @Override
-    public final Annotation[] getDeclaredAnnotations() {
         throw VMError.intentionallyUnimplemented();
     }
 

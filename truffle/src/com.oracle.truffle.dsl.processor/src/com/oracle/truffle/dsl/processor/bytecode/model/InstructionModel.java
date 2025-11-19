@@ -100,6 +100,7 @@ public final class InstructionModel implements PrettyPrintable {
         TAG_YIELD,
         TAG_YIELD_NULL,
         TAG_RESUME,
+        TRACE_INSTRUCTION,
         INVALIDATE;
 
         public boolean isLocalVariableAccess() {
@@ -531,8 +532,14 @@ public final class InstructionModel implements PrettyPrintable {
         }
     }
 
+    public boolean isTraceInstrumentation() {
+        return kind == InstructionKind.TRACE_INSTRUCTION;
+    }
+
     public boolean isInstrumentation() {
-        if (isTagInstrumentation()) {
+        if (isTraceInstrumentation()) {
+            return true;
+        } else if (isTagInstrumentation()) {
             return true;
         } else if (kind == InstructionKind.CUSTOM) {
             return operation.kind == OperationKind.CUSTOM_INSTRUMENTATION;
@@ -743,18 +750,22 @@ public final class InstructionModel implements PrettyPrintable {
         return true;
     }
 
-    public boolean needsBoxingElimination(BytecodeDSLModel model, int valueIndex) {
+    /**
+     * Whether the instruction or any of its quickenings needs a child bci immediate in order to
+     * perform boxing elimination of the given operand.
+     */
+    public boolean needsChildBciForBoxingElimination(BytecodeDSLModel model, int valueIndex) {
         if (!model.usesBoxingElimination()) {
             return false;
         }
         if (signature.isVariadicParameter(valueIndex)) {
             return false;
         }
-        if (model.isBoxingEliminated(signature.getSpecializedType(valueIndex))) {
+        if (model.isBoxingEliminated(signature.getDynamicOperandType(valueIndex))) {
             return true;
         }
         for (InstructionModel quickenedInstruction : quickenedInstructions) {
-            if (quickenedInstruction.needsBoxingElimination(model, valueIndex)) {
+            if (quickenedInstruction.needsChildBciForBoxingElimination(model, valueIndex)) {
                 return true;
             }
         }

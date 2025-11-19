@@ -24,6 +24,8 @@
  */
 package com.oracle.svm.util;
 
+import java.lang.reflect.Method;
+import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -32,6 +34,7 @@ import java.util.stream.Collectors;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.MetaAccessProvider;
+import jdk.vm.ci.meta.ModifiersProvider;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
@@ -134,6 +137,15 @@ public final class JVMCIReflectionUtil {
         return getDeclaredConstructor(false, metaAccess, declaringClass, parameterTypes);
     }
 
+    /**
+     * Gets the constructors declared by {@code declaringClass}. Like
+     * {@link Class#getConstructors()}, this only returns public constructors and does not consider
+     * super classes.
+     */
+    public static ResolvedJavaMethod[] getConstructors(ResolvedJavaType declaringClass) {
+        return Arrays.stream(declaringClass.getDeclaredConstructors(false)).filter(ModifiersProvider::isPublic).toArray(ResolvedJavaMethod[]::new);
+    }
+
     private static ResolvedJavaMethod findMethod(ResolvedJavaType declaringClass, ResolvedJavaMethod[] methods, String name, ResolvedJavaType... parameterTypes) {
         ResolvedJavaMethod res = null;
         for (ResolvedJavaMethod m : methods) {
@@ -148,7 +160,7 @@ public final class JVMCIReflectionUtil {
             if (res == null) {
                 res = m;
             } else {
-                throw new GraalError("More than one method with signature %s in %s", res.format("%h(%p)"), declaringClass.toClassName());
+                throw new GraalError("More than one method with signature %s in %s", res.format("%H.%n(%p)"), declaringClass.toClassName());
             }
         }
         return res;
@@ -209,5 +221,81 @@ public final class JVMCIReflectionUtil {
         System.arraycopy(staticFields, 0, allFields, 0, staticFields.length);
         System.arraycopy(instanceFields, 0, allFields, staticFields.length, instanceFields.length);
         return Collections.unmodifiableList(Arrays.asList(allFields));
+    }
+
+    /**
+     * Gets the package name for a {@link ResolvedJavaType}. This is the same as calling
+     * {@link Class#getPackageName()} on the underlying class.
+     * <p>
+     * Implementation derived from {@link Class#getPackageName()}.
+     */
+    public static String getPackageName(ResolvedJavaType type) {
+        ResolvedJavaType c = type.isArray() ? type.getElementalType() : type;
+        if (c.isPrimitive()) {
+            return "java.lang";
+        }
+        String cn = c.toClassName();
+        int dot = cn.lastIndexOf('.');
+        return (dot != -1) ? cn.substring(0, dot).intern() : "";
+    }
+
+    /**
+     * Gets the package enclosing {@code type} or null if {@code type} represents an array type, a
+     * primitive type or void.
+     */
+    public static ResolvedJavaPackage getPackage(ResolvedJavaType type) {
+        return JVMCIReflectionUtilFallback.getPackage(type);
+    }
+
+    /**
+     * Gets the return type for a {@link ResolvedJavaMethod}. This is the same as calling
+     * {@link Method#getReturnType()} on the underlying method.
+     *
+     * @throws GraalError if the return type is not a {@link ResolvedJavaType}
+     */
+    public static ResolvedJavaType getResolvedReturnType(ResolvedJavaMethod m) {
+        JavaType returnType = m.getSignature().getReturnType(m.getDeclaringClass());
+        if (returnType instanceof ResolvedJavaType resolvedJavaType) {
+            return resolvedJavaType;
+        }
+        throw new GraalError("Method does not have a resolved return type: %s", m.format("%H.%n(%p)"));
+    }
+
+    /**
+     * Gets the type name for a {@link ResolvedJavaType}. This is the same as calling
+     * {@link Class#getTypeName()} on the underlying class.
+     * <p>
+     * Implementation derived from {@link Class#getTypeName()}.
+     */
+    public static String getTypeName(ResolvedJavaType type) {
+        if (type.isArray()) {
+            try {
+                ResolvedJavaType cl = type;
+                int dimensions = 0;
+                do {
+                    dimensions++;
+                    cl = cl.getComponentType();
+                } while (cl.isArray());
+                return cl.getName().concat("[]".repeat(dimensions));
+            } catch (Throwable e) {
+                /* FALLTHRU */
+            }
+        }
+        return type.toClassName();
+    }
+
+    public static ResolvedJavaModule getModule(ResolvedJavaType declaringClass) {
+        return JVMCIReflectionUtilFallback.getModule(declaringClass);
+    }
+
+    /**
+     * Returns the <em>origin</em> associated with this {@link ResolvedJavaType}.
+     *
+     * This is not yet properly implemented as it falls back to the original class (GR-71068).
+     *
+     * @return the location (URL), or {@code null} if no URL was supplied during construction.
+     */
+    public static URL getOrigin(ResolvedJavaType type) {
+        return JVMCIReflectionUtilFallback.getOrigin(type);
     }
 }

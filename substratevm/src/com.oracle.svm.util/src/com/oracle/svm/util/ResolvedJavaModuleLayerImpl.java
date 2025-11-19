@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,25 +22,38 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package com.oracle.svm.core.fieldvaluetransformer;
+package com.oracle.svm.util;
 
-import java.util.function.Function;
-
-import com.oracle.svm.core.util.VMError;
-
-import jdk.vm.ci.meta.JavaConstant;
-import jdk.vm.ci.meta.ResolvedJavaField;
+import java.util.Objects;
+import java.util.Optional;
 
 /**
- * Special field value transformer which, instead of returning an object, returns an
- * {@link JavaConstant} of the transformed value.
+ * Fallback implementation of {@link ResolvedJavaModuleLayer} based on {@link ModuleLayer}.
  */
-public interface ObjectToConstantFieldValueTransformer extends FieldValueTransformerWithAvailability {
+final class ResolvedJavaModuleLayerImpl implements ResolvedJavaModuleLayer {
 
-    JavaConstant transformToConstant(ResolvedJavaField field, Object receiver, Object originalValue, Function<Object, JavaConstant> toConstant);
+    private final ModuleLayer moduleLayer;
+
+    ResolvedJavaModuleLayerImpl(ModuleLayer moduleLayer) {
+        this.moduleLayer = Objects.requireNonNull(moduleLayer);
+    }
 
     @Override
-    default Object transform(Object receiver, Object originalValue) {
-        throw VMError.intentionallyUnimplemented();
+    public boolean equals(Object o) {
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        ResolvedJavaModuleLayerImpl that = (ResolvedJavaModuleLayerImpl) o;
+        return moduleLayer.equals(that.moduleLayer);
+    }
+
+    @Override
+    public int hashCode() {
+        return moduleLayer.hashCode();
+    }
+
+    @Override
+    public Optional<ResolvedJavaModule> findModule(String moduleName) {
+        return moduleLayer.findModule(moduleName).map(ResolvedJavaModuleImpl::new);
     }
 }

@@ -24,7 +24,6 @@ package com.oracle.truffle.espresso.jvmci.meta;
 
 import static com.oracle.truffle.espresso.jvmci.EspressoJVMCIRuntime.runtime;
 
-import java.lang.annotation.Annotation;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
 import java.util.List;
@@ -39,6 +38,7 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaRecordComponent;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.UnresolvedJavaType;
+import jdk.vm.ci.meta.annotation.AnnotationsInfo;
 
 public final class EspressoResolvedArrayType extends EspressoResolvedObjectType {
     private final EspressoResolvedJavaType elementalType;
@@ -119,8 +119,7 @@ public final class EspressoResolvedArrayType extends EspressoResolvedObjectType 
 
     @Override
     public boolean isAssignableFrom(ResolvedJavaType other) {
-        if (other instanceof EspressoResolvedArrayType) {
-            EspressoResolvedArrayType otherArrayType = (EspressoResolvedArrayType) other;
+        if (other instanceof EspressoResolvedArrayType otherArrayType) {
             if (otherArrayType.dimensions > dimensions) {
                 return elementalType.isAssignableFrom(otherArrayType);
             } else if (otherArrayType.dimensions == dimensions) {
@@ -325,18 +324,13 @@ public final class EspressoResolvedArrayType extends EspressoResolvedObjectType 
     }
 
     @Override
-    public <T extends Annotation> T getAnnotation(Class<T> annotationClass) {
+    public AnnotationsInfo getRawDeclaredAnnotationInfo() {
         return null;
     }
 
     @Override
-    public Annotation[] getAnnotations() {
-        return NO_ANNOTATIONS;
-    }
-
-    @Override
-    public Annotation[] getDeclaredAnnotations() {
-        return NO_ANNOTATIONS;
+    public AnnotationsInfo getTypeAnnotationInfo() {
+        return null;
     }
 
     @Override

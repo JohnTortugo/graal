@@ -53,6 +53,8 @@ import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
+import com.oracle.svm.common.layeredimage.LayeredCompilationBehavior;
+import com.oracle.svm.common.layeredimage.LayeredCompilationBehavior.Behavior;
 import com.oracle.svm.core.GCRelatedMXBeans;
 import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.Uninterruptible;
@@ -62,6 +64,8 @@ import com.oracle.svm.core.jfr.HasJfrSupport;
 import com.oracle.svm.core.thread.ThreadListener;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.util.HostModuleUtil;
+import com.oracle.svm.util.ResolvedJavaModuleLayer;
 import com.sun.jmx.mbeanserver.MXBeanLookup;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -136,6 +140,7 @@ public final class ManagementSupport implements ThreadListener {
         return ImageSingletons.lookup(ManagementSupport.class);
     }
 
+    @LayeredCompilationBehavior(Behavior.PINNED_TO_INITIAL_LAYER)
     public <T extends PlatformManagedObject> T getPlatformMXBean(Class<T> clazz) {
         Object result = getPlatformMXBeans0(clazz);
         if (result == null) {
@@ -152,6 +157,7 @@ public final class ManagementSupport implements ThreadListener {
     }
 
     @SuppressWarnings("unchecked")
+    @LayeredCompilationBehavior(Behavior.PINNED_TO_INITIAL_LAYER)
     public <T extends PlatformManagedObject> List<T> getPlatformMXBeans(Class<T> clazz) {
         Object result = getPlatformMXBeans0(clazz);
         if (result == null) {
@@ -293,9 +299,9 @@ public final class ManagementSupport implements ThreadListener {
     @Platforms(Platform.HOSTED_ONLY.class)
     @SuppressWarnings("unchecked")
     private static Class<? extends PlatformManagedObject> getFlightRecorderMXBeanClass() {
-        var jfrModule = ModuleLayer.boot().findModule("jdk.management.jfr");
+        var jfrModule = ResolvedJavaModuleLayer.boot().findModule("jdk.management.jfr");
         if (jfrModule.isPresent()) {
-            ManagementSupport.class.getModule().addReads(jfrModule.get());
+            HostModuleUtil.addReads(ManagementSupport.class, jfrModule.get());
             try {
                 return (Class<? extends PlatformManagedObject>) Class.forName("jdk.management.jfr.FlightRecorderMXBean", false, Object.class.getClassLoader());
             } catch (ClassNotFoundException ex) {
