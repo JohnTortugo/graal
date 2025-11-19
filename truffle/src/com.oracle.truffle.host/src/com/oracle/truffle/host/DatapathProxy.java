@@ -88,4 +88,8 @@ public final class DatapathProxy implements TruffleObject {
     public String getIonType() {
         return this.ionType;
     }
+
+    public boolean ionEquals(Object o) {
+        return o != null;
+    }
 }
