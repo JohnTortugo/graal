@@ -1971,8 +1971,8 @@ public abstract class InteropLibrary extends Library {
      * The following simplified {@code TryCatchNode} shows how the exceptions should be handled by
      * languages.
      *
-     * {@snippet file="com/oracle/truffle/api/interop/InteropLibrary.java"
-     * region="InteropLibrarySnippets.TryCatchNode"}
+     * {@snippet file = "com/oracle/truffle/api/interop/InteropLibrary.java" region =
+     * "InteropLibrarySnippets.TryCatchNode"}
      *
      * @see #throwException(Object)
      * @see com.oracle.truffle.api.exception.AbstractTruffleException
