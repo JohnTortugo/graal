@@ -1635,6 +1635,40 @@ public final class Value extends AbstractValue {
     }
 
     /**
+     * Returns <code>true</code> if this value represents a {@link DatapatyProxy} object. The proxy
+     * instance can be unboxed using {@link #asDatapathProxyObject()}.
+     *
+     * @throws PolyglotException if a guest language error occurred during execution.
+     * @throws IllegalStateException if the underlying context was closed.
+     * @since 19.0
+     */
+    public boolean isDatapathProxyObject() {
+        try {
+            return dispatch.isDatapathProxyObject(this.context, receiver);
+        } finally {
+            Reference.reachabilityFence(creatorContext);
+        }
+    }
+
+    /**
+     * Returns the unboxed instance of the {@link Proxy}. Proxies are not automatically boxed to
+     * {@link #isHostObject() host objects} on host language call boundaries (Java methods).
+     *
+     * @throws UnsupportedOperationException if a value is not a proxy object.
+     * @throws PolyglotException if a guest language error occurred during execution.
+     * @throws IllegalStateException if the underlying context was closed.
+     * @since 19.0
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T asDatapathProxyObject() {
+        try {
+            return (T) dispatch.asDatapathProxyObject(this.context, receiver);
+        } finally {
+            Reference.reachabilityFence(creatorContext);
+        }
+    }
+
+    /**
      * Maps a polyglot value to a value with a given Java target type.
      *
      * <h3>Target type mapping</h3>
