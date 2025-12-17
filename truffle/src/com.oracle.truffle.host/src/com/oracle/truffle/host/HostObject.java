@@ -81,6 +81,7 @@ import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.interop.ArityException;
+import com.oracle.truffle.api.interop.DatapathReadOnlyArrayList;
 import com.oracle.truffle.api.interop.ExceptionType;
 import com.oracle.truffle.api.interop.InteropException;
 import com.oracle.truffle.api.interop.InteropLibrary;
@@ -491,6 +492,13 @@ final class HostObject implements TruffleObject {
             return index >= 0 && index < size;
         }
 
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        static boolean doDatapathReadOnlyArrayList(HostObject receiver, long index,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
+            long size = Array.getLength(receiver.unwrapDatapathReadOnlyArrayList(hostClassCache));
+            return index >= 0 && index < size;
+        }
+
         @Specialization(guards = {"!receiver.isNull()", "receiver.isList(hostClassCache)"})
         static boolean doList(HostObject receiver, long index,
                         @Bind Node node,
@@ -532,6 +540,12 @@ final class HostObject implements TruffleObject {
                         @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
             long size = Array.getLength(receiver.obj);
             return index >= 0 && index < size;
+        }
+
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        static boolean doDatapathReadOnlyArrayList(HostObject receiver, long index,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
+            return false;
         }
 
         @Specialization(guards = {"!receiver.isNull()", "receiver.isList(hostClassCache)"})
@@ -624,6 +638,13 @@ final class HostObject implements TruffleObject {
             }
         }
 
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        static void doDatapathReadOnlyArrayList(HostObject receiver, long index, Object value,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache)
+                        throws UnsupportedMessageException {
+            throw UnsupportedMessageException.create();
+        }
+
         @Specialization(guards = {"!receiver.isNull()", "receiver.isList(hostClassCache)"})
         static void doList(HostObject receiver, long index, Object value,
                         @Bind Node node,
@@ -703,6 +724,12 @@ final class HostObject implements TruffleObject {
             return false;
         }
 
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        static boolean doDatapathReadOnlyArrayList(HostObject receiver, long index,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
+            return false;
+        }
+
         @Specialization(guards = {"!receiver.isNull()", "receiver.isList(hostClassCache)"})
         static boolean doList(HostObject receiver, long index,
                         @Bind Node node,
@@ -729,6 +756,13 @@ final class HostObject implements TruffleObject {
 
         @Specialization(guards = "receiver.isNull()")
         static void doNull(HostObject receiver, long index) throws UnsupportedMessageException {
+            throw UnsupportedMessageException.create();
+        }
+
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        static void doDatapathReadOnlyArrayList(HostObject receiver, long index,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache)
+                        throws UnsupportedMessageException {
             throw UnsupportedMessageException.create();
         }
 
@@ -770,7 +804,7 @@ final class HostObject implements TruffleObject {
         @Specialization(guards = "!receiver.isNull()")
         static boolean doNotNull(HostObject receiver,
                         @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
-            return receiver.isList(hostClassCache) || receiver.isArray(hostClassCache) || receiver.isMapEntry(hostClassCache);
+            return receiver.isList(hostClassCache) || receiver.isArray(hostClassCache) || receiver.isDatapathReadOnlyArrayList(hostClassCache) || receiver.isMapEntry(hostClassCache);
         }
     }
 
@@ -785,7 +819,7 @@ final class HostObject implements TruffleObject {
         @Specialization(guards = {"!receiver.isNull()", "receiver.isArray(hostClassCache)"})
         protected static Object doArray(HostObject receiver, long index,
                         @Bind Node node,
-                        @Cached ArrayGet arrayGet,
+                        @Shared("arrayGet") @Cached ArrayGet arrayGet,
                         @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache,
                         @Shared("toGuest") @Cached(inline = true) ToGuestValueNode toGuest,
                         @Shared("error") @Cached InlinedBranchProfile error) throws InvalidArrayIndexException {
@@ -797,6 +831,24 @@ final class HostObject implements TruffleObject {
             Object val = null;
             try {
                 val = arrayGet.execute(node, obj, (int) index);
+            } catch (ArrayIndexOutOfBoundsException outOfBounds) {
+                error.enter(node);
+                throw InvalidArrayIndexException.create(index);
+            }
+            return toGuest.execute(node, val);
+        }
+
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        protected static Object doDatapathArrayList(HostObject receiver, long index,
+                        @Bind Node node,
+                        @Shared("arrayGet") @Cached ArrayGet arrayGet,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache,
+                        @Shared("toGuest") @Cached(inline = true) ToGuestValueNode toGuest,
+                        @Shared("error") @Cached InlinedBranchProfile error) throws InvalidArrayIndexException {
+            Object[] arr = receiver.unwrapDatapathReadOnlyArrayList(hostClassCache);
+            Object val = null;
+            try {
+                val = arrayGet.execute(node, arr, (int) index);
             } catch (ArrayIndexOutOfBoundsException outOfBounds) {
                 error.enter(node);
                 throw InvalidArrayIndexException.create(index);
@@ -878,6 +930,12 @@ final class HostObject implements TruffleObject {
         protected static long doArray(HostObject receiver,
                         @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
             return Array.getLength(receiver.obj);
+        }
+
+        @Specialization(guards = {"!receiver.isNull()", "receiver.isDatapathReadOnlyArrayList(hostClassCache)"})
+        protected static long doDatapathArrayList(HostObject receiver,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) {
+            return Array.getLength(receiver.unwrapDatapathReadOnlyArrayList(hostClassCache));
         }
 
         @Specialization(guards = {"!receiver.isNull()", "receiver.isList(hostClassCache)"})
@@ -3843,6 +3901,16 @@ final class HostObject implements TruffleObject {
 
     boolean isArray(HostClassCache hostClassCache) {
         return hostClassCache.isArrayAccess() && obj.getClass().isArray();
+    }
+
+    boolean isDatapathReadOnlyArrayList(HostClassCache hostClassCache) {
+        return hostClassCache.isListAccess() && obj instanceof DatapathReadOnlyArrayList;
+    }
+
+    Object[] unwrapDatapathReadOnlyArrayList(HostClassCache hostClassCache) {
+        assert isDatapathReadOnlyArrayList(hostClassCache);
+        DatapathReadOnlyArrayList dlList = (DatapathReadOnlyArrayList) obj;
+        return dlList.getArray();
     }
 
     boolean isBuffer(HostClassCache hostClassCache) {
