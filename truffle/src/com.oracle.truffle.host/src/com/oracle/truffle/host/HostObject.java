@@ -105,7 +105,7 @@ import com.oracle.truffle.host.HostContextFactory.ToGuestValueNodeGen;
 
 @ExportLibrary(InteropLibrary.class)
 @SuppressWarnings({"unused"})
-final class HostObject implements TruffleObject {
+public final class HostObject implements TruffleObject {
 
     static final int LIMIT = 5;
 
@@ -119,7 +119,7 @@ final class HostObject implements TruffleObject {
 
     static final HostObject NULL = new HostObject(null, null, null);
 
-    final Object obj;
+    public final Object obj;
     final HostContext context;
     /**
      * Either null (default), the Class if this is a static class, or an optional HostException if

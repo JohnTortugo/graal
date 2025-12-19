@@ -40,6 +40,11 @@
  */
 package com.oracle.truffle.api.test.polyglot;
 
+import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Engine;
+import org.graalvm.polyglot.Source;
+import org.graalvm.polyglot.Value;
 import static com.oracle.truffle.api.test.common.AbstractExecutableTestLanguage.evalTestLanguage;
 import static com.oracle.truffle.api.test.polyglot.AbstractPolyglotTest.assertFails;
 import static org.junit.Assert.assertEquals;
@@ -90,6 +95,7 @@ import org.graalvm.polyglot.proxy.ProxyExecutable;
 import org.graalvm.polyglot.proxy.ProxyHashMap;
 import org.graalvm.polyglot.proxy.ProxyIterator;
 import org.graalvm.polyglot.proxy.ProxyObject;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -101,6 +107,7 @@ import com.oracle.truffle.api.interop.UnsupportedMessageException;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.test.common.AbstractExecutableTestLanguage;
 import com.oracle.truffle.api.test.common.NullObject;
+import com.oracle.truffle.sl.SLLanguage;
 import com.oracle.truffle.tck.tests.TruffleTestAssumptions;
 import com.oracle.truffle.tck.tests.ValueAssert;
 import com.oracle.truffle.tck.tests.ValueAssert.Trait;
@@ -194,6 +201,24 @@ public class DatapathReadOnlyArrayListTest extends AbstractHostAccessTest {
 // asExpected = true;
 // } finally {
 // assertTrue(asExpected);
+// }
+// }
+
+// @Test
+// public void loopTest() {
+// try (Context context = Context.newBuilder().allowAllAccess(true).build()) {
+// String jsScript = "function benchmark(input) { var result = 0; for (let entry of input) { result
+// += entry; } return result > 0; }";
+// Source jsSource = Source.newBuilder("TestJS", jsScript, "exp.js").buildLiteral();
+// context.eval(jsSource);
+//
+// FakeArrayList arrList = new FakeArrayList(1000);
+// var function = context.getBindings("TestJS").getMember("benchmark");
+//
+// for (int i = 0; i < 10000; i++) {
+// Value vlw = function.execute(arrList);
+// Assert.assertTrue(vlw.asBoolean());
+// }
 // }
 // }
 
