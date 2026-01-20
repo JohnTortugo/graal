@@ -33,25 +33,25 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import org.graalvm.collections.EconomicSet;
+
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
-import com.oracle.graal.vmaccess.ResolvedJavaPackage;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.hosted.FeatureImpl.AfterAnalysisAccessImpl;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.LogUtils;
 
+import jdk.graal.compiler.vmaccess.ResolvedJavaPackage;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
 /**
@@ -61,7 +61,7 @@ import jdk.vm.ci.meta.ResolvedJavaType;
  * If a vulnerable version is detected, the feature will then check whether any vulnerable methods
  * are reachable.
  */
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Independent.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
 @AutomaticallyRegisteredFeature
 public class Log4ShellFeature implements InternalFeature {
     private static final String log4jClassName = "org.apache.logging.log4j.Logger";
@@ -181,7 +181,7 @@ public class Log4ShellFeature implements InternalFeature {
             return log4jUnknownVersion;
         }
 
-        Set<String> vulnerableMethods = new HashSet<>();
+        EconomicSet<String> vulnerableMethods = EconomicSet.create();
 
         if (("1".equals(components[0]) && vulnerableLog4jOne(components)) || ("2".equals(components[0]) && vulnerableLog4jTwo(components))) {
             for (AnalysisMethod method : log4jClass.getDeclaredMethods(false)) {

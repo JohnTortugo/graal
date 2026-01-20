@@ -58,8 +58,8 @@ suite = {
     },
 
     "C1VISUALIZER_DIST" : {
-      "urls" : ["https://lafo.ssw.uni-linz.ac.at/pub/graal-external-deps/c1visualizer/c1visualizer-1.10.zip"],
-      "digest" : "sha512:40c505dd03ca0bb102f1091b89b90672126922f290bd8370eef9a7afc5d9c1e7b5db08c448a0948ef46bf57d850e166813e2d68bf7b1c88a46256d839b6b0201",
+      "urls" : ["https://lafo.ssw.uni-linz.ac.at/pub/c1visualizer/c1visualizer-1.13-3413409cce0.zip"],
+      "digest" : "sha512:176dcef9447f1760f70ec4da50b2f742e786fc3db6af9db9d699c303ecfe0e470deb3bb32120123cb93a0073f4f31cecffde2a7860edcf514dce9894d6df25c4",
       "packedResource": True,
     },
 
@@ -316,7 +316,7 @@ suite = {
       "workingSets" : "Graal,HotSpot",
     },
 
-    "com.oracle.graal.vmaccess": {
+    "jdk.graal.compiler.vmaccess": {
       "subDir": "src",
       "sourceDirs": ["src"],
       "dependencies": [
@@ -343,11 +343,11 @@ suite = {
       "spotbugs": "false",
     },
 
-    "com.oracle.graal.hostvmaccess": {
+    "jdk.graal.compiler.hostvmaccess": {
       "subDir": "src",
       "sourceDirs": ["src"],
       "dependencies": [
-        "com.oracle.graal.vmaccess",
+        "jdk.graal.compiler.vmaccess",
       ],
       "requires": [
         "jdk.internal.vm.ci",
@@ -558,8 +558,10 @@ suite = {
       "distDependencies" : [
         "GRAAL",
         "GRAAL_TEST_COMPILETIME",
+        "HSDIS_LIBRARY",
         "truffle:TRUFFLE_SL_TEST",
         "truffle:TRUFFLE_TEST",
+        "truffle:TRUFFLE_API",
         "truffle:TRUFFLE_COMPILER",
         "truffle:TRUFFLE_RUNTIME",
       ],
@@ -685,7 +687,7 @@ suite = {
           "jdk.graal.compiler",
         ],
         "exports": [
-          "com.oracle.graal.vmaccess",
+          "jdk.graal.compiler.vmaccess",
         ],
         "requiresConcealed": {
           "jdk.internal.vm.ci": [
@@ -698,12 +700,12 @@ suite = {
           ]
         },
         "uses": [
-          "com.oracle.graal.vmaccess.VMAccess",
+          "jdk.graal.compiler.vmaccess.VMAccess",
         ],
       },
       "subDir": "src",
       "dependencies": [
-        "com.oracle.graal.vmaccess",
+        "jdk.graal.compiler.vmaccess",
       ],
       "distDependencies": [
         "GRAAL",
@@ -726,7 +728,7 @@ suite = {
           "jdk.internal.vm.ci",
         ],
         "exports": [
-          "com.oracle.graal.hostvmaccess",
+          "jdk.graal.compiler.hostvmaccess",
         ],
         "requiresConcealed": {
           "java.base": [
@@ -749,7 +751,7 @@ suite = {
       },
       "subDir": "src",
       "dependencies": [
-        "com.oracle.graal.hostvmaccess",
+        "jdk.graal.compiler.hostvmaccess",
       ],
       "distDependencies": [
         "VMACCESS",
@@ -817,6 +819,43 @@ suite = {
       "testDistribution" : True,
       "maven": False,
       "graalCompilerSourceEdition": "ignore",
+    },
+
+    "HSDIS_LIBRARY" : {
+      "native" : True,
+      "type" : "jar",
+      "description" : "Disassembler support distribution for the GraalVM",
+      "os_arch" : {
+        "linux" : {
+          "riscv64" : {
+            "optional" : True,
+          },
+          "<others>" : {
+            "layout" : {
+              "libhsdis-<arch>.so" : "file:<path:HSDIS>/*",
+            },
+          },
+        },
+        "darwin" : {
+          "<others>" : {
+            "layout" : {
+              "libhsdis-<arch>.dylib" : "file:<path:HSDIS>/*",
+            },
+          },
+        },
+        "<others>" : {
+          "amd64" : {
+            "layout" : {
+              "<libsuffix:hsdis-amd64>" : "file:<path:HSDIS>/*",
+            },
+          },
+          "aarch64" : {
+            "layout" : {
+              "<libsuffix:hsdis-aarch64>" : "file:<path:HSDIS>/*",
+            },
+          },
+        },
+      },
     },
 
     "HSDIS_GRAALVM_SUPPORT" : {

@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2025, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2019, 2026, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # The Universal Permissive License (UPL), Version 1.0
@@ -1232,7 +1232,7 @@ class GraalVmNativeProperties(GraalVmProject):
 
 class NativePropertiesBuildTask(mx.ProjectBuildTask):
 
-    implicit_excludes = ['substratevm:LIBRARY_SUPPORT']
+    implicit_excludes = ['substratevm:LIBRARY_SUPPORT', 'substratevm:SVM_GUEST']
 
     def __init__(self, subject, args):
         """
@@ -1278,7 +1278,6 @@ class NativePropertiesBuildTask(mx.ProjectBuildTask):
         if self._contents is None:
             image_config = self.subject.image_config
             build_args = [
-                '--no-fallback',
                 '-march=compatibility',  # Target maximum portability of all GraalVM images.
                 '-Dorg.graalvm.version={}'.format(_suite.release_version()),
             ] + svm_experimental_options([
@@ -1377,7 +1376,7 @@ class NativePropertiesBuildTask(mx.ProjectBuildTask):
 
             build_with_module_path = image_config.use_modules == 'image'
             if build_with_module_path:
-                export_deps_to_exclude = [str(dep) for dep in mx.classpath_entries(['substratevm:LIBRARY_SUPPORT'])] + list(_known_missing_jars)
+                export_deps_to_exclude = [str(dep) for dep in mx.classpath_entries(['substratevm:LIBRARY_SUPPORT', 'substratevm:SVM_GUEST'])] + list(_known_missing_jars)
                 build_args += image_config.get_add_exports(set(export_deps_to_exclude))
 
             requires = [arg[2:] for arg in build_args if arg.startswith('--language:') or arg.startswith('--tool:') or arg.startswith('--macro:')]

@@ -77,7 +77,6 @@ import com.oracle.svm.core.reflect.SubstrateConstructorAccessor;
 import com.oracle.svm.core.reflect.SubstrateMethodAccessor;
 import com.oracle.svm.core.reflect.target.ReflectionSubstitutionSupport;
 import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.hosted.FallbackFeature;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.FeatureImpl.BeforeCompilationAccessImpl;
 import com.oracle.svm.hosted.FeatureImpl.DuringAnalysisAccessImpl;
@@ -95,7 +94,10 @@ import com.oracle.svm.hosted.reflect.proxy.DynamicProxyFeature;
 import com.oracle.svm.hosted.snippets.ReflectionPlugins;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.util.AnnotationUtil;
+import com.oracle.svm.util.GraalAccess;
+import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.ModuleSupport;
+import com.oracle.svm.util.OriginalFieldProvider;
 import com.oracle.svm.util.ReflectionUtil;
 
 import jdk.graal.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration.Plugins;
@@ -108,6 +110,7 @@ import jdk.internal.reflect.Reflection;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
 
 @AutomaticallyRegisteredFeature
 public class ReflectionFeature implements InternalFeature, ReflectionSubstitutionSupport {
@@ -130,7 +133,6 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
     private ReflectionDataBuilder reflectionData;
     private ImageClassLoader loader;
     private AnalysisUniverse aUniverse;
-    private int loadedConfigurations;
     private UniverseMetaAccess metaAccess;
 
     private record AccessorKey(Executable member, Class<?> targetClass) {
@@ -332,13 +334,12 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
         RuntimeJNIAccessSupport jniSupport = SubstrateOptions.JNI.getValue() ? ImageSingletons.lookup(RuntimeJNIAccessSupport.class) : null;
         ReflectionConfigurationParser<AccessCondition, Class<?>> parser = ConfigurationParserUtils.create(ConfigurationFile.REFLECTION, true, conditionResolver, reflectionData, proxyRegistry,
                         serializationSupport, jniSupport, access.getImageClassLoader());
-        List<String> originalLoadedConfigurations = ConfigurationParserUtils.parseAndRegisterConfigurationsFromCombinedFile(parser, access.getImageClassLoader(), "reflection");
+        ConfigurationParserUtils.parseAndRegisterConfigurationsFromCombinedFile(parser, access.getImageClassLoader(), "reflection");
         ReflectionConfigurationParser<AccessCondition, Class<?>> legacyParser = ConfigurationParserUtils.create(ConfigurationFile.REFLECTION, false, conditionResolver, reflectionData,
                         proxyRegistry, serializationSupport, jniSupport, access.getImageClassLoader());
-        originalLoadedConfigurations.addAll(ConfigurationParserUtils.parseAndRegisterConfigurations(legacyParser, access.getImageClassLoader(), "reflection",
+        ConfigurationParserUtils.parseAndRegisterConfigurations(legacyParser, access.getImageClassLoader(), "reflection",
                         ConfigurationFiles.Options.ReflectionConfigurationFiles, ConfigurationFiles.Options.ReflectionConfigurationResources,
-                        ConfigurationFile.REFLECTION.getFileName()));
-        loadedConfigurations = FallbackFeature.adjustLoadedConfigurations(originalLoadedConfigurations);
+                        ConfigurationFile.REFLECTION.getFileName());
 
         loader = access.getImageClassLoader();
         annotationSubstitutions = ((Inflation) access.getBigBang()).getAnnotationSubstitutionProcessor();
@@ -385,8 +386,9 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
          * These transformers have to be registered before registering methods below which causes
          * the analysis to already see SubstrateMethodAccessor.vtableIndex.
          */
-        access.registerFieldValueTransformer(ReflectionUtil.lookupField(SubstrateMethodAccessor.class, "vtableIndex"), new ComputeVTableIndex());
-        access.registerFieldValueTransformer(ReflectionUtil.lookupField(SubstrateMethodAccessor.class, "interfaceTypeID"), new ComputeInterfaceTypeID());
+        ResolvedJavaType substrateMethodAccessorType = GraalAccess.lookupType(SubstrateMethodAccessor.class);
+        analysisAccess.registerFieldValueTransformer(JVMCIReflectionUtil.getUniqueDeclaredField(substrateMethodAccessorType, "vtableIndex"), new ComputeVTableIndex());
+        analysisAccess.registerFieldValueTransformer(JVMCIReflectionUtil.getUniqueDeclaredField(substrateMethodAccessorType, "interfaceTypeID"), new ComputeInterfaceTypeID());
 
         /* Make sure array classes don't need to be registered for reflection. */
         RuntimeReflection.register(Object.class.getDeclaredMethods());
@@ -401,13 +403,6 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
         metaAccess = ((BeforeCompilationAccessImpl) access).getMetaAccess();
-
-        if (ImageSingletons.contains(FallbackFeature.class)) {
-            FallbackFeature.FallbackImageRequest reflectionFallback = ImageSingletons.lookup(FallbackFeature.class).reflectionFallback;
-            if (reflectionFallback != null && loadedConfigurations == 0) {
-                throw reflectionFallback;
-            }
-        }
     }
 
     public HostedMetaAccess hostedMetaAccess() {
@@ -430,6 +425,12 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
     }
 
     @Override
+    public int getFieldOffset(ResolvedJavaField field, boolean checkUnsafeAccessed) {
+        // GR-71897: convert to JVMCI
+        return getFieldOffset(OriginalFieldProvider.getJavaField(field), checkUnsafeAccessed);
+    }
+
+    @Override
     public int getInstalledLayerNumber(Field field) {
         VMError.guarantee(metaAccess instanceof HostedMetaAccess, "Field offsets are available only for compilation and afterwards.");
 
@@ -446,9 +447,7 @@ public class ReflectionFeature implements InternalFeature, ReflectionSubstitutio
 
     @Override
     public void registerInvocationPlugins(Providers providers, Plugins plugins, ParsingReason reason) {
-        FallbackFeature fallbackFeature = ImageSingletons.contains(FallbackFeature.class) ? ImageSingletons.lookup(FallbackFeature.class) : null;
-        ReflectionPlugins.registerInvocationPlugins(loader, annotationSubstitutions,
-                        plugins.getClassInitializationPlugin(), plugins.getInvocationPlugins(), aUniverse, reason, fallbackFeature);
+        ReflectionPlugins.registerInvocationPlugins(loader, annotationSubstitutions, plugins.getClassInitializationPlugin(), plugins.getInvocationPlugins(), aUniverse, reason);
     }
 }
 
@@ -518,6 +517,7 @@ final class SignatureKey {
 }
 
 final class ComputeVTableIndex implements FieldValueTransformerWithAvailability {
+    // JVMCI migration blocked by GR-72585: Migrate com.oracle.svm.core.reflect for terminus
     @Override
     public boolean isAvailable() {
         return BuildPhaseProvider.isHostedUniverseBuilt();
@@ -541,6 +541,7 @@ final class ComputeVTableIndex implements FieldValueTransformerWithAvailability 
 }
 
 final class ComputeInterfaceTypeID implements FieldValueTransformerWithAvailability {
+    // JVMCI migration blocked by GR-72585: Migrate com.oracle.svm.core.reflect for terminus
     @Override
     public boolean isAvailable() {
         return BuildPhaseProvider.isHostedUniverseBuilt();

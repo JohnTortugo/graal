@@ -366,7 +366,7 @@ public abstract class ImageHeapScanner {
         AnalysisError.guarantee(hostedValue.isNonNull(), "A relinked constant cannot have a NULL_CONSTANT hosted value.");
         Object existingSnapshot = imageHeap.getSnapshot(hostedValue);
         if (existingSnapshot != null) {
-            AnalysisError.guarantee(existingSnapshot == constant || existingSnapshot instanceof AnalysisFuture<?> task && task.ensureDone() == constant,
+            AnalysisError.guarantee(existingSnapshot.equals(constant) || existingSnapshot instanceof AnalysisFuture<?> task && task.ensureDone().equals(constant),
                             "Found unexpected snapshot value for base layer value.%nExisting value: %s.%nNew value: %s.%nHosted value: %s.%nReason: %s.",
                             existingSnapshot, constant, hostedValue, reason);
         } else {
@@ -732,7 +732,7 @@ public abstract class ImageHeapScanner {
                     JavaConstant fieldSnapshot = receiverObject.readFieldValue(field);
                     JavaConstant unwrappedSnapshot = ScanningObserver.maybeUnwrapSnapshot(fieldSnapshot, fieldValue instanceof ImageHeapConstant);
 
-                    if (fieldSnapshot instanceof ImageHeapConstant ihc && ihc.isInBaseLayer() && ihc.getHostedObject() == null) {
+                    if (fieldSnapshot instanceof ImageHeapConstant ihc && ihc.isInSharedLayer() && ihc.getHostedObject() == null) {
                         /*
                          * We cannot verify a base layer constant which doesn't have a backing
                          * hosted object. Since the hosted object is missing the constant would be
@@ -802,6 +802,15 @@ public abstract class ImageHeapScanner {
         });
         arrayObject.setElementTask(index, task);
         return task;
+    }
+
+    /**
+     * Returns true if the provided {@code object} has an {@link ImageHeapConstant} representation,
+     * meaning it is a candidate to be installed in the image heap.
+     */
+    public boolean hasImageHeapConstant(Object object) {
+        var javaConstant = asConstant(Objects.requireNonNull(object));
+        return imageHeap.getSnapshot(javaConstant) instanceof ImageHeapConstant;
     }
 
     /**

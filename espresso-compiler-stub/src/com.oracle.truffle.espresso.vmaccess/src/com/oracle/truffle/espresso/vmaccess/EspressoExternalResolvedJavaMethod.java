@@ -27,11 +27,11 @@ import java.lang.reflect.Type;
 import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.Value;
 
-import com.oracle.graal.vmaccess.InvocationException;
 import com.oracle.truffle.espresso.jvmci.meta.AbstractEspressoResolvedJavaMethod;
 import com.oracle.truffle.espresso.jvmci.meta.AbstractEspressoSignature;
 import com.oracle.truffle.espresso.jvmci.meta.EspressoResolvedInstanceType;
 
+import jdk.graal.compiler.vmaccess.InvocationException;
 import jdk.vm.ci.common.JVMCIError;
 import jdk.vm.ci.meta.ExceptionHandler;
 import jdk.vm.ci.meta.JavaConstant;
@@ -41,7 +41,7 @@ import jdk.vm.ci.meta.LineNumberTable;
 import jdk.vm.ci.meta.Local;
 import jdk.vm.ci.meta.LocalVariableTable;
 
-final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJavaMethod {
+final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJavaMethod implements EspressoExternalVMAccess.Element {
     static final EspressoExternalResolvedJavaMethod[] EMPTY_ARRAY = new EspressoExternalResolvedJavaMethod[0];
     private static final ExceptionHandler[] NO_HANDLERS = new ExceptionHandler[0];
     private static final LocalVariableTable EMPTY_LVT = new LocalVariableTable(new Local[0]);
@@ -66,8 +66,6 @@ final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJ
     @Override
     protected byte[] getCode0() {
         Value value = methodMirror.getMember("code");
-        assert !value.isNull() : this;
-        assert value.hasBufferElements() : this + " " + value;
         int size = Math.toIntExact(value.getBufferSize());
         byte[] buf = new byte[size];
         value.readBuffer(0, buf, 0, size);
@@ -120,7 +118,6 @@ final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJ
         if (handlers.isNull()) {
             return NO_HANDLERS;
         }
-        assert handlers.hasArrayElements();
         int size = Math.toIntExact(handlers.getArraySize());
         ExceptionHandler[] result = new ExceptionHandler[size];
         for (int i = 0; i < size; i++) {
@@ -169,11 +166,9 @@ final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJ
         if (rawData.isNull()) {
             return null;
         }
-        assert rawData.hasArrayElements() && rawData.getArraySize() % 2 == 0;
         int size = Math.toIntExact(rawData.getArraySize() / 2);
         int[] lineNumbers = new int[size];
         int[] bcis = new int[size];
-        assert size * 2L + 1L < Integer.MAX_VALUE;
         for (int i = 0; i < size; i++) {
             lineNumbers[i] = rawData.getArrayElement(i * 2L).asInt();
             bcis[i] = rawData.getArrayElement(i * 2L + 1L).asInt();
@@ -187,7 +182,6 @@ final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJ
         if (table.isNull()) {
             return EMPTY_LVT;
         }
-        assert table.hasArrayElements();
         int size = Math.toIntExact(table.getArraySize());
         Local[] result = new Local[size];
         for (int i = 0; i < size; i++) {
@@ -223,12 +217,12 @@ final class EspressoExternalResolvedJavaMethod extends AbstractEspressoResolvedJ
 
     @Override
     protected byte[] getRawAnnotationBytes(int category) {
-        throw JVMCIError.unimplemented();
+        return getAccess().getRawAnnotationBytes(methodMirror, category);
     }
 
     @Override
     protected boolean hasAnnotations() {
-        throw JVMCIError.unimplemented();
+        return getAccess().hasAnnotations(methodMirror);
     }
 
     @Override

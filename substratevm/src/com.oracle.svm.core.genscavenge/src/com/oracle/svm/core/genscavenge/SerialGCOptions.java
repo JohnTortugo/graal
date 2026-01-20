@@ -73,24 +73,11 @@ public final class SerialGCOptions {
     @Option(help = "Enables card marking for image heap objects, which arranges them in chunks. Automatically enabled when supported. Serial GC only.", type = OptionType.Expert) //
     public static final HostedOptionKey<Boolean> ImageHeapCardMarking = new HostedOptionKey<>(null, SerialGCOptions::validateSerialHostedOption);
 
-    @Option(help = "This number of milliseconds multiplied by the free heap memory in MByte is the time span " +
-                    "for which a soft reference will keep its referent alive after its last access. Serial GC only.", type = OptionType.Expert) //
-    public static final HostedOptionKey<Integer> SoftRefLRUPolicyMSPerMB = new HostedOptionKey<>(1000, SerialGCOptions::validateSerialHostedOption);
-
     @Option(help = "Print summary GC information after application main method returns. Serial GC only.", type = OptionType.Debug)//
     public static final RuntimeOptionKey<Boolean> PrintGCSummary = new RuntimeOptionKey<>(false, SerialGCOptions::validateSerialRuntimeOption);
 
     @Option(help = "Print the time for each of the phases of each collection, if +VerboseGC. Serial GC only.", type = OptionType.Debug)//
     public static final RuntimeOptionKey<Boolean> PrintGCTimes = new RuntimeOptionKey<>(false, SerialGCOptions::validateSerialRuntimeOption);
-
-    @Option(help = "Verify the heap before doing a garbage collection if VerifyHeap is enabled. Serial GC only.", type = OptionType.Debug)//
-    public static final HostedOptionKey<Boolean> VerifyBeforeGC = new HostedOptionKey<>(true, SerialGCOptions::validateSerialHostedOption);
-
-    @Option(help = "Verify the heap during a garbage collection if VerifyHeap is enabled. Serial GC only.", type = OptionType.Debug)//
-    public static final HostedOptionKey<Boolean> VerifyDuringGC = new HostedOptionKey<>(true, SerialGCOptions::validateSerialHostedOption);
-
-    @Option(help = "Verify the heap after doing a garbage collection if VerifyHeap is enabled. Serial GC only.", type = OptionType.Debug)//
-    public static final HostedOptionKey<Boolean> VerifyAfterGC = new HostedOptionKey<>(true, SerialGCOptions::validateSerialHostedOption);
 
     @Option(help = "Verify the remembered set if VerifyHeap is enabled. Serial GC only.", type = OptionType.Debug)//
     public static final HostedOptionKey<Boolean> VerifyRememberedSet = new HostedOptionKey<>(true, SerialGCOptions::validateSerialHostedOption);
@@ -113,9 +100,16 @@ public final class SerialGCOptions {
     @Option(help = "Ignore the maximum heap size while in VM-internal code. Serial GC only.", type = OptionType.Expert)//
     public static final HostedOptionKey<Boolean> IgnoreMaxHeapSizeWhileInVMInternalCode = new HostedOptionKey<>(false, SerialGCOptions::validateSerialHostedOption);
 
-    @Option(help = "Determines whether to always (if true) or never (if false) outline write barrier code to a separate function, " +
+    @Option(help = "Determines whether to outline write barrier code to a separate function, " +
                     "trading reduced image size for (potentially) worse performance. Serial GC only.", type = OptionType.Expert) //
-    public static final HostedOptionKey<Boolean> OutlineWriteBarriers = new HostedOptionKey<>(null, SerialGCOptions::validateSerialHostedOption);
+    public static final HostedOptionKey<OutlineWriteBarriers> WriteBarrierOutlining = new HostedOptionKey<>(OutlineWriteBarriers.Auto, SerialGCOptions::validateSerialHostedOption);
+
+    public enum OutlineWriteBarriers {
+        Auto,
+        Always,
+        YoungOnly,
+        Never
+    }
 
     /** Query these options only through an appropriate method. */
     public static class ConcealedOptions {
@@ -132,6 +126,22 @@ public final class SerialGCOptions {
             @Override
             protected void onValueUpdate(EconomicMap<OptionKey<?>, Object> values, Boolean oldValue, Boolean newValue) {
                 IgnoreMaxHeapSizeWhileInVMInternalCode.update(values, newValue);
+            }
+        };
+
+        @Option(help = "Determines whether to always (if true) or never (if false) outline write barrier code to a separate function, " +
+                        "trading reduced image size for (potentially) worse performance. Serial GC only.", type = OptionType.Expert, deprecated = true, deprecationMessage = "Please use the option 'WriteBarrierOutlining' instead.") //
+        public static final HostedOptionKey<Boolean> OutlineWriteBarriers = new HostedOptionKey<>(null, SerialGCOptions::validateSerialHostedOption) {
+            @Override
+            protected void onValueUpdate(EconomicMap<OptionKey<?>, Object> values, Boolean oldValue, Boolean newValue) {
+                super.onValueUpdate(values, oldValue, newValue);
+                if (newValue == Boolean.TRUE) {
+                    WriteBarrierOutlining.update(values, SerialGCOptions.OutlineWriteBarriers.Always);
+                } else if (newValue == Boolean.FALSE) {
+                    WriteBarrierOutlining.update(values, SerialGCOptions.OutlineWriteBarriers.Never);
+                } else {
+                    WriteBarrierOutlining.update(values, SerialGCOptions.OutlineWriteBarriers.Auto);
+                }
             }
         };
     }

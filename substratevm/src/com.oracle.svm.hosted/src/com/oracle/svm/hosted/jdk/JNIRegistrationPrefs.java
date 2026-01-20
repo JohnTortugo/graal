@@ -31,7 +31,6 @@ import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.hosted.RuntimeJNIAccess;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
-import com.oracle.graal.vmaccess.ResolvedJavaModule;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.JNIRegistrationUtil;
@@ -39,16 +38,19 @@ import com.oracle.svm.core.jdk.NativeLibrarySupport;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.core.traits.BuiltinTraits.PartiallyLayerAware;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.c.NativeLibraries;
 import com.oracle.svm.util.HostModuleUtil;
 import com.oracle.svm.util.JVMCIReflectionUtil;
+import com.oracle.svm.util.dynamicaccess.JVMCIRuntimeJNIAccess;
+
+import jdk.graal.compiler.vmaccess.ResolvedJavaModule;
+import jdk.vm.ci.meta.ResolvedJavaType;
 
 @Platforms({InternalPlatform.PLATFORM_JNI.class})
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Independent.class, other = PartiallyLayerAware.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = PartiallyLayerAware.class)
 @AutomaticallyRegisteredFeature
 public class JNIRegistrationPrefs extends JNIRegistrationUtil implements InternalFeature {
 
@@ -75,15 +77,15 @@ public class JNIRegistrationPrefs extends JNIRegistrationUtil implements Interna
          */
         String preferencesImplementation = getPlatformPreferencesClassName();
         initializeAtRunTime(access, preferencesImplementation);
-        ArrayList<Class<?>> triggers = new ArrayList<>();
-        triggers.add(clazz(access, preferencesImplementation));
+        ArrayList<ResolvedJavaType> triggers = new ArrayList<>();
+        triggers.add(type(access, preferencesImplementation));
 
         if (isDarwin()) {
             String darwinSpecificClass = "java.util.prefs.MacOSXPreferencesFile";
             initializeAtRunTime(access, darwinSpecificClass);
             /* present on Darwin in the JDK */
             initializeAtRunTime(access, "java.util.prefs.FileSystemPreferences");
-            triggers.add(clazz(access, darwinSpecificClass));
+            triggers.add(type(access, darwinSpecificClass));
         }
 
         access.registerReachabilityHandler(JNIRegistrationPrefs::handlePreferencesClassReachable, triggers.toArray());
@@ -109,7 +111,7 @@ public class JNIRegistrationPrefs extends JNIRegistrationUtil implements Interna
             /* Darwin allocates a string array from native code */
             RuntimeJNIAccess.register(String[].class);
             /* Called by libprefs on Darwin */
-            RuntimeJNIAccess.register(method(access, "java.lang.System", "arraycopy", Object.class, int.class, Object.class, int.class, int.class));
+            JVMCIRuntimeJNIAccess.register(method(access, "java.lang.System", "arraycopy", Object.class, int.class, Object.class, int.class, int.class));
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,12 +35,15 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
+import org.graalvm.nativeimage.c.function.CFunctionPointer;
+
 import com.oracle.graal.pointsto.constraints.UnsupportedFeatureException;
 import com.oracle.graal.pointsto.infrastructure.ResolvedSignature;
 import com.oracle.graal.pointsto.infrastructure.WrappedJavaMethod;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.svm.common.meta.MultiMethod;
 import com.oracle.svm.core.AlwaysInline;
+import com.oracle.svm.core.SkipStackOverflowCheck;
 import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.code.ImageCodeInfo;
@@ -365,6 +368,11 @@ public final class HostedMethod extends HostedElement implements SharedMethod, W
     @Override
     public boolean needSafepointCheck() {
         return SubstrateSafepointInsertionPhase.needSafepointCheck(wrapped);
+    }
+
+    @Override
+    public boolean needStackOverflowCheck() {
+        return SharedMethod.super.needStackOverflowCheck() && !AnnotationUtil.isAnnotationPresent(this, SkipStackOverflowCheck.class);
     }
 
     @Override
@@ -695,5 +703,10 @@ public final class HostedMethod extends HostedElement implements SharedMethod, W
         } else {
             return multiMethodMap.values();
         }
+    }
+
+    @Override
+    public CFunctionPointer getAOTEntrypoint() {
+        throw VMError.intentionallyUnimplemented();
     }
 }

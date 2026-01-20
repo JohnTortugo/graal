@@ -26,13 +26,19 @@ package com.oracle.svm.interpreter.ristretto.meta;
 
 import java.util.function.Function;
 
+import org.graalvm.nativeimage.c.function.CFunctionPointer;
+
+import com.oracle.svm.core.SubstrateOptions;
+import com.oracle.svm.core.SubstrateUtil;
+import com.oracle.svm.graal.meta.SubstrateInstalledCodeImpl;
 import com.oracle.svm.graal.meta.SubstrateMethod;
 import com.oracle.svm.graal.meta.SubstrateType;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod;
+import com.oracle.svm.interpreter.metadata.profile.MethodProfile;
 import com.oracle.svm.interpreter.ristretto.RistrettoConstants;
 import com.oracle.svm.interpreter.ristretto.RistrettoUtils;
 
-import jdk.vm.ci.code.InstalledCode;
+import jdk.graal.compiler.nodes.extended.MembarNode;
 import jdk.vm.ci.meta.ConstantPool;
 import jdk.vm.ci.meta.ExceptionHandler;
 import jdk.vm.ci.meta.LineNumberTable;
@@ -58,10 +64,11 @@ public final class RistrettoMethod extends SubstrateMethod {
 
     // JIT COMPILER SUPPORT START
     /**
-     * Field exposed for profiling support for this method. May be written and read in a
-     * multithreaded fashion.
+     * Field exposed for profiling support for this method. Initialized once upon first profiling
+     * under heavy synchronization. Never written again. If a ristretto method is GCed profile is
+     * lost.
      */
-    public volatile Object profile;
+    private MethodProfile profile;
     /**
      * State-machine for compilation handling of this crema method. Every methods starts in a
      * NEVER_COMPILED state and than can cycle through different states.
@@ -75,7 +82,7 @@ public final class RistrettoMethod extends SubstrateMethod {
      * <p>
      * TODO - deoptimization and retirement of this pointer not implemented yet.
      */
-    public volatile InstalledCode installedCode;
+    public volatile SubstrateInstalledCodeImpl installedCode;
     // JIT COMPILER SUPPORT END
 
     private RistrettoMethod(InterpreterResolvedJavaMethod interpreterMethod) {
@@ -83,6 +90,16 @@ public final class RistrettoMethod extends SubstrateMethod {
         this.interpreterMethod = interpreterMethod;
         this.declaringClass = RistrettoType.create(interpreterMethod.getDeclaringClass());
         this.signature = new RistrettoUnresolvedSignature(interpreterMethod.getSignature());
+        /*
+         * TODO GR-34928 / GR-70938 - Setup indirectCallTarget for miranda and overpass methods.
+         */
+        this.indirectCallTarget = this;
+        this.vTableIndex = interpreterMethod.getVTableIndex();
+    }
+
+    @Override
+    public boolean hasImageCodeOffset() {
+        return RistrettoUtils.wasAOTCompiled(interpreterMethod);
     }
 
     public InterpreterResolvedJavaMethod getInterpreterMethod() {
@@ -93,6 +110,31 @@ public final class RistrettoMethod extends SubstrateMethod {
 
     public static RistrettoMethod create(InterpreterResolvedJavaMethod interpreterMethod) {
         return (RistrettoMethod) interpreterMethod.getRistrettoMethod(RISTRETTO_METHOD_FUNCTION);
+    }
+
+    public MethodProfile getProfile() {
+        if (profile == null) {
+            initializeProfile();
+        }
+        return profile;
+    }
+
+    /**
+     * Allocate the profile once per method. Apart from test scenarios the profile is never set to
+     * null again. Thus, the heavy locking code below is normally not run in a fast path.
+     */
+    private synchronized void initializeProfile() {
+        if (profile == null) {
+            MethodProfile newProfile = new MethodProfile(this, RistrettoType.RISTRETTO_TYPE_FUNCTION);
+            // ensure everything is allocated and initialized before we signal the barrier
+            // for the publishing write
+            MembarNode.memoryBarrier(MembarNode.FenceKind.STORE_STORE);
+            profile = newProfile;
+        }
+    }
+
+    public synchronized void resetProfile() {
+        profile = null;
     }
 
     @Override
@@ -253,4 +295,11 @@ public final class RistrettoMethod extends SubstrateMethod {
         return interpreterMethod.isConcrete();
     }
 
+    @Override
+    public CFunctionPointer getAOTEntrypoint() {
+        assert !SubstrateUtil.HOSTED;
+        assert SubstrateOptions.useRistretto();
+        assert interpreterMethod.hasNativeEntryPoint();
+        return interpreterMethod.getNativeEntryPoint();
+    }
 }

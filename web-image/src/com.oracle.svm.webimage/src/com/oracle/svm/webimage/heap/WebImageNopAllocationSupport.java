@@ -26,12 +26,12 @@ package com.oracle.svm.webimage.heap;
 
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.graal.snippets.GCAllocationSupport;
 
 import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;
 import jdk.graal.compiler.debug.GraalError;
-import jdk.graal.compiler.word.Word;
 
 /**
  * No-op implementation of {@link GCAllocationSupport}.
@@ -60,11 +60,6 @@ public class WebImageNopAllocationSupport implements GCAllocationSupport {
 
     @Override
     public ForeignCallDescriptor getNewPodInstanceStub() {
-        throw GraalError.unimplementedOverride();
-    }
-
-    @Override
-    public boolean useTLAB() {
         throw GraalError.unimplementedOverride();
     }
 

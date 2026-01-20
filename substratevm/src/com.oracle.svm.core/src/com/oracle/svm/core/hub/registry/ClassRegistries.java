@@ -196,7 +196,10 @@ public final class ClassRegistries implements ParsingContext {
         while (arrayDimensions < name.length() && name.charAt(arrayDimensions) == '[') {
             arrayDimensions++;
         }
-        if (arrayDimensions == name.length()) {
+        if (arrayDimensions == name.length() || arrayDimensions > 255) {
+            if (loader == null) {
+                return null;
+            }
             throw new ClassNotFoundException(name);
         }
         Class<?> elementalResult;
@@ -222,7 +225,7 @@ public final class ClassRegistries implements ParsingContext {
             throw new ClassNotFoundException(name);
         }
         if (arrayDimensions > 0) {
-            Class<?> result = getArrayClass(name, elementalResult, arrayDimensions);
+            Class<?> result = getArrayClass(elementalResult, arrayDimensions);
             if (result == null && loader != null) {
                 throw new ClassNotFoundException(name);
             }
@@ -263,30 +266,31 @@ public final class ClassRegistries implements ParsingContext {
         return getRegistry(loader).loadClass(type);
     }
 
-    private static Class<?> getArrayClass(String name, Class<?> elementalResult, int arrayDimensions) {
+    private static Class<?> getArrayClass(Class<?> elementalResult, int arrayDimensions) {
+        assert elementalResult != void.class : "Must be filtered in the caller";
+        assert arrayDimensions > 0 && arrayDimensions <= 255 : "Must be filtered in the caller";
         DynamicHub hub = SubstrateUtil.cast(elementalResult, DynamicHub.class);
         int remainingDims = arrayDimensions;
-        while (remainingDims > 0) {
-            if (hub.getArrayHub() == null) {
-                if (RuntimeClassLoading.isSupported()) {
-                    RuntimeClassLoading.getOrCreateArrayHub(hub);
-                } else {
-                    if (throwMissingRegistrationErrors()) {
-                        MissingReflectionRegistrationUtils.reportClassAccess(name);
-                    }
-                    return null;
+        while (remainingDims > 1) {
+            DynamicHub arrayHub = hub.getOrCreateArrayHub();
+            if (arrayHub == null) {
+                if (shouldFollowReflectionConfiguration()) {
+                    MissingReflectionRegistrationUtils.reportClassAccess(hub.getTypeName() + "[]");
                 }
+                return null;
             }
             remainingDims--;
-            hub = hub.getArrayHub();
+            hub = arrayHub;
         }
+        // Perform the MissingRegistrationError check for the final element
+        hub = hub.arrayType();
         return SubstrateUtil.cast(hub, Class.class);
     }
 
     public static Class<?> defineClass(ClassLoader loader, String name, byte[] b, int off, int len, ClassDefinitionInfo info) {
         // name is a "binary name": `foo.Bar$1`
         assert RuntimeClassLoading.isSupported();
-        if (shouldFollowReflectionConfiguration() && throwMissingRegistrationErrors() && !ClassForNameSupport.isRegisteredClass(name)) {
+        if (throwMissingRegistrationErrors() && shouldFollowReflectionConfiguration() && !ClassForNameSupport.isRegisteredClass(name)) {
             MissingReflectionRegistrationUtils.reportClassAccess(name);
             // The defineClass path usually can't throw ClassNotFoundException
             throw sneakyThrow(new ClassNotFoundException(name));

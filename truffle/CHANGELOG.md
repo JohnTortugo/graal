@@ -39,6 +39,7 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-70086 Deprecated `Message.resolve(Class<?>, String)`. Use `Message.resolveExact(Class<?>, String, Class<?>...)` with argument types instead. This deprecation was necessary as library messages are no longer unique by message name, if the previous message was deprecated.
 * GR-71299 Improved the responsiveness of the Truffle compilation queue by refining the computation of the execution rate of compilation units in the queue.
   * Added `engine.TraversingQueueRateHalfLife` to allow fine-tuning of the compilation queue responsiveness.
+* GR-71245: Exposed `ByteBufferDataInput` as public and added a `position` method that returns the underlying buffer's position. Added `SerializationUtils.createByteBufferDataInput` factory method and deprecated `SerializationUtils.createDataInput`.
 
 * GR-36894: Added `DynamicObject` nodes for dealing with `DynamicObject` properties and shapes, as a more lightweight replacement for `DynamicObjectLibrary`, including:
     * `DynamicObject.GetNode`: gets the value of a property or a default value if absent
@@ -59,7 +60,18 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-71468: Significantly improve optimized performance of host proxy interfaces (`org.graalvm.polyglot.proxy.Proxy`).
 * GR-71088 Added `CompilerDirectives.EarlyInline` annotation that performs a conservative early inlining pass for methods before partial evaluation. This is intended to expose small branch/bytecode handlers and similar helpers to optimizations such as @ExplodeLoop, in particular for MERGE_EXPLODE bytecode interpreter loops.
 * GR-71088 Added `CompilerDirectives.EarlyEscapeAnalysis` annotation that runs partial escape analysis early before partial evaluation enabling partial-evaluation-constant scalar replacements. 
+* GR-71870 Truffle DSL no longer supports mixed exclusive and shared inlined caches. Sharing will now be disabled if mixing was used. To resolve the new warnings it is typically necessary to use either `@Exclusive` or `@Shared` for all caches.
+* GR-71887: Bytecode DSL: Added a `ClearLocal` operation for fast clearing of local values.
+* GR-71088 Added `CompilerDirectives.EarlyEscapeAnalysis` annotation that runs partial escape analysis early before partial evaluation enabling partial-evaluation-constant scalar replacements.
+* GR-71402: Added `InteropLibrary#isHostObject` and `InteropLibrary#asHostObject` for accessing the Java host-object representation of a Truffle guest object. Deprecated `Env#isHostObject`, `Env#isHostException`, `Env#isHostFunction`, `Env#isHostSymbol`, `Env#asHostObject`, and `Env#asHostException` in favor of the new InteropLibrary messages.
+* GR-71402: Added `InteropLibrary#hasStaticScope` and `InteropLibrary#getStaticScope` returning the static scope representing static or class-level members associated with the given meta object.
+* GR-72022 `AtomicLongFieldUpdater`, `AtomicIntegerFieldUpdater` and `AtomicReferenceFieldUpdater` can now be used on partially evaluated code paths when the updater is a PE constant and the compiler can prove receiver and value correctness during partial evaluation, otherwise compilation permanently bails out.
+* GR-44829: Added `TruffleString.CodePointAtIndexUTF32Node` for better interpreter performance of UTF-32 strings.
+* GR-44829: `TruffleString` nodes no longer profile the `expectedEncoding` parameter for interpreter performance reasons. Languages with non-constant string encodings should profile the encoding before passing it to `TruffleString` nodes.
 
+* GR-61161: Bytecode DSL: Added support for basic instruction rewriting. At bytecode build time, the builder can perform peephole optimization to remove redundant loads. This new optimization can be configured using `@GenerateBytecode(enableInstructionRewriting=true|false)`.
+* GR-71765: Bytecode DSL: Added support for specifying an illegal local exception via `@GenerateBytecode(illegalLocalException=SomeException.class)`. This configures the interpreter to throw a custom exception when loading a cleared local, as an alternative to the default behaviour (throwing a `FrameSlotTypeException`). This option is mutually exclusive with the default local value option (`@GenerateBytecode(defaultLocalValue = "someValue")`).
+* GR-69499 Added `HostCompilerDirectives.BytecodeInterpreterHandler` annotation, enabling one compilation per bytecode handler in the Truffle bytecode interpreter while maintaining performance statistics. Introduced support for tail call threading among bytecode handlers in native image. See the [One Compilation per Bytecode Handler documentation](https://github.com/oracle/graal/blob/master/truffle/docs/OneCompilationPerBytecodeHandler.md) for more details.
 
 ## Version 25.0
 * GR-31495 Added ability to specify language and instrument specific options using `Source.Builder.option(String, String)`. Languages may describe available source options by implementing `TruffleLanguage.getSourceOptionDescriptors()` and `TruffleInstrument.getSourceOptionDescriptors()` respectively.

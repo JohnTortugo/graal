@@ -22,6 +22,7 @@
  */
 package com.oracle.truffle.espresso.vmaccess;
 
+import static com.oracle.truffle.espresso.vmaccess.EspressoExternalConstantReflectionProvider.asObjectConstant;
 import static com.oracle.truffle.espresso.vmaccess.EspressoExternalVMAccess.throwHostException;
 
 import org.graalvm.polyglot.PolyglotException;
@@ -150,7 +151,11 @@ final class EspressoExternalConstantPool extends AbstractEspressoConstantPool {
 
     @Override
     public String lookupUtf8(int cpi) {
-        throw JVMCIError.unimplemented();
+        try {
+            return cpMirror.invokeMember("lookupUtf8", cpi).asString();
+        } catch (PolyglotException e) {
+            throw throwHostException(e);
+        }
     }
 
     @Override
@@ -190,10 +195,7 @@ final class EspressoExternalConstantPool extends AbstractEspressoConstantPool {
         } catch (PolyglotException e) {
             throw throwHostException(e);
         }
-        if (value.isNull()) {
-            return null;
-        }
-        return new EspressoExternalObjectConstant(holder.getAccess(), value);
+        return asObjectConstant(value, holder.getAccess());
     }
 
     @Override

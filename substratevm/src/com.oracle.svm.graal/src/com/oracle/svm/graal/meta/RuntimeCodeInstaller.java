@@ -26,14 +26,14 @@ package com.oracle.svm.graal.meta;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 
-import jdk.graal.compiler.word.Word;
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.c.type.CTypeConversion;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.Uninterruptible;
@@ -280,7 +280,7 @@ public class RuntimeCodeInstaller extends AbstractRuntimeCodeInstaller {
 
     private int patchData(Map<Integer, NativeImagePatcher> patcher, ObjectConstantsHolder objectConstants) {
         int patchesHandled = 0;
-        HashSet<Integer> patchedOffsets = new HashSet<>();
+        EconomicSet<Integer> patchedOffsets = EconomicSet.create();
         for (DataPatch dataPatch : compilation.getDataPatches()) {
             NativeImagePatcher patch = patcher.get(dataPatch.pcOffset);
             boolean noPriorMatch = patchedOffsets.add(dataPatch.pcOffset);

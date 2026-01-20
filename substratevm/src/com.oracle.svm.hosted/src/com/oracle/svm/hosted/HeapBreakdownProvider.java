@@ -46,7 +46,6 @@ import com.oracle.svm.core.jdk.Resources;
 import com.oracle.svm.core.jdk.resources.ResourceStorageEntryBase;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.FeatureImpl.BeforeImageWriteAccessImpl;
@@ -61,7 +60,7 @@ import com.oracle.svm.util.ReflectionUtil;
 
 import jdk.vm.ci.meta.JavaKind;
 
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Independent.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
 public class HeapBreakdownProvider {
     private static final String BYTE_ARRAY_PREFIX = "byte[] for ";
     private static final Field STRING_VALUE = ReflectionUtil.lookupField(String.class, "value");
@@ -113,7 +112,7 @@ public class HeapBreakdownProvider {
     protected void calculate(BeforeImageWriteAccessImpl access, boolean resourcesAreReachable) {
         allImageHeapPartitions = access.getImage().getHeap().getLayouter().getPartitions();
 
-        HostedMetaAccess metaAccess = access.getHostedMetaAccess();
+        HostedMetaAccess metaAccess = access.getMetaAccess();
         ObjectLayout objectLayout = ImageSingletons.lookup(ObjectLayout.class);
 
         Map<HostedClass, HeapBreakdownEntry> classToDataMap = new HashMap<>();

@@ -33,17 +33,16 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinTask;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
@@ -98,7 +97,6 @@ import com.oracle.svm.core.reflect.SubstrateConstructorAccessor;
 import com.oracle.svm.core.reflect.SubstrateMethodAccessor;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.DeadlockWatchdog;
@@ -444,9 +442,11 @@ public class UniverseBuilder {
 
     private void buildProfilingInformation() {
         /* Convert profiling information after all types and methods have been created. */
+        var watchdog = DeadlockWatchdog.singleton();
         hUniverse.methods.values().parallelStream()
                         .forEach(method -> {
                             assert method.isOriginalMethod();
+                            watchdog.recordActivity();
                             for (MultiMethod multiMethod : method.getAllMultiMethods()) {
                                 HostedMethod hMethod = (HostedMethod) multiMethod;
                                 strengthenGraphs.applyResults(hMethod.getWrapped());
@@ -462,7 +462,7 @@ public class UniverseBuilder {
      * partition of the image heap. Immutable types will not get a monitor field and will always use
      * the secondary storage for monitor slots.
      */
-    private static final Set<Class<?>> IMMUTABLE_TYPES = new HashSet<>(Arrays.asList(
+    private static final EconomicSet<Class<?>> IMMUTABLE_TYPES = EconomicSet.create(Arrays.asList(
                     Boolean.class,
                     Byte.class,
                     Short.class,
@@ -487,8 +487,8 @@ public class UniverseBuilder {
         HostedConfiguration.instance().collectMonitorFieldInfo(bb, hUniverse, getImmutableTypes());
     }
 
-    private Set<AnalysisType> getImmutableTypes() {
-        Set<AnalysisType> immutableTypes = new HashSet<>();
+    private EconomicSet<AnalysisType> getImmutableTypes() {
+        EconomicSet<AnalysisType> immutableTypes = EconomicSet.create(IMMUTABLE_TYPES.size());
         for (Class<?> immutableType : IMMUTABLE_TYPES) {
             Optional<AnalysisType> aType = aMetaAccess.optionalLookupJavaType(immutableType);
             aType.ifPresent(immutableTypes::add);
@@ -1080,7 +1080,7 @@ public class UniverseBuilder {
 }
 
 @AutomaticallyRegisteredFeature
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Independent.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
 final class InvalidVTableEntryFeature implements InternalFeature {
 
     @Override

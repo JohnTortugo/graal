@@ -56,7 +56,6 @@ import com.oracle.svm.core.code.CodeInfoAccess;
 import com.oracle.svm.core.code.CodeInfoTable;
 import com.oracle.svm.core.code.RuntimeCodeInfoAccess;
 import com.oracle.svm.core.code.RuntimeCodeInfoMemory;
-import com.oracle.svm.core.deopt.DeoptimizationSlotPacking;
 import com.oracle.svm.core.deopt.DeoptimizedFrame;
 import com.oracle.svm.core.deopt.Deoptimizer;
 import com.oracle.svm.core.genscavenge.AlignedHeapChunk.AlignedHeader;
@@ -87,13 +86,13 @@ import com.oracle.svm.core.heap.UninterruptibleObjectReferenceVisitor;
 import com.oracle.svm.core.heap.UninterruptibleObjectVisitor;
 import com.oracle.svm.core.heap.VMOperationInfos;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
-import com.oracle.svm.core.interpreter.InterpreterSupport;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.jfr.JfrGCWhen;
 import com.oracle.svm.core.jfr.JfrTicks;
 import com.oracle.svm.core.jfr.events.AllocationRequiringGCEvent;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.metaspace.Metaspace;
+import com.oracle.svm.core.option.RuntimeOptionKey;
 import com.oracle.svm.core.os.ChunkBasedCommittedMemoryProvider;
 import com.oracle.svm.core.snippets.ImplicitExceptions;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
@@ -111,19 +110,18 @@ import com.oracle.svm.core.threadlocal.VMThreadLocalSupport;
 import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
 import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.core.traits.BuiltinTraits.PartiallyLayerAware;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.TimeUtils;
 import com.oracle.svm.core.util.Timer;
 import com.oracle.svm.core.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
-import jdk.graal.compiler.word.Word;
+import org.graalvm.word.impl.Word;
 
 /**
  * Garbage collector (incremental or complete) for {@link HeapImpl}.
  */
-@SingletonTraits(access = AllAccess.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Independent.class, other = PartiallyLayerAware.class)
+@SingletonTraits(access = AllAccess.class, layeredCallbacks = NoLayeredCallbacks.class, other = PartiallyLayerAware.class)
 public final class GCImpl implements GC {
     private static final long K = 1024;
     static final long M = K * K;
@@ -151,6 +149,11 @@ public final class GCImpl implements GC {
         if (ImageLayerBuildingSupport.firstImageBuild()) {
             RuntimeSupport.getRuntimeSupport().addShutdownHook(_ -> printGCSummary());
         }
+    }
+
+    @Uninterruptible(reason = "Tear-down in progress.")
+    public void tearDown() {
+        policy.tearDown();
     }
 
     @Override
@@ -410,12 +413,20 @@ public final class GCImpl implements GC {
     }
 
     private static boolean shouldVerify(HeapVerifier.Occasion occasion) {
-        return switch (occasion) {
-            case Before -> SerialGCOptions.VerifyBeforeGC.getValue();
-            case During -> SerialGCOptions.VerifyDuringGC.getValue();
-            case After -> SerialGCOptions.VerifyAfterGC.getValue();
+        RuntimeOptionKey<Boolean> key = switch (occasion) {
+            case Before -> SubstrateGCOptions.ConcealedOptions.VerifyBeforeGC;
+            case During -> SubstrateGCOptions.ConcealedOptions.VerifyDuringGC;
+            case After -> SubstrateGCOptions.ConcealedOptions.VerifyAfterGC;
             default -> throw VMError.shouldNotReachHere("Unexpected heap verification occasion.");
         };
+
+        assert SubstrateGCOptions.VerifyHeap.getValue();
+        Boolean value = key.getValue();
+        if (value == null) {
+            /* The option doesn't have a value but VerifyHeap is enabled, so default to true. */
+            return true;
+        }
+        return key.getValue();
     }
 
     private String getGCKind() {
@@ -797,14 +808,7 @@ public final class GCImpl implements GC {
                 CodeInfo codeInfo = CodeInfoAccess.unsafeConvert(frame.getIPCodeInfo());
 
                 if (JavaFrames.isInterpreterLeaveStub(frame)) {
-                    /*
-                     * Variable frame size is packed into the first stack slot used for argument
-                     * passing (re-use of deopt slot).
-                     */
-                    long varStackSize = DeoptimizationSlotPacking.decodeVariableFrameSizeFromDeoptSlot(sp.readLong(0));
-                    Pointer actualSP = sp.add(Word.unsigned(varStackSize));
-
-                    InterpreterSupport.walkInterpreterLeaveStubFrame(visitor, actualSP, sp);
+                    /* nothing to scan */
                 } else {
                     NonmovableArray<Byte> referenceMapEncoding = CodeInfoAccess.getStackReferenceMapEncoding(codeInfo);
                     long referenceMapIndex = frame.getReferenceMapIndex();

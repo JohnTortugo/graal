@@ -43,12 +43,16 @@ import com.oracle.svm.core.image.ImageHeapLayoutInfo;
 import com.oracle.svm.core.image.ImageHeapLayouter;
 import com.oracle.svm.core.image.ImageHeapObject;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 
 import jdk.graal.compiler.core.common.NumUtil;
 
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
 public class ChunkedImageHeapLayouter implements ImageHeapLayouter {
     /** A partition holding read-only objects. */
     private static final int ALIGNED_READ_ONLY_REGULAR = 0;
@@ -243,7 +247,7 @@ public class ChunkedImageHeapLayouter implements ImageHeapLayouter {
         long imageHeapEnd = NumUtil.roundUp(getUnalignedReadOnly().getStartOffset() + getUnalignedReadOnly().getSize(), pageSize);
         return new ImageHeapLayoutInfo(startOffset, imageHeapEnd, offsetOfFirstWritableAlignedChunk, writableSize,
                         getAlignedReadOnlyRelocatable().getStartOffset(), getAlignedReadOnlyRelocatable().getSize(),
-                        getAlignedWritablePatched().getStartOffset(), getAlignedWritablePatched().getSize());
+                        getAlignedWritablePatched().getStartOffset(), getAlignedWritablePatched().getSize(), pageSize);
     }
 
     private static Object firstNonNullValue(Object... objects) {

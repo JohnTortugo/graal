@@ -46,8 +46,8 @@ import com.oracle.svm.core.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.UnsignedUtils;
 
 import jdk.graal.compiler.nodes.extended.MembarNode;
-import jdk.graal.compiler.word.Word;
 import jdk.internal.misc.Unsafe;
+import org.graalvm.word.impl.Word;
 
 /**
  * Per-isolate bump-pointer allocation inside {@link AlignedHeapChunk}. First the allocation is
@@ -172,7 +172,7 @@ public final class HeapAllocation {
         assert JavaSpinLockUtils.isLocked(this, LOCK_OFFSET);
 
         UnsignedWord freeBytes = HeapChunk.availableObjectMemory(currentChunk);
-        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.singleton().getMinTlabSize());
+        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.getMinTlabSize());
         if (freeBytes.belowThan(minTlabSize)) {
             return false;
         }
@@ -255,7 +255,7 @@ public final class HeapAllocation {
     @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
     public UnsignedWord availableSizeForNewTlab() {
         UnsignedWord maxTlabSize = AlignedHeapChunk.getUsableSizeForObjects();
-        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.singleton().getMinTlabSize());
+        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.getMinTlabSize());
         if (currentChunk.isNull() || HeapChunk.availableObjectMemory(currentChunk).belowThan(minTlabSize)) {
             /* The next TLAB allocation will most likely happen in a new chunk. */
             return maxTlabSize;

@@ -41,7 +41,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
-import jdk.graal.compiler.replacements.nodes.UnaryMathIntrinsicGenerationNode;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.hosted.FieldValueTransformer;
@@ -79,6 +78,7 @@ import com.oracle.svm.util.ReflectionUtil;
 
 import jdk.graal.compiler.replacements.nodes.BinaryMathIntrinsicGenerationNode;
 import jdk.graal.compiler.replacements.nodes.BinaryMathIntrinsicNode.BinaryOperation;
+import jdk.graal.compiler.replacements.nodes.UnaryMathIntrinsicGenerationNode;
 import jdk.graal.compiler.replacements.nodes.UnaryMathIntrinsicNode.UnaryOperation;
 import jdk.internal.loader.ClassLoaderValue;
 
@@ -155,6 +155,34 @@ final class Target_java_lang_Enum {
     @AnnotateOriginal
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public native int ordinal();
+}
+
+@TargetClass(java.lang.Byte.class)
+final class Target_java_lang_Byte {
+    @AnnotateOriginal
+    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    native long longValue();
+}
+
+@TargetClass(java.lang.Short.class)
+final class Target_java_lang_Short {
+    @AnnotateOriginal
+    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    native long longValue();
+}
+
+@TargetClass(java.lang.Character.class)
+final class Target_java_lang_Character {
+    @AnnotateOriginal
+    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    native char charValue();
+}
+
+@TargetClass(java.lang.Integer.class)
+final class Target_java_lang_Integer {
+    @AnnotateOriginal
+    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    native long longValue();
 }
 
 @TargetClass(java.lang.String.class)
@@ -382,17 +410,17 @@ final class Target_java_lang_System {
     }
 
     @Substitute
-    private static void setIn(InputStream is) {
+    private static void setIn0(InputStream is) {
         in = is;
     }
 
     @Substitute
-    private static void setOut(PrintStream ps) {
+    private static void setOut0(PrintStream ps) {
         out = ps;
     }
 
     @Substitute
-    private static void setErr(PrintStream ps) {
+    private static void setErr0(PrintStream ps) {
         err = ps;
     }
 
@@ -578,6 +606,7 @@ final class Target_java_lang_ClassValue {
 }
 
 class ClassValueInitializer implements FieldValueTransformerWithAvailability {
+    // JVMCI migration blocked by GR-72533: Migrate ClassValueSupport to JVMCI.
     @Override
     public Object transform(Object receiver, Object originalValue) {
         ClassValue<?> v = (ClassValue<?>) receiver;

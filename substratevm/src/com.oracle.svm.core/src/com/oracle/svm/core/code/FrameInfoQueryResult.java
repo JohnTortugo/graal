@@ -39,7 +39,6 @@ import com.oracle.svm.core.meta.SharedMethod;
 
 import jdk.graal.compiler.core.common.SuppressFBWarnings;
 import jdk.graal.compiler.nodes.FrameState;
-import jdk.graal.compiler.word.Word;
 import jdk.vm.ci.code.Register;
 import jdk.vm.ci.code.StackSlot;
 import jdk.vm.ci.code.VirtualObject;
@@ -47,6 +46,7 @@ import jdk.vm.ci.meta.Constant;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
+import org.graalvm.word.impl.Word;
 
 /**
  * During a stack walk, this class holds information about a virtual Java frame. It is usually
@@ -113,6 +113,10 @@ public class FrameInfoQueryResult extends FrameSourceInfo {
         protected boolean isAutoBoxedPrimitive;
         protected long data;
         protected JavaConstant value;
+
+        public ValueInfo() {
+            clear();
+        }
 
         /**
          * Returns the type of the value, describing how to access the value.
@@ -185,6 +189,17 @@ public class FrameInfoQueryResult extends FrameSourceInfo {
             copy.data = data + offset;
             copy.value = value;
             return copy;
+        }
+
+        @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+        public void clear() {
+            type = null;
+            kind = null;
+            isCompressedReference = false;
+            isEliminatedMonitor = false;
+            isAutoBoxedPrimitive = false;
+            data = 0;
+            value = null;
         }
     }
 

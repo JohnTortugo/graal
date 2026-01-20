@@ -24,6 +24,7 @@
  */
 package com.oracle.svm.util;
 
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.Arrays;
@@ -33,11 +34,14 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.oracle.graal.vmaccess.ResolvedJavaModule;
-import com.oracle.graal.vmaccess.ResolvedJavaModuleLayer;
-import com.oracle.graal.vmaccess.ResolvedJavaPackage;
-
 import jdk.graal.compiler.debug.GraalError;
+import jdk.graal.compiler.phases.util.Providers;
+import jdk.graal.compiler.vmaccess.ResolvedJavaModule;
+import jdk.graal.compiler.vmaccess.ResolvedJavaModuleLayer;
+import jdk.graal.compiler.vmaccess.ResolvedJavaPackage;
+import jdk.graal.compiler.vmaccess.VMAccess;
+import jdk.vm.ci.meta.ConstantReflectionProvider;
+import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.MetaAccessProvider;
 import jdk.vm.ci.meta.ModifiersProvider;
@@ -86,6 +90,15 @@ public final class JVMCIReflectionUtil {
     /**
      * Shortcut for
      * {@link #getUniqueDeclaredMethod(boolean, ResolvedJavaType, String, ResolvedJavaType...)} that
+     * passes {@code false} for {@code optional}.
+     */
+    public static ResolvedJavaMethod getUniqueDeclaredMethod(ResolvedJavaType declaringClass, String name, ResolvedJavaType... parameterTypes) {
+        return getUniqueDeclaredMethod(false, declaringClass, name, parameterTypes);
+    }
+
+    /**
+     * Shortcut for
+     * {@link #getUniqueDeclaredMethod(boolean, ResolvedJavaType, String, ResolvedJavaType...)} that
      * converts the {@link Class} parameters to {@link ResolvedJavaType} using the provided
      * {@link MetaAccessProvider}.
      */
@@ -101,6 +114,16 @@ public final class JVMCIReflectionUtil {
      */
     public static ResolvedJavaMethod getUniqueDeclaredMethod(MetaAccessProvider metaAccess, ResolvedJavaType declaringClass, String name, Class<?>... parameterTypes) {
         return getUniqueDeclaredMethod(false, metaAccess, declaringClass, name, parameterTypes);
+    }
+
+    /**
+     * Shortcut for
+     * {@link #getUniqueDeclaredMethod(MetaAccessProvider, ResolvedJavaType, String, Class...)} that
+     * converts the {@link Class} parameters to {@link ResolvedJavaType} using the provided
+     * {@link MetaAccessProvider}.
+     */
+    public static ResolvedJavaMethod getUniqueDeclaredMethod(MetaAccessProvider metaAccess, Class<?> declaringClass, String name, Class<?>... parameterTypes) {
+        return getUniqueDeclaredMethod(metaAccess, metaAccess.lookupJavaType(declaringClass), name, parameterTypes);
     }
 
     /**
@@ -150,6 +173,15 @@ public final class JVMCIReflectionUtil {
      */
     public static ResolvedJavaMethod getDeclaredConstructor(MetaAccessProvider metaAccess, ResolvedJavaType declaringClass, Class<?>... parameterTypes) {
         return getDeclaredConstructor(false, metaAccess, declaringClass, parameterTypes);
+    }
+
+    /**
+     * Shortcut for {@link #getDeclaredConstructor(MetaAccessProvider, ResolvedJavaType, Class...)}
+     * that converts the {@link Class} parameters to {@link ResolvedJavaType} using the provided
+     * {@link MetaAccessProvider}.
+     */
+    public static ResolvedJavaMethod getDeclaredConstructor(MetaAccessProvider metaAccess, Class<?> declaringClass, Class<?>... parameterTypes) {
+        return getDeclaredConstructor(metaAccess, metaAccess.lookupJavaType(declaringClass), parameterTypes);
     }
 
     /**
@@ -247,6 +279,15 @@ public final class JVMCIReflectionUtil {
      */
     public static ResolvedJavaField getUniqueDeclaredField(ResolvedJavaType declaringClass, String fieldName) {
         return getUniqueDeclaredField(false, declaringClass, fieldName);
+    }
+
+    /**
+     * Shortcut for {@link #getUniqueDeclaredField(ResolvedJavaType, String)} that converts the
+     * {@link Class} parameters to {@link ResolvedJavaType} using the provided
+     * {@link MetaAccessProvider}.
+     */
+    public static ResolvedJavaField getUniqueDeclaredField(MetaAccessProvider metaAccessProvider, Class<?> declaringClass, String fieldName) {
+        return getUniqueDeclaredField(metaAccessProvider.lookupJavaType(declaringClass), fieldName);
     }
 
     /**
@@ -369,4 +410,93 @@ public final class JVMCIReflectionUtil {
         return JVMCIReflectionUtilFallback.bootModuleLayer();
     }
 
+    /**
+     * Reads the value of the non-static field named {@code fieldName} in the declaring class of the
+     * object represented by {@code receiver}.
+     *
+     * @param receiver the instance object from which the field value will be read
+     * @param fieldName name of the field to read
+     * @throws NoSuchFieldError if no field is uniquely identified by {@code fieldName} in
+     *             {@code declaringClass}
+     * @throws IllegalArgumentException if {@code !receiver.getJavaKind().isObject()} or the named
+     *             field is static
+     * @throws NullPointerException if {@code receiver == null} or {@code receiver} represents
+     *             {@link JavaConstant#isNull() null}
+     */
+    public static JavaConstant readInstanceField(JavaConstant receiver, String fieldName) {
+        if (!receiver.getJavaKind().isObject()) {
+            throw new IllegalArgumentException("Not an object: " + receiver);
+        }
+        if (receiver.isNull()) {
+            throw new NullPointerException();
+        }
+        MetaAccessProvider metaAccess = GraalAccess.getOriginalProviders().getMetaAccess();
+        ResolvedJavaType declaringClass = metaAccess.lookupJavaType(receiver);
+        ResolvedJavaField field = JVMCIReflectionUtil.getUniqueDeclaredField(false, declaringClass, fieldName);
+        if (field.isStatic()) {
+            throw new IllegalArgumentException(fieldName + " is static");
+        }
+        return GraalAccess.getOriginalProviders().getConstantReflection().readFieldValue(field, receiver);
+    }
+
+    /**
+     * Reads the value of the static field {@code fieldName} declared by {@code declaringClass}.
+     *
+     * @throws NoSuchFieldError if no field is uniquely identified by {@code fieldName} in
+     *             {@code declaringClass}
+     * @throws IllegalArgumentException if the named field is not static
+     */
+    public static JavaConstant readStaticField(ResolvedJavaType declaringClass, String fieldName) {
+        ResolvedJavaField field = JVMCIReflectionUtil.getUniqueDeclaredField(false, declaringClass, fieldName);
+        if (!field.isStatic()) {
+            throw new IllegalArgumentException(fieldName + " is not static");
+        }
+        return GraalAccess.getOriginalProviders().getConstantReflection().readFieldValue(field, null);
+    }
+
+    /**
+     * @see ReflectionUtil#newInstance
+     */
+    public static JavaConstant newInstance(ResolvedJavaType type) {
+        return JVMCIReflectionUtilFallback.newInstance(type);
+    }
+
+    /**
+     * Creates a new array with the specified component type and length.
+     *
+     * @see java.lang.reflect.Array#newInstance(Class, int)
+     */
+    public static JavaConstant newArrayInstance(ResolvedJavaType componentType, int length) {
+        return JVMCIReflectionUtilFallback.newArrayInstance(componentType, length);
+    }
+
+    /**
+     * Implements {@link Class#getResourceAsStream(String)} followed by
+     * {@link InputStream#readAllBytes()} using JVMCI reflection.
+     *
+     * @return The resource contents as a byte array; {@code null} if
+     *         {@link Class#getResourceAsStream(String)} returned {@code null}.
+     */
+    public static byte[] getResource(ResolvedJavaType type, String name) {
+        Providers providers = GraalAccess.getOriginalProviders();
+        ConstantReflectionProvider constantReflection = providers.getConstantReflection();
+        MetaAccessProvider metaAccess = providers.getMetaAccess();
+        VMAccess vmAccess = GraalAccess.getVMAccess();
+
+        JavaConstant classConstant = constantReflection.asJavaClass(OriginalClassProvider.getOriginalType(type));
+        JavaConstant nameConstant = constantReflection.forString(name);
+
+        ResolvedJavaMethod getResourceAsStreamMethod = getUniqueDeclaredMethod(metaAccess, Class.class, "getResourceAsStream", String.class);
+        ResolvedJavaMethod readAllBytesMethod = getUniqueDeclaredMethod(metaAccess, InputStream.class, "readAllBytes");
+
+        JavaConstant streamConstant = vmAccess.invoke(getResourceAsStreamMethod, classConstant, nameConstant);
+
+        if (streamConstant.isNull()) {
+            return null;
+        }
+
+        JavaConstant bytesConstant = vmAccess.invoke(readAllBytesMethod, streamConstant);
+
+        return GraalAccess.getOriginalSnippetReflection().asObject(byte[].class, bytesConstant);
+    }
 }

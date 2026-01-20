@@ -31,7 +31,7 @@ import com.oracle.svm.core.option.RuntimeOptionKey;
 import com.oracle.svm.core.util.UnsignedUtils;
 
 import jdk.graal.compiler.options.Option;
-import jdk.graal.compiler.word.Word;
+import org.graalvm.word.impl.Word;
 
 /**
  * A libgraal specific garbage collection policy that responds to GC hints and aggressively
@@ -91,7 +91,7 @@ class LibGraalCollectionPolicy extends AdaptiveCollectionPolicy {
             edenUsedBytes = edenUsedBytes.add(FULL_GC_BONUS);
         }
         return edenUsedBytes.aboveOrEqual(Word.unsigned(Options.ExpectedEdenSize.getValue())) ||
-                        (UnsignedUtils.toDouble(edenUsedBytes) / UnsignedUtils.toDouble(edenSize) >= Options.UsedEdenProportionThreshold.getValue());
+                        (UnsignedUtils.toDouble(edenUsedBytes) / UnsignedUtils.toDouble(sizes.getEdenSize()) >= Options.UsedEdenProportionThreshold.getValue());
     }
 
     @Override
@@ -129,7 +129,7 @@ class LibGraalCollectionPolicy extends AdaptiveCollectionPolicy {
 
     /**
      * The adjusting logic are as follows:
-     * 
+     *
      * 1. if we hit hinted GC twice in a row, there is no allocation failure in between. If the eden
      * space is previously expanded, we will aggressively shrink the eden space to half, such that
      * the memory footprint will be lower in subsequent execution.
@@ -142,17 +142,19 @@ class LibGraalCollectionPolicy extends AdaptiveCollectionPolicy {
     protected void computeEdenSpaceSize(boolean completeCollection, GCCause cause) {
         if (cause == GCCause.HintedGC) {
             if (completeCollection && lastGCCause == GCCause.HintedGC) {
-                UnsignedWord newEdenSize = UnsignedUtils.max(sizes.initialEdenSize, alignUp(edenSize.unsignedDivide(2)));
-                if (edenSize.aboveThan(newEdenSize)) {
-                    edenSize = newEdenSize;
+                UnsignedWord curEden = sizes.getEdenSize();
+                UnsignedWord newEden = UnsignedUtils.max(sizes.getInitialEdenSize(), alignUp(curEden.unsignedDivide(2)));
+                if (curEden.aboveThan(newEden)) {
+                    sizes.setEdenSize(newEden);
                 }
             }
         } else {
             UnsignedWord sizeAfter = GCImpl.getChunkBytes();
             if (sizeBefore.notEqual(0) && sizeBefore.belowThan(sizeAfter.multiply(2))) {
-                UnsignedWord newEdenSize = UnsignedUtils.min(getMaximumEdenSize(), alignUp(edenSize.multiply(2)));
-                if (edenSize.belowThan(newEdenSize)) {
-                    edenSize = newEdenSize;
+                UnsignedWord curEden = sizes.getEdenSize();
+                UnsignedWord newEden = UnsignedUtils.min(computeEdenLimit(), alignUp(curEden.multiply(2)));
+                if (curEden.belowThan(newEden)) {
+                    sizes.setEdenSize(newEden);
                 }
             } else {
                 super.computeEdenSpaceSize(completeCollection, cause);

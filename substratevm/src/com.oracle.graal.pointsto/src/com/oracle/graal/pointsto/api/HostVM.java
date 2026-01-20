@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2022, 2026, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2021, 2021, Alibaba Group Holding Limited. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -32,11 +32,11 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.nativeimage.hosted.Feature.DuringAnalysisAccess;
 
 import com.oracle.graal.pointsto.BigBang;
@@ -182,7 +182,7 @@ public abstract class HostVM {
     public void onTypeInstantiated(BigBang bb, AnalysisType type) {
     }
 
-    public boolean isCoreType(@SuppressWarnings("unused") AnalysisType type) {
+    public boolean isCoreType(@SuppressWarnings("unused") ResolvedJavaType type) {
         return false;
     }
 
@@ -284,6 +284,13 @@ public abstract class HostVM {
     public boolean hasNeverInlineDirective(ResolvedJavaMethod method) {
         /* No inlining by the static analysis unless explicitly overwritten by the VM. */
         return true;
+    }
+
+    /**
+     * @return true if method must never apply constant folding based on the type flow analysis.
+     */
+    public boolean hasNeverStrengthenGraphWithConstantsDirective(@SuppressWarnings("unused") ResolvedJavaMethod method) {
+        return false;
     }
 
     /**
@@ -429,6 +436,11 @@ public abstract class HostVM {
         return true;
     }
 
+    /** Returns true for fields that should be always closed, even in an open-world analysis. */
+    public boolean isAlwaysClosedField(@SuppressWarnings("unused") ResolvedJavaField field) {
+        return true;
+    }
+
     public boolean isClosedTypeWorld() {
         return true;
     }
@@ -467,8 +479,22 @@ public abstract class HostVM {
         return false;
     }
 
-    public Set<Module> getSharedLayerForbiddenModules() {
-        return Set.of();
+    public EconomicSet<Module> getSharedLayerForbiddenModules() {
+        return EconomicSet.create();
+    }
+
+    public abstract String loaderName(AnalysisType type);
+
+    public static String loaderName(ClassLoader loader) {
+        if (loader == null) {
+            return "null";
+        }
+        var loaderName = loader.getName();
+        if (loaderName == null || loaderName.isBlank()) {
+            return loader.getClass().getName();
+        } else {
+            return loaderName;
+        }
     }
 
     /**

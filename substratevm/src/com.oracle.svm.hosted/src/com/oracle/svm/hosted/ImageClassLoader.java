@@ -48,7 +48,6 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.graal.vmaccess.ResolvedJavaPackage;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.util.VMError;
@@ -60,6 +59,8 @@ import com.oracle.svm.util.OriginalFieldProvider;
 import com.oracle.svm.util.OriginalMethodProvider;
 import com.oracle.svm.util.TypeResult;
 
+import jdk.graal.compiler.vmaccess.ResolvedJavaPackage;
+import jdk.graal.compiler.vmaccess.VMAccess;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
@@ -77,6 +78,7 @@ public final class ImageClassLoader {
     public final Platform platform;
 
     public final NativeImageClassLoaderSupport classLoaderSupport;
+    public final VMAccess vmAccess;
     public final DeadlockWatchdog watchdog;
 
     /**
@@ -107,8 +109,9 @@ public final class ImageClassLoader {
      */
     private Set<Module> builderModules;
 
-    ImageClassLoader(Platform platform, NativeImageClassLoaderSupport classLoaderSupport) {
+    ImageClassLoader(Platform platform, NativeImageClassLoaderSupport classLoaderSupport, VMAccess vmAccess) {
         this.platform = platform;
+        this.vmAccess = vmAccess;
         this.classLoaderSupport = classLoaderSupport;
 
         int watchdogInterval = SubstrateOptions.DeadlockWatchdogInterval.getValue(classLoaderSupport.getParsedHostedOptions());
@@ -176,8 +179,13 @@ public final class ImageClassLoader {
      * Determines if {@code element} is compatible with the {@linkplain #platform target platform}.
      */
     private boolean isInPlatform(Annotated element) {
-        Platforms platformAnnotation = classLoaderSupport.annotationExtractor.getAnnotation(element, Platforms.class);
-        return NativeImageGenerator.includedIn(platform, platformAnnotation);
+        try {
+            Platforms platformAnnotation = classLoaderSupport.annotationExtractor.getAnnotation(element, Platforms.class);
+            return NativeImageGenerator.includedIn(platform, platformAnnotation);
+        } catch (LinkageError t) {
+            handleClassLoadingError(t, "getting @Platforms annotation value for %s", element);
+            return false;
+        }
     }
 
     /**
@@ -202,6 +210,29 @@ public final class ImageClassLoader {
         } catch (LinkageError e) {
             return null;
         }
+    }
+
+    public ClassLoader getDynamicHubClassLoader(Class<?> clazz) {
+        if (isCoreType(clazz)) {
+            /*
+             * Use null-loader for VM implementation classes. Our own VM implementation code (e.g.
+             * com.oracle.svm.core classes) are unrelated to the application code of the image and
+             * should not share the same classloader at image run-time. Using null as the
+             * classloader for such classes is in line with other use of the null-loader in Java.
+             */
+            return null;
+        } else {
+            /*
+             * If the class is an application class then it was loaded by NativeImageClassLoader.
+             * The ClassLoaderFeature object replacer will unwrap the original AppClassLoader from
+             * the NativeImageClassLoader.
+             */
+            return clazz.getClassLoader();
+        }
+    }
+
+    public boolean isCoreType(Class<?> clazz) {
+        return getBuilderModules().contains(clazz.getModule());
     }
 
     /**
@@ -298,7 +329,14 @@ public final class ImageClassLoader {
      */
     void registerType(ResolvedJavaType type) {
         assert OriginalClassProvider.getOriginalType(type).equals(type) : type;
-        PlatformSupportResult res = isPlatformSupported(type, platform);
+        PlatformSupportResult res;
+        try {
+            res = isPlatformSupported(type, platform);
+        } catch (LinkageError error) {
+            handleClassLoadingError(error, "getting @Platforms annotation value for %s", type);
+            res = PlatformSupportResult.NO;
+        }
+
         if (res == PlatformSupportResult.HOSTED) {
             synchronized (hostedOnlyTypes) {
                 hostedOnlyTypes.add(type);
@@ -316,27 +354,6 @@ public final class ImageClassLoader {
     }
 
     /**
-     * @deprecated use {@link #findClassOrFail(String)} instead.
-     */
-    @Deprecated
-    public Class<?> findClassByName(String name) {
-        return findClassByName(name, true);
-    }
-
-    /**
-     * @deprecated use {@link #findClass(String)} or {@link #findClassOrFail(String)} instead.
-     */
-    @Deprecated
-    public Class<?> findClassByName(String name, boolean failIfClassMissing) {
-        TypeResult<Class<?>> result = findClass(name);
-        if (failIfClassMissing) {
-            return result.getOrFail();
-        } else {
-            return result.get();
-        }
-    }
-
-    /**
      * Find class or fail if exception occurs.
      */
     public Class<?> findClassOrFail(String name) {
@@ -351,10 +368,37 @@ public final class ImageClassLoader {
     }
 
     /**
+     * Finds the type named by {@code name}.
+     *
+     * @param name the name of a class as expected by {@link Class#forName(String)}
+     * @return the found class or the error that occurred locating the type
+     */
+    public TypeResult<ResolvedJavaType> findType(String name) {
+        return findType(name, true);
+    }
+
+    /**
      * Find class, return result encoding class or failure reason.
      */
     public TypeResult<Class<?>> findClass(String name, boolean allowPrimitives) {
         return findClass(name, allowPrimitives, getClassLoader());
+    }
+
+    /**
+     * Find class, return result encoding class or failure reason.
+     */
+    public TypeResult<ResolvedJavaType> findType(String name, boolean allowPrimitives) {
+        try {
+            if (allowPrimitives && name.indexOf('.') == -1) {
+                ResolvedJavaType primitive = typeForPrimitive(name);
+                if (primitive != null) {
+                    return TypeResult.forType(name, primitive);
+                }
+            }
+            return TypeResult.forType(name, typeForName(name));
+        } catch (ClassNotFoundException | LinkageError ex) {
+            return TypeResult.forException(name, ex);
+        }
     }
 
     /**
@@ -389,12 +433,21 @@ public final class ImageClassLoader {
         };
     }
 
-    public Class<?> forName(String className) throws ClassNotFoundException {
-        return forName(className, false);
+    public static ResolvedJavaType typeForPrimitive(String name) {
+        Class<?> c = forPrimitive(name);
+        return c == null ? null : GraalAccess.lookupType(c);
     }
 
-    public Class<?> forName(String className, boolean initialize) throws ClassNotFoundException {
-        return forName(className, initialize, getClassLoader());
+    public ResolvedJavaType typeForName(String className) throws ClassNotFoundException {
+        ResolvedJavaType type = vmAccess.lookupAppClassLoaderType(className);
+        if (type == null) {
+            throw new ClassNotFoundException(className);
+        }
+        return type;
+    }
+
+    public Class<?> forName(String className) throws ClassNotFoundException {
+        return forName(className, false, getClassLoader());
     }
 
     public static Class<?> forName(String className, boolean initialize, ClassLoader loader) throws ClassNotFoundException {

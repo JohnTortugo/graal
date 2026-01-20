@@ -42,6 +42,7 @@ import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TimerTask;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
 import org.graalvm.collections.Pair;
@@ -56,7 +57,6 @@ import com.oracle.graal.pointsto.util.ParallelExecutionException;
 import com.oracle.graal.pointsto.util.Timer;
 import com.oracle.graal.pointsto.util.Timer.StopTimer;
 import com.oracle.graal.pointsto.util.TimerCollection;
-import com.oracle.svm.core.FallbackExecutor;
 import com.oracle.svm.core.JavaMainWrapper;
 import com.oracle.svm.core.JavaMainWrapper.JavaMainSupport;
 import com.oracle.svm.core.JavaVersionUtil;
@@ -82,6 +82,7 @@ import com.oracle.svm.util.ReflectionUtil;
 import com.oracle.svm.util.ReflectionUtil.ReflectionUtilError;
 
 import jdk.graal.compiler.options.OptionValues;
+import jdk.graal.compiler.vmaccess.VMAccess;
 import jdk.vm.ci.aarch64.AArch64;
 import jdk.vm.ci.amd64.AMD64;
 import jdk.vm.ci.code.Architecture;
@@ -90,8 +91,10 @@ import jdk.vm.ci.runtime.JVMCI;
 
 public class NativeImageGeneratorRunner {
 
-    private volatile NativeImageGenerator generator;
+    public static final String NATIVE_IMAGE_MODULE_PREFIX = "org.graalvm.nativeimage.";
     public static final String IMAGE_BUILDER_ARG_FILE_OPTION = "--image-args-file=";
+
+    private volatile NativeImageGenerator generator;
 
     public enum BuildOutcome {
         SUCCESSFUL,
@@ -106,6 +109,12 @@ public class NativeImageGeneratorRunner {
     public static void main(String[] args) {
         List<NativeImageGeneratorRunnerProvider> providers = new ArrayList<>();
         ServiceLoader.load(NativeImageGeneratorRunnerProvider.class).forEach(providers::add);
+
+        var ueh = ForkJoinPool.commonPool().getUncaughtExceptionHandler();
+        if (!(ueh instanceof CommonPoolUncaughtExceptionHandler)) {
+            throw VMError.shouldNotReachHere("Unable to install " + CommonPoolUncaughtExceptionHandler.class.getName() +
+                            " via java.util.concurrent.ForkJoinPool.commonPool.exceptionHandler system property");
+        }
 
         if (providers.isEmpty()) {
             new NativeImageGeneratorRunner().start(args);
@@ -189,11 +198,7 @@ public class NativeImageGeneratorRunner {
 
     private static void checkBootModuleDependencies(boolean verbose) {
         Set<Module> allModules = ModuleLayer.boot().modules();
-        List<Module> builderModules = allModules.stream().filter(m -> m.isNamed() && m.getName().startsWith("org.graalvm.nativeimage.")).toList();
-        Set<Module> transitiveBuilderModules = new LinkedHashSet<>();
-        for (Module svmModule : builderModules) {
-            transitiveReaders(svmModule, allModules, transitiveBuilderModules);
-        }
+        Set<Module> transitiveBuilderModules = getNativeImageBuilderModules();
         if (verbose) {
             System.out.println(transitiveBuilderModules.stream()
                             .map(Module::getName)
@@ -232,6 +237,28 @@ public class NativeImageGeneratorRunner {
         if (!unexpectedBuilderDependencies.isEmpty()) {
             throw VMError.shouldNotReachHere("Unexpected image builder module-dependencies: " + String.join(", ", unexpectedBuilderDependencies));
         }
+    }
+
+    /**
+     * Returns what are considered native-image builder modules: those are the modules with prefix
+     * {@value NativeImageGeneratorRunner#NATIVE_IMAGE_MODULE_PREFIX} and their reader modules.
+     */
+    public static Set<Module> getNativeImageBuilderModules() {
+        final var allModules = ModuleLayer.boot().modules();
+        List<Module> builderModules = new ArrayList<>(allModules.size());
+        for (Module m : allModules) {
+            if (m.isNamed()) {
+                if (m.getName().startsWith(NATIVE_IMAGE_MODULE_PREFIX)) {
+                    builderModules.add(m);
+                }
+            }
+        }
+
+        Set<Module> transitiveBuilderModules = new LinkedHashSet<>();
+        for (Module svmModule : builderModules) {
+            transitiveReaders(svmModule, allModules, transitiveBuilderModules);
+        }
+        return transitiveBuilderModules;
     }
 
     public static void transitiveReaders(Module readModule, Set<Module> potentialReaders, Set<Module> actualReaders) {
@@ -277,6 +304,13 @@ public class NativeImageGeneratorRunner {
         }
     }
 
+    private static VMAccess getVmAccess(String[] classpath, String[] modulepath) {
+        VMAccess.Builder builder = GraalAccess.getVmAccessBuilder();
+        builder.classPath(List.of(classpath));
+        builder.modulePath(List.of(modulepath));
+        return builder.build();
+    }
+
     /**
      * Installs a class loader hierarchy that resolves classes and resources available in
      * {@code classpath} and {@code modulepath}. The parent for the installed {@code ClassLoader} is
@@ -294,6 +328,8 @@ public class NativeImageGeneratorRunner {
      *         via {@link NativeImageClassLoaderSupport#getClassLoader()}.
      */
     public static ImageClassLoader installNativeImageClassLoader(String[] classpath, String[] modulepath, List<String> arguments) {
+        VMAccess vmAccess = getVmAccess(classpath, modulepath);
+        GraalAccess.plantConfiguration(vmAccess);
         NativeImageSystemClassLoader nativeImageSystemClassLoader = NativeImageSystemClassLoader.singleton();
         NativeImageClassLoaderSupport nativeImageClassLoaderSupport = new NativeImageClassLoaderSupport(nativeImageSystemClassLoader.defaultSystemClassLoader, classpath, modulepath);
         nativeImageClassLoaderSupport.setupHostedOptionParser(arguments);
@@ -325,7 +361,7 @@ public class NativeImageGeneratorRunner {
          */
         NativeImageOptions.setCommonPoolParallelism(nativeImageClassLoaderSupport.getParsedHostedOptions());
 
-        return new ImageClassLoader(NativeImageGenerator.getTargetPlatform(nativeImageClassLoader), nativeImageClassLoaderSupport);
+        return new ImageClassLoader(NativeImageGenerator.getTargetPlatform(nativeImageClassLoader), nativeImageClassLoaderSupport, vmAccess);
     }
 
     public static List<String> extractDriverArguments(List<String> args) {
@@ -559,13 +595,6 @@ public class NativeImageGeneratorRunner {
                 }
             }
             throw e;
-        } catch (FallbackFeature.FallbackImageRequest e) {
-            if (FallbackExecutor.class.getName().equals(SubstrateOptions.Class.getValue())) {
-                NativeImageGeneratorRunner.reportFatalError(e, "FallbackImageRequest while building fallback image.");
-                return ExitStatus.BUILDER_ERROR.getValue();
-            }
-            reportUserException(e, parsedHostedOptions);
-            return ExitStatus.FALLBACK_IMAGE.getValue();
         } catch (ParsingError e) {
             NativeImageGeneratorRunner.reportFatalError(e);
             return ExitStatus.BUILDER_ERROR.getValue();

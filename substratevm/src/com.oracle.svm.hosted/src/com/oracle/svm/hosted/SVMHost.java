@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,9 +35,9 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,6 +47,7 @@ import java.util.function.BiPredicate;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.nativeimage.AnnotationAccess;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
@@ -54,6 +55,7 @@ import org.graalvm.nativeimage.c.constant.CConstant;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
 import org.graalvm.nativeimage.c.function.CLibrary;
 import org.graalvm.nativeimage.hosted.Feature;
+import org.graalvm.word.impl.Word.Operation;
 import org.graalvm.word.WordBase;
 
 import com.oracle.graal.pointsto.BigBang;
@@ -79,6 +81,7 @@ import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.MissingRegistrationSupport;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.NeverInlineTrivial;
+import com.oracle.svm.core.NeverStrengthenGraphWithConstants;
 import com.oracle.svm.core.RuntimeAssertionsSupport;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateOptions.OptimizationLevel;
@@ -107,6 +110,7 @@ import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.jdk.LambdaFormHiddenMethod;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.core.reflect.proxy.DynamicProxySupport;
 import com.oracle.svm.core.thread.ContinuationSupport;
 import com.oracle.svm.core.threadlocal.VMThreadLocalInfo;
 import com.oracle.svm.core.util.Counter;
@@ -142,7 +146,6 @@ import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyImpl;
 import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyUtils;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.hosted.substitute.AutomaticUnsafeTransformationSupport;
-import com.oracle.svm.hosted.util.IdentityHashCodeUtil;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.util.GraalAccess;
 import com.oracle.svm.util.LogUtils;
@@ -175,11 +178,11 @@ import jdk.graal.compiler.phases.OptimisticOptimizations;
 import jdk.graal.compiler.phases.common.BoxNodeIdentityPhase;
 import jdk.graal.compiler.phases.common.CanonicalizerPhase;
 import jdk.graal.compiler.virtual.phases.ea.PartialEscapePhase;
-import jdk.graal.compiler.word.Word.Operation;
 import jdk.internal.loader.NativeLibraries;
 import jdk.internal.vm.annotation.DontInline;
 import jdk.internal.vm.annotation.ForceInline;
 import jdk.internal.vm.annotation.Stable;
+import jdk.vm.ci.meta.ConstantReflectionProvider;
 import jdk.vm.ci.meta.DeoptimizationReason;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.MetaAccessProvider;
@@ -249,12 +252,19 @@ public class SVMHost extends HostVM {
     private final boolean buildingExtensionLayer = ImageLayerBuildingSupport.buildingExtensionLayer();
 
     // All elements below are from the host VM universe, not the analysis universe
-    private final Set<ResolvedJavaField> sharedLayerExcludedFields;
+
+    /**
+     * Contains fields that should be kept as closed in an open-world analysis. In general these are
+     * fields that should not be written to because, e.g., they need to be folded in the base image.
+     */
+    private final EconomicSet<ResolvedJavaField> closedWorldFields;
+
     /**
      * Some modules contain native methods that should never be in the image, as they are either
      * hosted only, or currently unsupported in layered images.
      */
-    protected final Set<Module> sharedLayerForbiddenModules;
+    protected final EconomicSet<Module> sharedLayerForbiddenModules;
+
     private final ResolvedJavaType optionKeyType;
     private final ResolvedJavaType featureType;
 
@@ -298,13 +308,10 @@ public class SVMHost extends HostVM {
             parsingSupport = null;
         }
         layerId = buildingImageLayer ? DynamicImageLayerInfo.getCurrentLayerNumber() : 0;
-        if (buildingSharedLayer) {
-            sharedLayerExcludedFields = initializeSharedLayerExcludedFields();
-            sharedLayerForbiddenModules = initializeSharedLayerForbiddenModules();
-        } else {
-            sharedLayerExcludedFields = null;
-            sharedLayerForbiddenModules = null;
-        }
+
+        /* In a closed-world analysis all fields are closed, so the set is null. */
+        closedWorldFields = isClosedTypeWorld ? null : getAlwaysClosedFields();
+        sharedLayerForbiddenModules = buildingSharedLayer ? initializeSharedLayerForbiddenModules() : null;
         layeredStaticFieldSupport = buildingImageLayer ? LayeredStaticFieldSupport.singleton() : null;
 
         optionKeyType = lookupOriginalType(OptionKey.class);
@@ -323,8 +330,8 @@ public class SVMHost extends HostVM {
      * time then they cannot be an {@link AnalysisType}.
      */
     @Override
-    public boolean isCoreType(AnalysisType type) {
-        return loader.getBuilderModules().contains(type.getJavaClass().getModule());
+    public boolean isCoreType(ResolvedJavaType type) {
+        return loader.getBuilderModules().contains(OriginalClassProvider.getJavaClass(type).getModule());
     }
 
     @Override
@@ -457,10 +464,12 @@ public class SVMHost extends HostVM {
     public void registerType(AnalysisType analysisType, int identityHashCode) {
         DynamicHub hub = createHub(analysisType);
 
-        boolean result = IdentityHashCodeUtil.injectIdentityHashCode(hub, identityHashCode);
-
-        if (!result) {
-            throw VMError.shouldNotReachHere("The hashcode was already set when trying to inject the value from the base layer.");
+        ConstantReflectionProvider constantReflection = GraalAccess.getOriginalProviders().getConstantReflection();
+        JavaConstant hubConstant = GraalAccess.getOriginalSnippetReflection().forObject(hub);
+        int actualHashCode = constantReflection.makeIdentityHashCode(hubConstant, identityHashCode);
+        if (actualHashCode != identityHashCode) {
+            throw VMError.shouldNotReachHere("The identity hash code was already set to %d when trying to set it to %d from the base layer.",
+                            actualHashCode, identityHashCode);
         }
 
         registerType(analysisType, hub);
@@ -590,12 +599,7 @@ public class SVMHost extends HostVM {
         }
         int modifiers = javaClass.getModifiers();
 
-        /*
-         * If the class is an application class then it was loaded by NativeImageClassLoader. The
-         * ClassLoaderFeature object replacer will unwrap the original AppClassLoader from the
-         * NativeImageClassLoader.
-         */
-        ClassLoader hubClassLoader = javaClass.getClassLoader();
+        ClassLoader hubClassLoader = DynamicProxySupport.singleton().getProxyClassClassloader(javaClass, loader::getDynamicHubClassLoader);
 
         /* Class names must be interned strings according to the Java specification. */
         String name = encoder.encodeClass(type.toClassName());
@@ -826,7 +830,8 @@ public class SVMHost extends HostVM {
                 /*
                  * Deoptimization Targets cannot have virtual objects in frame states.
                  *
-                 * Also, more work is needed to enable PEA in Runtime Compiled Methods.
+                 * For runtime compiled methods, PEA should run after analysis, since
+                 * InlinedInvokeArgumentNodes from early inlining would keep objects materialized.
                  */
                 new BoxNodeIdentityPhase().apply(graph, getProviders(method.getMultiMethodKey()));
                 new PartialEscapePhase(false, false, CanonicalizerPhase.create(), null, options).apply(graph, getProviders(method.getMultiMethodKey()));
@@ -919,6 +924,11 @@ public class SVMHost extends HostVM {
     }
 
     @Override
+    public boolean hasNeverStrengthenGraphWithConstantsDirective(ResolvedJavaMethod method) {
+        return AnnotationUtil.isAnnotationPresent(method, NeverStrengthenGraphWithConstants.class);
+    }
+
+    @Override
     public boolean hasAlwaysInlineDirective(ResolvedJavaMethod method) {
         return AnnotationUtil.isAnnotationPresent(method, AlwaysInline.class) || AnnotationUtil.isAnnotationPresent(method, ForceInline.class);
     }
@@ -984,47 +994,50 @@ public class SVMHost extends HostVM {
         return originalMetaAccess.lookupJavaField(ReflectionUtil.lookupField(declaringClass, fieldName));
     }
 
-    private Set<ResolvedJavaField> initializeSharedLayerExcludedFields() {
-        Set<ResolvedJavaField> excludedFields = new HashSet<>();
+    /**
+     * @return fields that should stay closed even in an open-world analysis.
+     */
+    private EconomicSet<ResolvedJavaField> getAlwaysClosedFields() {
+        EconomicSet<ResolvedJavaField> closedFields = EconomicSet.create(24);
 
         /*
          * These fields need to be folded as they are used in snippets, and they must be accessed
          * without producing reads with side effects.
          */
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "layoutEncoding"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "numClassTypes"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "numIterableInterfaceTypes"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldTypeCheckSlots"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldInterfaceHashParam"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldInterfaceHashTable"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "interfaceID"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "typeIDDepth"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "typeID"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "monitorOffset"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "hubType"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "companion"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHubCompanion.class, "arrayHub"));
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHubCompanion.class, "additionalFlags"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "layoutEncoding"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "numClassTypes"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "numIterableInterfaceTypes"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldTypeCheckSlots"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldInterfaceHashParam"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "openTypeWorldInterfaceHashTable"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "interfaceID"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "typeIDDepth"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "typeID"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "monitorOffset"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "hubType"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "companion"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHubCompanion.class, "arrayHub"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHubCompanion.class, "additionalFlags"));
 
         /* Needs to be immutable for correct lowering of SubstrateIdentityHashCodeNode. */
-        excludedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "identityHashOffset"));
+        closedFields.add(lookupOriginalDeclaredField(DynamicHub.class, "identityHashOffset"));
 
         /*
          * Including this field makes ThreadLocalAllocation.getTlabDescriptorSize reachable through
          * ThreadLocalAllocation.regularTLAB which is accessed with
          * FastThreadLocalBytes.getSizeSupplier
          */
-        excludedFields.add(lookupOriginalDeclaredField(VMThreadLocalInfo.class, "sizeSupplier"));
+        closedFields.add(lookupOriginalDeclaredField(VMThreadLocalInfo.class, "sizeSupplier"));
         /* This field cannot be written to (see documentation) */
-        excludedFields.add(lookupOriginalDeclaredField(Counter.Group.class, "enabled"));
+        closedFields.add(lookupOriginalDeclaredField(Counter.Group.class, "enabled"));
         /* This field can contain a reference to a Thread, which is not allowed in the heap */
-        excludedFields.add(lookupOriginalDeclaredField(NativeLibraries.class, "nativeLibraryLockMap"));
+        closedFields.add(lookupOriginalDeclaredField(NativeLibraries.class, "nativeLibraryLockMap"));
 
-        return excludedFields;
+        return closedFields;
     }
 
-    protected Set<Module> initializeSharedLayerForbiddenModules() {
-        Set<Module> forbiddenModules = new HashSet<>();
+    protected EconomicSet<Module> initializeSharedLayerForbiddenModules() {
+        EconomicSet<Module> forbiddenModules = EconomicSet.create(20);
         forbiddenModules.add(JVMCI.class.getModule());
         addForbiddenModule(forbiddenModules, "com.oracle.svm.shadowed.org.bytedeco.llvm.global.LLVM");
         addForbiddenModule(forbiddenModules, "com.oracle.svm.shadowed.org.bytedeco.javacpp.presets.javacpp");
@@ -1033,7 +1046,7 @@ public class SVMHost extends HostVM {
         return forbiddenModules;
     }
 
-    protected static void addForbiddenModule(Set<Module> sharedLayerForbiddenModules, String className) {
+    protected static void addForbiddenModule(EconomicSet<Module> sharedLayerForbiddenModules, String className) {
         Class<?> clazz = ReflectionUtil.lookupClass(true, className);
         if (clazz != null) {
             sharedLayerForbiddenModules.add(clazz.getModule());
@@ -1254,19 +1267,21 @@ public class SVMHost extends HostVM {
     }
 
     /**
-     * Checks the exclusion list to determine if field should be included in the shared layer.
+     * Determine if a field should be force-included in the shared layer.
      */
     @Override
     public boolean isFieldIncludedInSharedLayer(ResolvedJavaField field) {
-        if (sharedLayerExcludedFields.contains(OriginalFieldProvider.getOriginalField(field))) {
+        if (isAlwaysClosedField(field)) {
             return false;
         }
+        // GR-71702 will prevent batch registering svm.core fields as roots
+        return !field.getDeclaringClass().toJavaName().startsWith("jdk.graal.compiler");
+    }
 
-        /* Fields from the Graal compiler should not be in the shared layer unconditionally. */
-        if (field.getDeclaringClass().toJavaName().startsWith("jdk.graal.compiler")) {
-            return false;
-        }
-        return true;
+    @Override
+    public boolean isAlwaysClosedField(ResolvedJavaField field) {
+        /* Note that DynamicHub may not be seen as core. */
+        return closedWorldFields.contains(OriginalFieldProvider.getOriginalField(field));
     }
 
     @Override
@@ -1549,7 +1564,17 @@ public class SVMHost extends HostVM {
     }
 
     @Override
-    public Set<Module> getSharedLayerForbiddenModules() {
+    public EconomicSet<Module> getSharedLayerForbiddenModules() {
         return sharedLayerForbiddenModules;
+    }
+
+    @Override
+    public String loaderName(AnalysisType type) {
+        var originalLoader = type.getJavaClass().getClassLoader();
+        var runtimeLoader = typeToHub.get(type).getClassLoader();
+        if (Objects.equals(originalLoader, runtimeLoader)) {
+            return loaderName(originalLoader);
+        }
+        return loaderName(originalLoader) + "->" + loaderName(runtimeLoader);
     }
 }

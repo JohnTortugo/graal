@@ -41,6 +41,8 @@ import jdk.vm.ci.meta.ResolvedJavaType;
  * Life cycle: lives until the referencing {@link InterpreterResolvedJavaType} is gc-ed.
  */
 public final class RistrettoType extends SubstrateType {
+    public static final Function<InterpreterResolvedJavaType, ResolvedJavaType> RISTRETTO_TYPE_FUNCTION = RistrettoType::new;
+
     private final InterpreterResolvedJavaType interpreterType;
 
     private RistrettoType(InterpreterResolvedJavaType interpreterType) {
@@ -51,8 +53,6 @@ public final class RistrettoType extends SubstrateType {
     public InterpreterResolvedJavaType getInterpreterType() {
         return interpreterType;
     }
-
-    private static final Function<InterpreterResolvedJavaType, ResolvedJavaType> RISTRETTO_TYPE_FUNCTION = RistrettoType::new;
 
     public static RistrettoType create(InterpreterResolvedJavaType interpreterType) {
         return (RistrettoType) interpreterType.getRistrettoType(RISTRETTO_TYPE_FUNCTION);
@@ -78,5 +78,14 @@ public final class RistrettoType extends SubstrateType {
     @Override
     public boolean isArray() {
         return interpreterType.isArray();
+    }
+
+    @Override
+    public boolean isLinked() {
+        /*
+         * TODO GR-59739, GR-71851 - crema does not implement linking at the moment, so we assume
+         * all resolved (==loaded) types successfully linked as well
+         */
+        return true;
     }
 }

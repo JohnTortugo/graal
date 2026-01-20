@@ -220,15 +220,7 @@ public final class InstructionModel implements PrettyPrintable {
         }
     }
 
-    public record InstructionImmediate(ImmediateKind kind, String name, InstructionImmediateEncoding encoding, Optional<ConstantOperandModel> constantOperand) {
-
-        public InstructionImmediate(ImmediateKind kind, String name, InstructionImmediateEncoding encoding) {
-            this(kind, name, encoding, Optional.empty());
-        }
-
-        public boolean explicit() {
-            return encoding.explicit();
-        }
+    public record InstructionImmediate(ImmediateKind kind, String name, InstructionImmediateEncoding encoding, boolean dynamic, Optional<ConstantOperandModel> constantOperand) {
 
         public int offset() {
             return encoding.offset();
@@ -262,7 +254,7 @@ public final class InstructionModel implements PrettyPrintable {
 
             // If both match, order by each pairwise immediate's byte width.
             for (int i = 0; i < immediates.size(); i++) {
-                diff = immediates.get(i).compareTo(other.immediates.get(i));
+                diff = immediates.get(i).width().byteSize - other.immediates.get(i).width().byteSize;
                 if (diff != 0) {
                     return diff;
                 }
@@ -270,28 +262,11 @@ public final class InstructionModel implements PrettyPrintable {
 
             throw new AssertionError("compareTo cannot determine that non-equal instruction encodings are not equal.");
         }
-
-        public List<InstructionImmediateEncoding> getExplicitImmediateEncodings() {
-            return immediates.stream().filter((i) -> i.explicit()).toList();
-        }
-
     }
 
-    public record InstructionImmediateEncoding(int offset, ImmediateWidth width, boolean explicit) implements Comparable<InstructionImmediateEncoding> {
+    public record InstructionImmediateEncoding(int offset, ImmediateWidth width) {
 
-        public static final InstructionImmediateEncoding NONE = new InstructionImmediateEncoding(0, null, false);
-
-        @Override
-        public int compareTo(InstructionImmediateEncoding other) {
-            if (this.equals(other)) {
-                return 0;
-            }
-            int diff = this.width.byteSize - other.width.byteSize;
-            if (diff != 0) {
-                return diff;
-            }
-            return Boolean.compare(this.explicit, other.explicit);
-        }
+        public static final InstructionImmediateEncoding NONE = new InstructionImmediateEncoding(0, null);
 
     }
 
@@ -317,24 +292,44 @@ public final class InstructionModel implements PrettyPrintable {
 
     public List<SpecializationData> filteredSpecializations;
 
-    public InstructionModel quickeningBase;
-    // operation this instruction stems from. null if none
-    public OperationModel operation;
+    public final InstructionModel quickeningBase;
+
+    public enum QuickeningKind {
+        /**
+         * Implements a specialized version of the base instruction. Typically this is a type
+         * specialization but it need not be.
+         */
+        SPECIALIZED,
+        /**
+         * Like {@link #SPECIALIZED}, but produces an unboxed result (for {@code StoreLocal},
+         * consumes an unboxed operand).
+         */
+        SPECIALIZED_UNBOXED,
+        /**
+         * Implements a generic version of the base instruction. This instruction acts as a sink to
+         * prevent the base instruction from re-quickening to a specialized case.
+         */
+        GENERIC,
+    }
+
+    public final QuickeningKind quickeningKind;
 
     /*
-     * Used for return type boxing elimination quickenings.
+     * Whether the instruction checks for invalid operands. Currently only used by local load
+     * instructions.
      */
-    public boolean returnTypeQuickening;
-
-    public boolean generic;
-
-    public boolean nonNull;
+    public final boolean checked;
 
     /*
      * Alternative argument specialization type for builtin quickenings. E.g. for loadLocal
      * parameter types.
      */
-    public TypeMirror specializedType;
+    public final TypeMirror specializedType;
+
+    // operation this instruction stems from. null if none
+    public OperationModel operation;
+
+    public boolean nonNull;
 
     public ShortCircuitInstructionModel shortCircuitModel;
 
@@ -351,30 +346,33 @@ public final class InstructionModel implements PrettyPrintable {
         this.name = name;
         this.signature = signature;
         this.quickeningName = null;
+        this.quickeningBase = null;
+        this.quickeningKind = null;
+        this.specializedType = null;
+        this.checked = false;
     }
 
     /*
      * Quickening constructor.
      */
-    public InstructionModel(InstructionModel base, String quickeningName, Signature signature) {
+    public InstructionModel(InstructionModel base, String quickeningName, Signature signature, QuickeningKind quickeningKind, TypeMirror specializedType, boolean checked) {
         this.kind = base.kind;
         this.name = base.name + "$" + quickeningName;
         this.signature = signature;
         this.quickeningName = quickeningName;
+        this.quickeningBase = base;
+        this.quickeningKind = quickeningKind;
+        this.specializedType = specializedType;
+        this.checked = checked;
         this.filteredSpecializations = base.filteredSpecializations;
         this.nodeData = base.nodeData;
         this.nodeType = base.nodeType;
-        this.quickeningBase = base;
         this.operation = base.operation;
         this.shortCircuitModel = base.shortCircuitModel;
         for (InstructionImmediate imm : base.immediates) {
             addImmediate(imm);
         }
         base.quickenedInstructions.add(this);
-    }
-
-    public List<InstructionImmediate> getExplicitImmediates() {
-        return immediates.stream().filter((i) -> i.explicit()).toList();
     }
 
     public boolean isShortCircuitConverter() {
@@ -446,13 +444,9 @@ public final class InstructionModel implements PrettyPrintable {
         return !quickenedInstructions.isEmpty();
     }
 
-    public boolean isSpecializedQuickening() {
-        return quickeningBase != null && !returnTypeQuickening && !generic;
-    }
-
     public boolean hasSpecializedQuickenings() {
         for (InstructionModel instr : quickenedInstructions) {
-            if (instr.isSpecializedQuickening()) {
+            if (instr.quickeningKind == QuickeningKind.SPECIALIZED) {
                 return true;
             }
         }
@@ -464,7 +458,7 @@ public final class InstructionModel implements PrettyPrintable {
     }
 
     public boolean isReturnTypeQuickening() {
-        return returnTypeQuickening;
+        return quickeningKind == QuickeningKind.SPECIALIZED_UNBOXED && kind != InstructionKind.STORE_LOCAL && kind != InstructionKind.STORE_LOCAL_MATERIALIZED;
     }
 
     @Override
@@ -485,15 +479,11 @@ public final class InstructionModel implements PrettyPrintable {
             if (quickeningBase == null) {
                 quickenKind = "base";
             } else {
-                if (isReturnTypeQuickening()) {
-                    quickenKind = "return-type";
-                } else {
-                    if (generic) {
-                        quickenKind = "generic";
-                    } else {
-                        quickenKind = "specialized";
-                    }
-                }
+                quickenKind = switch (quickeningKind) {
+                    case GENERIC -> "generic";
+                    case SPECIALIZED -> "specialized";
+                    case SPECIALIZED_UNBOXED -> "return-type";
+                };
             }
             printer.field("quicken-kind", quickenKind);
         }
@@ -558,16 +548,16 @@ public final class InstructionModel implements PrettyPrintable {
     }
 
     public InstructionModel addImmediate(ImmediateKind immediateKind, String immediateName) {
-        return addImmediate(immediateKind, immediateName, true);
+        return addImmediate(immediateKind, immediateName, false);
     }
 
-    public InstructionModel addImmediate(ImmediateKind immediateKind, String immediateName, boolean explicit) {
-        addImmediate(new InstructionImmediate(immediateKind, immediateName, new InstructionImmediateEncoding(byteLength, immediateKind.width, explicit)));
+    public InstructionModel addImmediate(ImmediateKind immediateKind, String immediateName, boolean dynamic) {
+        addImmediate(new InstructionImmediate(immediateKind, immediateName, new InstructionImmediateEncoding(byteLength, immediateKind.width), dynamic, Optional.empty()));
         return this;
     }
 
     public InstructionModel addConstantOperandImmediate(ConstantOperandModel constantOperand, String immediateName) {
-        addImmediate(new InstructionImmediate(constantOperand.kind(), immediateName, new InstructionImmediateEncoding(byteLength, constantOperand.kind().width, true), Optional.of(constantOperand)));
+        addImmediate(new InstructionImmediate(constantOperand.kind(), immediateName, new InstructionImmediateEncoding(byteLength, constantOperand.kind().width), false, Optional.of(constantOperand)));
         return this;
     }
 
@@ -623,6 +613,10 @@ public final class InstructionModel implements PrettyPrintable {
 
     public InstructionEncoding getInstructionEncoding() {
         return new InstructionEncoding(this);
+    }
+
+    public String getName() {
+        return name;
     }
 
     public String getInternalName() {
@@ -683,7 +677,7 @@ public final class InstructionModel implements PrettyPrintable {
 
     public String prettyPrintEncoding() {
         StringBuilder b = new StringBuilder("[");
-        b.append(" : short");
+        b.append("opcode : short");
         for (InstructionImmediate imm : immediates) {
             b.append(", ");
             b.append(imm.name);
@@ -753,22 +747,19 @@ public final class InstructionModel implements PrettyPrintable {
         return false;
     }
 
-    public InstructionModel findSpecializedInstruction(TypeMirror type) {
-        for (InstructionModel specialization : quickenedInstructions) {
-            if (!specialization.generic && ElementUtils.typeEquals(type, specialization.specializedType)) {
-                return specialization;
+    @SuppressWarnings("hiding")
+    public InstructionModel findQuickening(QuickeningKind quickeningKind, TypeMirror specializedType, boolean checked) {
+        InstructionModel result = null;
+        for (InstructionModel quickening : quickenedInstructions) {
+            if (quickening.quickeningKind == quickeningKind && ElementUtils.typeEquals(quickening.specializedType, specializedType) && quickening.checked == checked) {
+                if (result != null) {
+                    String specializedTypeString = (specializedType == null) ? null : ElementUtils.getSimpleName(specializedType);
+                    throw new AssertionError("Multiple quickenings found with kind %s and specialized type %s: %s, %s".formatted(quickeningKind, specializedTypeString, result, quickening));
+                }
+                result = quickening;
             }
         }
-        return null;
-    }
-
-    public InstructionModel findGenericInstruction() {
-        for (InstructionModel specialization : quickenedInstructions) {
-            if (specialization.generic) {
-                return specialization;
-            }
-        }
-        return null;
+        return result;
     }
 
     public void validateAlignment() {
@@ -827,6 +818,13 @@ public final class InstructionModel implements PrettyPrintable {
         }
 
         return true;
+    }
+
+    public int getStackEffect() {
+        return switch (kind) {
+            case LOAD_VARIADIC, CREATE_VARIADIC -> throw new IllegalArgumentException("Variadic instruction " + this + " does not have a fixed stack effect.");
+            default -> (signature.isVoid ? 0 : 1) - signature.dynamicOperandCount;
+        };
     }
 
 }

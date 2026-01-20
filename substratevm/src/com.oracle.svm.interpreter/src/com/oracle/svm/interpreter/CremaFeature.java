@@ -26,9 +26,9 @@ package com.oracle.svm.interpreter;
 
 import static com.oracle.graal.pointsto.ObjectScanner.OtherReason;
 import static com.oracle.graal.pointsto.ObjectScanner.ScanReason;
+import static com.oracle.svm.interpreter.InterpreterFeature.assertionsEnabled;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 
@@ -86,15 +86,8 @@ public class CremaFeature implements InternalFeature {
         VMError.guarantee(!RuntimeClassLoading.isSupported() || ClassForNameSupport.respectClassLoader());
     }
 
-    private static boolean assertionsEnabled() {
-        boolean enabled = false;
-        assert (enabled = true) == true : "Enabling assertions";
-        return enabled;
-    }
-
     @Override
     public void beforeAnalysis(BeforeAnalysisAccess access) {
-        methodHandleSetup();
         FeatureImpl.BeforeAnalysisAccessImpl accessImpl = (FeatureImpl.BeforeAnalysisAccessImpl) access;
         try {
             AnalysisType declaringClass = accessImpl.getMetaAccess().lookupJavaType(InterpreterStubSection.class);
@@ -104,16 +97,6 @@ public class CremaFeature implements InternalFeature {
         } catch (NoSuchMethodError e) {
             throw VMError.shouldNotReachHere(e);
         }
-    }
-
-    private static void methodHandleSetup() {
-        /*
-         * Get java.lang.invoke.LambdaForm.LF_FAILED initialized since we don't support perf counter
-         * creation at run-time. See Target_jdk_internal_perf_PerfCounter.
-         */
-        Class<?> lfClass = ReflectionUtil.lookupClass("java.lang.invoke.LambdaForm");
-        Method failedCompilationCounterMethod = ReflectionUtil.lookupMethod(lfClass, "failedCompilationCounter");
-        ReflectionUtil.invokeMethod(failedCompilationCounterMethod, null);
     }
 
     @Override
@@ -151,6 +134,8 @@ public class CremaFeature implements InternalFeature {
         for (HostedType hType : hUniverse.getTypes()) {
             iUniverse.mirrorSVMVTable(hType, objectType -> accessImpl.getHeapScanner().rescanField(objectType, vtableHolderField, reason));
         }
+
+        InterpreterFeature.prepareSignatures();
     }
 
     @Override

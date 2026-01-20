@@ -48,6 +48,7 @@ import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
 
 import com.oracle.svm.core.SubstrateOptions;
+import com.oracle.svm.core.SubstrateOptions.ConcealedOptions;
 import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.c.CGlobalData;
 import com.oracle.svm.core.c.CGlobalDataFactory;
@@ -76,12 +77,11 @@ import com.oracle.svm.core.thread.NativeSpinLockUtils;
 import com.oracle.svm.core.thread.PlatformThreads;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
-import jdk.graal.compiler.word.Word;
+import org.graalvm.word.impl.Word;
 
 /**
  * The signal handler mechanism exists only once per process. We allow multiple isolates to install
@@ -140,7 +140,7 @@ public final class PosixSignalHandlerSupport implements SignalHandlerSupport {
         assert MonitorSupport.singleton().isLockedByCurrentThread(Target_jdk_internal_misc_Signal.class);
         ensureInitialized();
 
-        return installJavaSignalHandler0(sig, nativeH, SubstrateOptions.EnableSignalHandling.getValue());
+        return installJavaSignalHandler0(sig, nativeH, SubstrateOptions.isSignalHandlingAllowed());
     }
 
     @Uninterruptible(reason = "Locking without transition requires that the whole critical section is uninterruptible.")
@@ -322,9 +322,9 @@ public final class PosixSignalHandlerSupport implements SignalHandlerSupport {
      * {@code errno} value (i.e., typically, each signal needs to save and restore errno).
      *
      * WARNING: methods related to signal handling must not be called from an initialization hook
-     * because the runtime option {@code EnableSignalHandling} is not necessarily initialized yet
-     * when initialization hooks run. So, startup hooks are currently the earliest point where
-     * execution is possible.
+     * because the runtime option {@link ConcealedOptions#EnableSignalHandling} is not necessarily
+     * initialized yet when initialization hooks run. So, startup hooks are currently the earliest
+     * point where execution is possible.
      */
     @Uninterruptible(reason = "Locking without transition requires that the whole critical section is uninterruptible.")
     public static Signal.SignalDispatcher installNativeSignalHandler(int signum, Signal.SignalDispatcher handler, int flags, boolean isSignalHandlingAllowed) {
@@ -426,7 +426,7 @@ public final class PosixSignalHandlerSupport implements SignalHandlerSupport {
 }
 
 @AutomaticallyRegisteredFeature
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = SingleLayer.class, layeredInstallationKind = Independent.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = SingleLayer.class)
 class PosixSignalHandlerFeature implements InternalFeature {
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {
@@ -490,7 +490,7 @@ class PosixSignalHandlerFeature implements InternalFeature {
 /**
  * Ideally, this should be executed as an isolate initialization hook or even earlier during
  * startup. However, this doesn't work because some Truffle code sets the runtime option
- * {@link SubstrateOptions#EnableSignalHandling} after the isolate initialization already finished.
+ * {@link ConcealedOptions#EnableSignalHandling} after the isolate initialization already finished.
  */
 final class IgnoreSignalsStartupHook implements RuntimeSupport.Hook {
     private static final CGlobalData<Pointer> NOOP_HANDLERS_INSTALLED = CGlobalDataFactory.createWord();
@@ -525,7 +525,7 @@ final class IgnoreSignalsStartupHook implements RuntimeSupport.Hook {
      */
     @Override
     public void execute(boolean isFirstIsolate) {
-        boolean isSignalHandlingAllowed = SubstrateOptions.EnableSignalHandling.getValue();
+        boolean isSignalHandlingAllowed = SubstrateOptions.isSignalHandlingAllowed();
         if (isSignalHandlingAllowed && isFirst()) {
             installNoopHandler(SignalEnum.SIGPIPE, isSignalHandlingAllowed);
             installNoopHandler(SignalEnum.SIGXFSZ, isSignalHandlingAllowed);

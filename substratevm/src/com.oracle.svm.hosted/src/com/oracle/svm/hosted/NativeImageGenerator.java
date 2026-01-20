@@ -157,6 +157,7 @@ import com.oracle.svm.core.graal.word.SubstrateWordTypes;
 import com.oracle.svm.core.heap.BarrierSetProvider;
 import com.oracle.svm.core.heap.RestrictHeapAccessCallees;
 import com.oracle.svm.core.hub.DynamicHub;
+import com.oracle.svm.core.image.ImageHeapLayoutInfo;
 import com.oracle.svm.core.image.ImageHeapLayouter;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.imagelayer.LayeredImageOptions;
@@ -167,6 +168,7 @@ import com.oracle.svm.core.meta.MethodPointer;
 import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.option.OptionClassFilter;
 import com.oracle.svm.core.option.RuntimeOptionValues;
+import com.oracle.svm.core.option.SharedLayerRuntimeOptionsValues;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.snippets.SnippetRuntime;
 import com.oracle.svm.core.util.ExitStatus;
@@ -320,6 +322,7 @@ import jdk.graal.compiler.replacements.NodeIntrinsificationProvider;
 import jdk.graal.compiler.replacements.TargetGraphBuilderPlugins;
 import jdk.graal.compiler.word.WordOperationPlugin;
 import jdk.graal.compiler.word.WordTypes;
+import jdk.internal.loader.ClassLoaders;
 import jdk.vm.ci.aarch64.AArch64;
 import jdk.vm.ci.amd64.AMD64;
 import jdk.vm.ci.code.CodeCacheProvider;
@@ -532,7 +535,11 @@ public class NativeImageGenerator {
             ImageSingletons.add(AnnotationExtractor.class, loader.classLoaderSupport.annotationExtractor);
             ImageSingletons.add(BuildArtifacts.class, new BuildArtifactsImpl());
             ImageSingletons.add(HostedOptionValues.class, hostedOptionValues);
-            ImageSingletons.add(RuntimeOptionValues.class, new RuntimeOptionValues(optionProvider.getRuntimeValues(), allOptionNames));
+            if (ImageLayerBuildingSupport.lastImageBuild()) {
+                ImageSingletons.add(RuntimeOptionValues.class, new RuntimeOptionValues(optionProvider.getRuntimeValues(), allOptionNames));
+            } else {
+                ImageSingletons.add(SharedLayerRuntimeOptionsValues.class, new SharedLayerRuntimeOptionsValues(optionProvider.getRuntimeValues(), allOptionNames));
+            }
             ImageSingletons.add(TemporaryBuildDirectoryProvider.class, tempDirectoryProvider);
 
             doRun(entryPoints, javaMainSupport, imageName, k, harnessSubstitutions);
@@ -636,7 +643,7 @@ public class NativeImageGenerator {
                  */
                 bb.cleanupAfterAnalysis();
             } catch (UnsupportedFeatureException ufe) {
-                throw FallbackFeature.reportAsFallback(ufe);
+                throw UserError.abort(ufe, "%s", ufe.getMessage());
             }
 
             var hConstantReflection = (HostedConstantReflectionProvider) runtimeConfiguration.getProviders().getConstantReflection();
@@ -695,14 +702,15 @@ public class NativeImageGenerator {
 
                         verifyAndSealShadowHeap(codeCache, debug, heap);
 
-                        buildNativeImageHeap(heap, codeCache);
+                        ImageHeapLayoutInfo heapLayout = buildNativeImageHeap(heap, codeCache);
+                        BuildPhaseProvider.markHeapLayoutFinished();
 
                         AfterHeapLayoutAccessImpl config = new AfterHeapLayoutAccessImpl(featureHandler, loader, heap, hMetaAccess, debug);
                         featureHandler.forEachFeature(feature -> feature.afterHeapLayout(config));
 
-                        createAbstractImage(k, hostedEntryPoints, heap, hMetaAccess, codeCache);
+                        createAbstractImage(k, hostedEntryPoints, heap, heapLayout, hMetaAccess, codeCache);
 
-                        FeatureImpl.AfterAbstractImageCreationAccessImpl access = new FeatureImpl.AfterAbstractImageCreationAccessImpl(featureHandler, loader, debug, image,
+                        FeatureImpl.AfterAbstractImageCreationAccessImpl access = new FeatureImpl.AfterAbstractImageCreationAccessImpl(featureHandler, loader, hMetaAccess, debug, image,
                                         runtimeConfiguration.getBackendForNormalMethod());
                         featureHandler.forEachGraalFeature(feature -> feature.afterAbstractImageCreation(access));
 
@@ -750,7 +758,7 @@ public class NativeImageGenerator {
                     return;
                 }
 
-                AfterImageWriteAccessImpl afterConfig = new AfterImageWriteAccessImpl(featureHandler, loader, hUniverse, inv, tmpDir, image.getImageKind(), debug);
+                AfterImageWriteAccessImpl afterConfig = new AfterImageWriteAccessImpl(featureHandler, loader, hUniverse, inv, tmpDir, image.getImageKind(), hMetaAccess, debug);
                 featureHandler.forEachFeature(feature -> feature.afterImageWrite(afterConfig));
                 try {
                     // size changes during linking and afterConfig phase
@@ -790,7 +798,7 @@ public class NativeImageGenerator {
         bb.getUniverse().getHeapScanner().seal();
     }
 
-    protected void buildNativeImageHeap(NativeImageHeap heap, NativeImageCodeCache codeCache) {
+    protected ImageHeapLayoutInfo buildNativeImageHeap(NativeImageHeap heap, NativeImageCodeCache codeCache) {
         // Start building the model of the native image heap.
         heap.addInitialObjects();
         // Then build the model of the code cache, which can
@@ -798,10 +806,19 @@ public class NativeImageGenerator {
         codeCache.addConstantsToHeap();
         // Finish building the model of the native image heap.
         heap.addTrailingObjects();
+
+        ImageHeapLayoutInfo layoutInfo = layoutNativeImageHeap(heap);
+        assert !heap.hasDuplicateObjects() : "heap.getObjects() must not contain any duplicates";
+        return layoutInfo;
     }
 
-    protected void createAbstractImage(NativeImageKind k, List<HostedMethod> hostedEntryPoints, NativeImageHeap heap, HostedMetaAccess hMetaAccess, NativeImageCodeCache codeCache) {
-        this.image = AbstractImage.create(k, hUniverse, hMetaAccess, nativeLibraries, heap, codeCache, hostedEntryPoints, loader.getClassLoader());
+    protected ImageHeapLayoutInfo layoutNativeImageHeap(NativeImageHeap heap) {
+        return heap.getLayouter().layout(heap, SubstrateOptions.getPageSize(), ImageHeapLayouter.ImageHeapLayouterCallback.NONE);
+    }
+
+    protected void createAbstractImage(NativeImageKind k, List<HostedMethod> hostedEntryPoints, NativeImageHeap heap, ImageHeapLayoutInfo heapLayout,
+                    HostedMetaAccess hMetaAccess, NativeImageCodeCache codeCache) {
+        this.image = AbstractImage.create(k, hUniverse, hMetaAccess, nativeLibraries, heap, heapLayout, codeCache, hostedEntryPoints, loader.getClassLoader());
     }
 
     protected boolean runPointsToAnalysis(String imageName, OptionValues options, DebugContext debug) {
@@ -884,7 +901,7 @@ public class NativeImageGenerator {
 
                 bb.afterAnalysis();
             } catch (UnsupportedFeatureException ufe) {
-                throw FallbackFeature.reportAsFallback(ufe);
+                throw UserError.abort(ufe, "%s", ufe.getMessage());
             }
         } catch (InterruptedException ie) {
             throw new InterruptImageBuilding();
@@ -977,7 +994,7 @@ public class NativeImageGenerator {
                 /* Init the BuildPhaseProvider before any features need it. */
                 BuildPhaseProvider.init();
 
-                featureHandler.registerFeatures(loader, debug);
+                featureHandler.registerFeatures(loader, originalMetaAccess, debug);
                 BuildPhaseProvider.markFeatureRegistrationFinished();
 
                 loader.initBuilderModules();
@@ -1161,9 +1178,13 @@ public class NativeImageGenerator {
                  * thrown on the main thread.
                  */
                 reporter.printEpilog(Optional.of(imageName), Optional.of(NativeImageGenerator.this), loader, NativeImageGeneratorRunner.BuildOutcome.FAILED, Optional.of(throwable), options);
-                System.exit(ExitStatus.BUILDER_ERROR.getValue());
+                exitBuilderWithError();
             }
         });
+    }
+
+    public static void exitBuilderWithError() {
+        System.exit(ExitStatus.BUILDER_ERROR.getValue());
     }
 
     protected void registerEntryPointStubs(Map<Method, CEntryPointData> entryPoints) {
@@ -1297,6 +1318,10 @@ public class NativeImageGenerator {
         bb.addRootClass(CFunctionPointer[].class, false, false).registerAsInstantiated(rootClassReason);
         bb.addRootClass(PointerBase[].class, false, false).registerAsInstantiated(rootClassReason);
 
+        bb.addRootClass(ClassLoaders.appClassLoader().getClass(), false, false).registerAsInstantiated(rootClassReason);
+        bb.addRootClass(ClassLoaders.platformClassLoader().getClass(), false, false).registerAsInstantiated(rootClassReason);
+        bb.addRootClass(BootLoaderSupport.getBootLoader().getClass(), false, false).registerAsInstantiated(rootClassReason);
+
         /* MethodRef can conceal use of MethodPointer and MethodOffset until after analysis. */
         bb.addRootClass(MethodPointer.class, false, true);
         if (SubstrateOptions.useRelativeCodePointers()) {
@@ -1395,9 +1420,7 @@ public class NativeImageGenerator {
         ConstantReflectionProvider constantReflectionProvider = aProviders.getConstantReflection();
         WordTypes wordTypes = aProviders.getWordTypes();
         String reason = "included by " + SubstrateOptionsParser.commandArgument(LayerCreate, "");
-        ClassInclusionPolicy classInclusionPolicy = ImageLayerBuildingSupport.buildingSharedLayer()
-                        ? new ClassInclusionPolicy.SharedLayerImageInclusionPolicy(reason)
-                        : new ClassInclusionPolicy.DefaultAllInclusionPolicy(reason);
+        ClassInclusionPolicy classInclusionPolicy = ImageLayerBuildingSupport.buildingSharedLayer() ? new ClassInclusionPolicy.SharedLayerImageInclusionPolicy(reason) : null;
         if (PointstoOptions.UseExperimentalReachabilityAnalysis.getValue(options)) {
             ReachabilityMethodProcessingHandler reachabilityMethodProcessingHandler;
             if (PointstoOptions.UseReachabilityMethodSummaries.getValue(options)) {

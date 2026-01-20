@@ -46,10 +46,11 @@ import jdk.graal.compiler.phases.util.Providers;
 import jdk.graal.compiler.truffle.KnownTruffleTypes;
 import jdk.graal.compiler.truffle.nodes.ObjectLocationIdentity;
 import jdk.graal.compiler.truffle.phases.DeoptimizeOnExceptionPhase;
-import jdk.graal.compiler.truffle.phases.PrePartialEvaluationSuite;
+import jdk.graal.compiler.truffle.phases.TruffleEarlyEscapeAnalysisPhase;
 import jdk.vm.ci.code.Architecture;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
 
 /**
  * Truffle specific runtime compilation feature enriching runtime-compilation with truffle specific
@@ -72,12 +73,38 @@ public final class TruffleRuntimeCompiledMethodSupport extends RuntimeCompiledMe
     }
 
     @Override
-    public void applyParsingHookPhases(DebugContext debug, StructuredGraph graph, Function<ResolvedJavaMethod, StructuredGraph> buildGraph, CanonicalizerPhase canonicalizer, Providers providers) {
-        if (!ImageSingletons.contains(KnownTruffleTypes.class)) {
-            return;
-        }
+    public void applyParsingHookPhases(DebugContext debug, StructuredGraph graph, Function<ResolvedJavaMethod, StructuredGraph> graphBuilder,
+                    Function<ResolvedJavaMethod, ResolvedJavaMethod> targetResolver, CanonicalizerPhase canonicalizer, Providers providers) {
+        /*
+         * Keep this in sync with CachingPEGraphDecoder#createGraph.
+         */
         KnownTruffleTypes truffleTypes = ImageSingletons.lookup(KnownTruffleTypes.class);
-        new PrePartialEvaluationSuite(debug.getOptions(), truffleTypes, providers, canonicalizer, buildGraph, OriginalClassProvider::getOriginalType).apply(graph, providers);
+        /*
+         * The annotation APIs in SubstrateVM unfortunately operate on the unwrapped Java type, so
+         * we need to unwrap it for the early inline type to match.
+         */
+        ResolvedJavaType earlyInline = OriginalClassProvider.getOriginalType(truffleTypes.CompilerDirectives_EarlyInline);
+        new SubstrateEarlyInliningPhase(debug.getOptions(), canonicalizer, providers, graphBuilder, targetResolver, earlyInline).apply(graph, providers);
+
+        /*
+         * TruffleEarlyEscapeAnalysisPhase must be run later in
+         * TruffleRuntimeCompiledMethodSupport#optimizeBeforeEncoding. Running it here would lead to
+         * InlinedInvokeArgumentNodes preventing objects which "escape" into inlined methods from
+         * being virtualized.
+         */
+    }
+
+    @Override
+    protected void optimizeBeforeEncoding(StructuredGraph graph, Providers providers, CanonicalizerPhase canonicalizer) {
+        KnownTruffleTypes truffleTypes = ImageSingletons.lookup(KnownTruffleTypes.class);
+        ResolvedJavaType earlyEscapeAnalysisType = OriginalClassProvider.getOriginalType(truffleTypes.CompilerDirectives_EarlyEscapeAnalysis);
+        /*
+         * TruffleEarlyEscapeAnalysisPhase must run after analysis where InlinedInvokeArgumentNodes
+         * are already removed as they would force materialization.
+         */
+        new TruffleEarlyEscapeAnalysisPhase(canonicalizer, graph.getDebug().getOptions(), earlyEscapeAnalysisType).apply(graph, providers);
+
+        super.optimizeBeforeEncoding(graph, providers, canonicalizer);
     }
 
     @SuppressWarnings("javadoc")

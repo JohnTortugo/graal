@@ -738,14 +738,26 @@ public final class RuntimeCompilationFeature implements Feature, RuntimeCompilat
             try {
                 StructuredGraph graph = buildRuntimeGraph(bb, debug, method);
                 try (DebugContext.Scope _ = debug.scope("RuntimeCompile", graph, method)) {
-                    Function<ResolvedJavaMethod, StructuredGraph> buildGraph = (m) -> {
+                    /*
+                     * Note this graph creation does not use AnalysisMethod#ensureGraphParsed to
+                     * generate the runtime compiled graph. This means that the graph being used for
+                     * inlining here is different than the graph used for the standalone method.
+                     * This is intentional and covers a niche use case for Truffle.
+                     */
+                    Function<ResolvedJavaMethod, StructuredGraph> graphBuilder = (m) -> {
+                        assert SubstrateCompilationDirectives.isRuntimeCompiledMethod(m) : m;
                         return buildRuntimeGraph(bb, debug, (AnalysisMethod) m);
+                    };
+                    Function<ResolvedJavaMethod, ResolvedJavaMethod> targetResolver = (m) -> {
+                        AnalysisMethod aMethod = (AnalysisMethod) m;
+                        assert aMethod.isOriginalMethod() : aMethod;
+                        return getStubRuntimeVersion(aMethod);
                     };
 
                     CanonicalizerPhase canonicalizer = CanonicalizerPhase.create();
                     canonicalizer.apply(graph, analysisProviders);
 
-                    RuntimeCompiledMethodSupport.singleton().applyParsingHookPhases(debug, graph, buildGraph, canonicalizer, analysisProviders);
+                    RuntimeCompiledMethodSupport.singleton().applyParsingHookPhases(debug, graph, graphBuilder, targetResolver, canonicalizer, analysisProviders);
 
                     if (deoptimizeOnExceptionPredicate != null) {
                         var deoptOnExceptionPhase = RuntimeCompiledMethodSupport.singleton().getDeoptOnExceptionPhase(deoptimizeOnExceptionPredicate);
@@ -837,7 +849,7 @@ public final class RuntimeCompilationFeature implements Feature, RuntimeCompilat
                  * We intentionally do not call getFullDeoptVersion because we want to wait until
                  * all deopt entries are registered before triggering the flow update.
                  */
-                Collection<ResolvedJavaMethod> recomputeMethods = DeoptimizationUtils.registerDeoptEntries(graph, registeredRuntimeCompilations.contains(origMethod),
+                Iterable<ResolvedJavaMethod> recomputeMethods = DeoptimizationUtils.registerDeoptEntries(graph, registeredRuntimeCompilations.contains(origMethod),
                                 (deoptEntryMethod -> ((PointsToAnalysisMethod) deoptEntryMethod).getOrCreateMultiMethod(DEOPT_TARGET_METHOD)));
 
                 /*

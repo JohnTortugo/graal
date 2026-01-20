@@ -634,6 +634,12 @@ public final class EspressoOptions {
                     usageSyntax = "<nativeBackend>") //
     public static final OptionKey<String> NativeBackend = new OptionKey<>("");
 
+    @Option(help = "NativeMemory used by Espresso. Can only be specified with no-native backend where memory can be fully virtualized.", //
+                    category = OptionCategory.EXPERT,  //
+                    stability = OptionStability.EXPERIMENTAL, //
+                    usageSyntax = "<nativeMemory>") //
+    public static final OptionKey<String> NativeMemory = new OptionKey<>("");
+
     @Option(help = "Enable use of a custom Espresso implementation of boot libraries, which allows for not entering native code.\\n" +
                     "Will be automatically enabled if there is NO native access.\\n" +
                     "For example, this will replace the usual 'libjava'. Missing implementations will thus fail with 'UnsatifiedLinkError'.", //
@@ -641,6 +647,12 @@ public final class EspressoOptions {
                     stability = OptionStability.EXPERIMENTAL, //
                     usageSyntax = "true|false") //
     public static final OptionKey<Boolean> UseEspressoLibs = new OptionKey<>(false);
+
+    @Option(help = "Whether to perform bounds checks on array accesses via Unsafe!", //
+                    category = OptionCategory.EXPERT, //
+                    stability = OptionStability.EXPERIMENTAL, //
+                    usageSyntax = "true|false") //
+    public static final OptionKey<Boolean> CheckUnsafeArrayBounds = new OptionKey<>(false);
 
     @Option(help = "Enables the signal API (sun.misc.Signal or jdk.internal.misc.Signal).", //
                     category = OptionCategory.EXPERT, //

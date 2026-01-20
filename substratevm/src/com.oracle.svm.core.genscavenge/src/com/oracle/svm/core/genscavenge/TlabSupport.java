@@ -59,7 +59,7 @@ import com.oracle.svm.core.util.UnsignedUtils;
 import com.oracle.svm.core.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
-import jdk.graal.compiler.word.Word;
+import org.graalvm.word.impl.Word;
 
 /**
  * Provides methods for initializing, calculating the size and retiring TLABs used in
@@ -395,7 +395,7 @@ public class TlabSupport {
         UnsignedWord allocatedAvg = Word.unsigned((long) AdaptiveWeightedAverageStruct.getAverage(allocatedBytesAvg.getAddress(thread)));
         UnsignedWord newSize = allocatedAvg.unsignedDivide(targetRefills);
 
-        long minTlabSize = TlabOptionCache.singleton().getMinTlabSize();
+        long minTlabSize = TlabOptionCache.getMinTlabSize();
         newSize = UnsignedUtils.clamp(newSize, Word.unsigned(minTlabSize), maxSize());
         UnsignedWord alignedNewSize = Word.unsigned(ConfigurationValues.getObjectLayout().alignUp(newSize.rawValue()));
 
@@ -437,7 +437,7 @@ public class TlabSupport {
         assert ConfigurationValues.getObjectLayout().isAligned(allocationSize);
 
         UnsignedWord sizeWithReserve = allocationSize.add(getFillerObjectSize());
-        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.singleton().getMinTlabSize());
+        UnsignedWord minTlabSize = Word.unsigned(TlabOptionCache.getMinTlabSize());
         return UnsignedUtils.max(sizeWithReserve, minTlabSize);
     }
 

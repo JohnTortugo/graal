@@ -29,7 +29,6 @@ import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideE
 
 import org.graalvm.word.UnsignedWord;
 
-import com.oracle.svm.core.SubstrateGCOptions;
 import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.genscavenge.HeapImpl;
 import com.oracle.svm.core.genscavenge.HeapParameters;
@@ -44,7 +43,7 @@ import com.oracle.svm.core.stack.StackOverflowCheck;
 import com.oracle.svm.core.thread.ContinuationSupport;
 
 import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;
-import jdk.graal.compiler.word.Word;
+import org.graalvm.word.impl.Word;
 
 /**
  * This class contains the {@link SubstrateForeignCallTarget}s for the allocation slow path. These
@@ -87,11 +86,6 @@ public class GenScavengeAllocationSupport implements GCAllocationSupport {
     @Override
     public ForeignCallDescriptor getNewPodInstanceStub() {
         return SLOW_NEW_POD_INSTANCE;
-    }
-
-    @Override
-    public boolean useTLAB() {
-        return SubstrateGCOptions.UseTLAB.getValue();
     }
 
     @Override

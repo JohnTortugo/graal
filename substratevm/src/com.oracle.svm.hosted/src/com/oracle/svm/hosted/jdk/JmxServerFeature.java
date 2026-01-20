@@ -28,11 +28,11 @@ package com.oracle.svm.hosted.jdk;
 
 import java.lang.management.PlatformManagedObject;
 import java.util.Map;
-import java.util.Set;
 
 import javax.management.MBeanServer;
 import javax.management.remote.JMXServiceURL;
 
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.dynamicaccess.AccessCondition;
 
@@ -48,7 +48,6 @@ import com.oracle.svm.core.jdk.management.ManagementAgentStartupHook;
 import com.oracle.svm.core.jdk.management.ManagementSupport;
 import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.Independent;
 import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.hosted.FeatureImpl.BeforeAnalysisAccessImpl;
 import com.oracle.svm.hosted.reflect.proxy.ProxyRegistry;
@@ -58,7 +57,7 @@ import com.oracle.svm.util.dynamicaccess.JVMCIRuntimeReflection;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
 @AutomaticallyRegisteredFeature
-@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = SingleLayer.class, layeredInstallationKind = Independent.class)
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = SingleLayer.class)
 public class JmxServerFeature implements InternalFeature {
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {
@@ -117,7 +116,7 @@ public class JmxServerFeature implements InternalFeature {
      * </ul>
      */
     private static void configureReflection(BeforeAnalysisAccessImpl access) {
-        Set<PlatformManagedObject> platformManagedObjects = ManagementSupport.getSingleton().getPlatformManagedObjects();
+        EconomicSet<PlatformManagedObject> platformManagedObjects = ManagementSupport.getSingleton().getPlatformManagedObjects();
         for (PlatformManagedObject p : platformManagedObjects) {
             /*
              * The platformManagedObjects list contains some PlatformManagedObjectSupplier objects

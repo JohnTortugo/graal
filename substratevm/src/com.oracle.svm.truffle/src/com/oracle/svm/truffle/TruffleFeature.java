@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2022, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -100,6 +100,7 @@ import java.util.function.ToLongBiFunction;
 import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
 
+import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Pair;
 import org.graalvm.nativeimage.AnnotationAccess;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -221,7 +222,6 @@ public class TruffleFeature implements InternalFeature {
 
         @Option(help = "No longer has any effect", deprecated = true)//
         static final HostedOptionKey<Boolean> TruffleInlineDuringParsing = new HostedOptionKey<>(true);
-
     }
 
     public static final class IsEnabled implements BooleanSupplier {
@@ -231,16 +231,16 @@ public class TruffleFeature implements InternalFeature {
         }
     }
 
-    private final Set<ResolvedJavaMethod> blocklistMethods;
-    private final Set<ResolvedJavaMethod> tempTargetAllowlistMethods;
-    private final Set<ResolvedJavaMethod> warnMethods;
+    private final EconomicSet<ResolvedJavaMethod> blocklistMethods;
+    private final EconomicSet<ResolvedJavaMethod> tempTargetAllowlistMethods;
+    private final EconomicSet<ResolvedJavaMethod> warnMethods;
     private final Set<Pair<ResolvedJavaMethod, String>> neverPartOfCompilationViolations;
     Set<AnalysisMethod> runtimeCompiledMethods;
 
     public TruffleFeature() {
-        blocklistMethods = new HashSet<>();
-        tempTargetAllowlistMethods = new HashSet<>();
-        warnMethods = new HashSet<>();
+        blocklistMethods = EconomicSet.create();
+        tempTargetAllowlistMethods = EconomicSet.create();
+        warnMethods = EconomicSet.create();
         neverPartOfCompilationViolations = ConcurrentHashMap.newKeySet();
     }
 
@@ -838,9 +838,11 @@ public class TruffleFeature implements InternalFeature {
             } else {
                 method = clazz.getDeclaredMethod(name, parameterTypes);
             }
-            if (!blocklistMethods.remove(metaAccess.lookupJavaMethod(method))) {
+            ResolvedJavaMethod m = metaAccess.lookupJavaMethod(method);
+            if (!blocklistMethods.contains(m)) {
                 throw VMError.shouldNotReachHereUnexpectedInput(method); // ExcludeFromJacocoGeneratedReport
             }
+            blocklistMethods.remove(m);
         } catch (NoSuchMethodException ex) {
             throw VMError.shouldNotReachHere(ex);
         }
@@ -906,7 +908,7 @@ public class TruffleFeature implements InternalFeature {
             }
         }
 
-        Set<RuntimeCompilationCandidate> warnViolations = new HashSet<>();
+        EconomicSet<RuntimeCompilationCandidate> warnViolations = EconomicSet.create();
         for (RuntimeCompilationCandidate node : runtimeCompilation.getAllRuntimeCompilationCandidates()) {
             var method = node.getImplementationMethod();
             if (warnMethods.contains(method)) {
@@ -959,7 +961,7 @@ public class TruffleFeature implements InternalFeature {
             Optional<? extends ResolvedJavaType> optionalFrameType = ((FeatureImpl.BeforeCompilationAccessImpl) config).getMetaAccess().optionalLookupJavaType(Frame.class);
             if (optionalFrameType.isPresent()) {
                 HostedType frameType = (HostedType) optionalFrameType.get();
-                Set<HostedType> implementations = new HashSet<>();
+                Set<HostedType> implementations = new HashSet<>(); // noEconomicSet(streaming)
                 collectImplementations(frameType, implementations);
 
                 if (implementations.size() > 1) {
@@ -968,8 +970,8 @@ public class TruffleFeature implements InternalFeature {
                                     Frame.class.getTypeName(), SubstrateOptionsParser.commandArgument(Options.TruffleCheckFrameImplementation, "-"),
                                     StringUtil.joinSingleQuoted(implementations.stream().map(m -> m.toJavaName(true)).toArray(String[]::new)));
                 } else {
-                    assert implementations.isEmpty() || implementations.iterator().next().equals(frameType.getSingleImplementor()) : formatSingleImplementorError(implementations,
-                                    frameType.getSingleImplementor());
+                    assert implementations.isEmpty() || frameType.getSingleImplementor() == null ||
+                                    implementations.iterator().next().equals(frameType.getSingleImplementor()) : formatSingleImplementorError(implementations, frameType.getSingleImplementor());
                 }
             }
         }
@@ -1058,7 +1060,7 @@ public class TruffleFeature implements InternalFeature {
     }
 
     private static void printStaticTruffleBoundaries(CallTreeInfo treeInfo) {
-        HashSet<ResolvedJavaMethod> foundBoundaries = new HashSet<>();
+        EconomicSet<ResolvedJavaMethod> foundBoundaries = EconomicSet.create();
         int callSiteCount = 0;
         int calleeCount = 0;
         for (RuntimeCompiledMethod runtimeCompiledMethod : treeInfo.runtimeCompilations()) {
@@ -1087,7 +1089,15 @@ public class TruffleFeature implements InternalFeature {
          * TruffleCommunityCompilerConfiguration.
          */
         if (hosted && HostInliningPhase.Options.TruffleHostInlining.getValue(HostedOptionValues.singleton()) && suites.getHighTier() instanceof HighTier) {
-            suites.getHighTier().prependPhase(new SubstrateHostInliningPhase(CanonicalizerPhase.create()));
+            SubstrateHostInliningPhase hostInliningPhase = new SubstrateHostInliningPhase(CanonicalizerPhase.create());
+            var position = suites.getHighTier().findPhase(SubstrateOutlineBytecodeHandlerPhase.class);
+            if (position != null) {
+                // Insert after SubstrateOutlineBytecodeHandlerPhase to allow outlining of the
+                // bytecode handler invocations
+                position.add(hostInliningPhase);
+            } else {
+                suites.getHighTier().prependPhase(hostInliningPhase);
+            }
         }
         /*
          * On HotSpot, the InsertGuardFencesPhase is inserted into the mid-tier depending on the
