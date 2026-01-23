@@ -102,6 +102,7 @@ import com.oracle.svm.driver.launcher.ContainerSupport;
 import com.oracle.svm.driver.metainf.MetaInfFileType;
 import com.oracle.svm.driver.metainf.NativeImageMetaInfResourceProcessor;
 import com.oracle.svm.driver.metainf.NativeImageMetaInfWalker;
+import com.oracle.svm.hosted.CommonPoolUncaughtExceptionHandler;
 import com.oracle.svm.hosted.NativeImageGeneratorRunner;
 import com.oracle.svm.hosted.NativeImageSystemClassLoader;
 import com.oracle.svm.hosted.util.JDKArgsUtils;
@@ -117,9 +118,9 @@ public class NativeImage {
     private static final String DEFAULT_GENERATOR_CLASS_NAME = NativeImageGeneratorRunner.class.getName();
     private static final String DEFAULT_GENERATOR_MODULE_NAME = NativeImageGeneratorRunner.class.getModule().getName();
 
-    private static final String CUSTOM_SYSTEM_CLASS_LOADER = NativeImageSystemClassLoader.class.getCanonicalName();
-
-    static final boolean IS_AOT = Boolean.getBoolean("com.oracle.graalvm.isaot");
+    private static final String CUSTOM_SYSTEM_CLASS_LOADER = NativeImageSystemClassLoader.class.getName();
+    private static final String CUSTOM_COMMON_FORK_JOIN_POOL_THREAD_FACTORY = NativeImageSystemClassLoader.NativeImageForkJoinWorkerThreadFactory.class.getName();
+    private static final String CUSTOM_COMMON_FORK_JOIN_POOL_EXCEPTION_HANDLER = CommonPoolUncaughtExceptionHandler.class.getName();
 
     static final String platform = getPlatform();
 
@@ -390,7 +391,7 @@ public class NativeImage {
             if (rootDir != null) {
                 this.rootDir = rootDir;
             } else {
-                if (IS_AOT) {
+                if (ImageInfo.inImageRuntimeCode()) {
                     Path executablePath = Paths.get(ProcessProperties.getExecutableName());
                     Path binDir = executablePath.getParent();
                     Path rootDirCandidate = binDir.getParent();
@@ -859,6 +860,8 @@ public class NativeImage {
         addImageBuilderJavaArgs("-Dorg.graalvm.version=" + graalvmVersion);
         addImageBuilderJavaArgs("-Dcom.oracle.graalvm.isaot=true");
         addImageBuilderJavaArgs("-Djava.system.class.loader=" + CUSTOM_SYSTEM_CLASS_LOADER);
+        addImageBuilderJavaArgs("-Djava.util.concurrent.ForkJoinPool.common.exceptionHandler=" + CUSTOM_COMMON_FORK_JOIN_POOL_EXCEPTION_HANDLER);
+        addImageBuilderJavaArgs("-Djava.util.concurrent.ForkJoinPool.common.threadFactory=" + CUSTOM_COMMON_FORK_JOIN_POOL_THREAD_FACTORY);
 
         addImageBuilderJavaArgs("-D" + ImageInfo.PROPERTY_IMAGE_CODE_KEY + "=" + ImageInfo.PROPERTY_IMAGE_CODE_VALUE_BUILDTIME);
 
@@ -1753,7 +1756,9 @@ public class NativeImage {
             p = pb.start();
             if (useBundle()) {
                 ProcessOutputTransformer.attach(p.getInputStream(), bundleSupport::cleanupBuilderOutput, System.out);
+                // Checkstyle: allow System.err (stderr support)
                 ProcessOutputTransformer.attach(p.getErrorStream(), bundleSupport::cleanupBuilderOutput, System.err);
+                // Checkstyle: disallow System.err
             }
             imageBuilderPid = p.pid();
             return p.waitFor();
@@ -1932,15 +1937,15 @@ public class NativeImage {
         } catch (NativeImageError e) {
             String message = e.getMessage();
             if (message != null) {
-                NativeImage.show(System.err::println, "Error: " + message);
+                NativeImage.show(System.out::println, "Error: " + message);
             }
             Throwable cause = e.getCause();
             while (cause != null) {
-                NativeImage.show(System.err::println, "Caused by: " + cause);
+                NativeImage.show(System.out::println, "Caused by: " + cause);
                 cause = cause.getCause();
             }
             if (config.getBuildArgs().contains("--verbose")) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
             }
             System.exit(e.exitCode);
         }

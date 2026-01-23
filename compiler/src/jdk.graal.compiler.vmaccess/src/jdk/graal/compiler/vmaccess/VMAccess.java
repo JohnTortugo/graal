@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,7 +26,9 @@ package jdk.graal.compiler.vmaccess;
 
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
+import java.net.URL;
 import java.util.List;
+import java.util.stream.Stream;
 
 import jdk.graal.compiler.phases.util.Providers;
 import jdk.vm.ci.meta.Constant;
@@ -146,6 +148,45 @@ public interface VMAccess {
     ResolvedJavaType lookupBootClassLoaderType(String name);
 
     /**
+     * Gets the {@link ResolvedJavaModule} of the given {@link ResolvedJavaType}.
+     *
+     * If {@code type.isArray()}, this method returns the {@link ResolvedJavaModule} for
+     * {@code type.getElementalType()}. for the element type. If this class represents a primitive
+     * type or void, then the {@link ResolvedJavaModule} object for the {@code java.base} module is
+     * returned.
+     *
+     * If this class is in an unnamed module then the {@linkplain ClassLoader#getUnnamedModule()
+     * unnamed module} of the class loader for {@code type} is returned.
+     *
+     * This method never returns {@code null}.
+     */
+    ResolvedJavaModule getModule(ResolvedJavaType type);
+
+    /**
+     * Gets the package enclosing {@code type} or null if {@code type} represents an array type, a
+     * primitive type or void.
+     */
+    ResolvedJavaPackage getPackage(ResolvedJavaType type);
+
+    /**
+     * Returns a stream of the packages defined to the boot loader. See
+     * {@code jdk.internal.loader.BootLoader#packages()}.
+     */
+    Stream<ResolvedJavaPackage> bootLoaderPackages();
+
+    /**
+     * Returns the boot layer. See {@link java.lang.ModuleLayer#boot()}.
+     */
+    ResolvedJavaModuleLayer bootModuleLayer();
+
+    /**
+     * Returns the location of the code source associated with this {@link ResolvedJavaType}.
+     *
+     * @return the location (URL), or {@code null} if no URL was supplied during construction.
+     */
+    URL getCodeSourceLocation(ResolvedJavaType type);
+
+    /**
      * A builder can be used to set a JVM context up and observe it through a {@link VMAccess}.
      * <p>
      * The {@link java.util.ServiceLoader} API can be used to locate such a builder. Implementations
@@ -169,8 +210,20 @@ public interface VMAccess {
         /**
          * Sets the list of modules to resolve in addition to the initial module. This has the
          * semantics of the {@code --add-modules} java launcher option.
+         * <p>
+         * This appends to the module(s) previously added by this method or {@link #addModule}. No
+         * checking for duplicates is performed.
          */
         Builder addModules(List<String> modules);
+
+        /**
+         * Sets the list of modules to resolve in addition to the initial module. This has the
+         * semantics of the {@code --add-modules} java launcher option.
+         * <p>
+         * This appends to the module(s) previously added by this method or {@link #addModules}. No
+         * checking for duplicates is performed.
+         */
+        Builder addModule(String module);
 
         /**
          * Sets the assertion status for application classes.

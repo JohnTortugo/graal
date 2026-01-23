@@ -844,7 +844,7 @@ suite = {
                 "compiler:GRAAL_PROCESSOR",
                 "SVM_PROCESSOR",
             ],
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyle": "com.oracle.svm.core",
             "workingSets": "SVM",
             # disable coverage as long it cannot run on JDK latest [GR-59586]
             "jacoco" : "exclude",
@@ -1101,6 +1101,31 @@ suite = {
                 "SVM_PROCESSOR",
             ],
             "javaCompliance" : "21+",
+            "jacoco" : "exclude",
+        },
+
+        "com.oracle.svm.libjvm": {
+            "subDir": "src",
+            "sourceDirs": [
+                "src",
+                "resources"
+            ],
+            "dependencies": [
+                "com.oracle.svm.core",
+            ],
+            "requiresConcealed" : {
+                "jdk.internal.vm.ci" : [
+                    "jdk.vm.ci.meta",
+                    "jdk.vm.ci.meta.annotation",
+                ],
+            },
+            "checkstyle": "com.oracle.svm.hosted",
+            "workingSets": "SVM",
+            "annotationProcessors": [
+                "compiler:GRAAL_PROCESSOR",
+                "SVM_PROCESSOR",
+            ],
+            "javaCompliance" : "24+",
             "jacoco" : "exclude",
         },
 
@@ -1638,7 +1663,7 @@ suite = {
                     "jdk.vm.ci.meta.annotation",
                 ],
             },
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyle": "com.oracle.svm.interpreter",
             "javaCompliance": "24+",
             "annotationProcessors": [
                 "compiler:GRAAL_PROCESSOR",
@@ -1670,7 +1695,7 @@ suite = {
                     "jdk.internal.misc", # Unsafe
                 ],
             },
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyleVersion" : "10.21.0",
             "javaCompliance": "24+",
             "annotationProcessors": [
                 "compiler:GRAAL_PROCESSOR",
@@ -1693,7 +1718,7 @@ suite = {
                     "jdk.vm.ci.meta.annotation",
                 ],
             },
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyle": "com.oracle.svm.interpreter",
             "javaCompliance": "24+",
             "annotationProcessors": [
                 "compiler:GRAAL_PROCESSOR",
@@ -1720,7 +1745,7 @@ suite = {
                     "jdk.internal.misc", # Signal
                 ],
             },
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyle": "com.oracle.svm.interpreter",
             "javaCompliance": "24+",
             "annotationProcessors": [
                 "substratevm:SVM_PROCESSOR",
@@ -1747,7 +1772,7 @@ suite = {
                     "jdk.internal.misc", # Signal
                 ],
             },
-            "checkstyle": "com.oracle.svm.hosted",
+            "checkstyle": "com.oracle.svm.interpreter",
             "javaCompliance": "24+",
             "annotationProcessors": [
                 "substratevm:SVM_PROCESSOR",
@@ -1805,6 +1830,7 @@ suite = {
                     """* to org.graalvm.nativeimage.base,
                             jdk.graal.compiler,
                             org.graalvm.nativeimage.driver,
+                            org.graalvm.nativeimage.libjvm,
                             org.graalvm.nativeimage.librarysupport,
                             org.graalvm.nativeimage.junitsupport,
                             org.graalvm.nativeimage.llvm,
@@ -2333,6 +2359,27 @@ suite = {
             },
         },
 
+        "SVM_LIBJVM" : {
+            "subDir": "src",
+            "description" : "SubstrateVM based libjvm",
+            "dependencies": [
+                "com.oracle.svm.libjvm",
+            ],
+            "distDependencies": [
+                "LIBRARY_SUPPORT",
+            ],
+            "moduleInfo" : {
+                "name" : "org.graalvm.nativeimage.libjvm",
+                "exports" : [
+                    "com.oracle.svm.libjvm.buildtime",
+                ],
+                "requires" : [
+                    "org.graalvm.nativeimage.builder",
+                ],
+            },
+            "maven": False,
+        },
+
         "NATIVE_IMAGE_BASE": {
             "subDir": "src",
             "description" : "Native Image base that can be shared by native image building and pointsto.",
@@ -2364,6 +2411,7 @@ suite = {
                            org.graalvm.nativeimage.configure,
                            org.graalvm.nativeimage.librarysupport,
                            org.graalvm.nativeimage.driver,
+                           org.graalvm.nativeimage.libjvm,
                            org.graalvm.nativeimage.llvm,
                            org.graalvm.nativeimage.agent.jvmtibase,
                            org.graalvm.nativeimage.agent.tracing,
