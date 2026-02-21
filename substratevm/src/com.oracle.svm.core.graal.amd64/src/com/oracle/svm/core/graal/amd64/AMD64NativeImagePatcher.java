@@ -32,10 +32,10 @@ import org.graalvm.nativeimage.Platforms;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.graal.code.NativeImagePatcher;
 import com.oracle.svm.core.graal.code.PatchConsumerFactory;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.asm.Assembler;
 import jdk.graal.compiler.asm.amd64.AMD64BaseAssembler.AddressDisplacementAnnotation;

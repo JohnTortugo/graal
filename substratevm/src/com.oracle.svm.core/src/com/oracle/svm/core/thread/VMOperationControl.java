@@ -39,7 +39,7 @@ import com.oracle.svm.core.Isolates;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateOptions.ConcealedOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.UnmanagedMemoryUtil;
 import com.oracle.svm.core.collections.RingBuffer;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
@@ -53,7 +53,7 @@ import com.oracle.svm.core.stack.StackOverflowCheck;
 import com.oracle.svm.core.thread.VMThreads.SafepointBehavior;
 import com.oracle.svm.core.thread.VMThreads.StatusSupport;
 import com.oracle.svm.core.util.TimeUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 

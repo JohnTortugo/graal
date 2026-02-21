@@ -130,7 +130,7 @@ public final class Target_sun_misc_Unsafe {
 
         byte[] bytes = data.unwrap(language);
         ObjectKlass hostKlass = (ObjectKlass) hostClass.getMirrorKlass(meta);
-        StaticObject pd = meta.HIDDEN_PROTECTION_DOMAIN.getMaybeHiddenObject(hostClass);
+        StaticObject pd = meta.java_lang_Class_0protectedDomain.getMaybeHiddenObject(hostClass);
         StaticObject[] patches = StaticObject.isNull(constantPoolPatches) ? null : constantPoolPatches.unwrap(language);
         // Inherit host class's protection domain.
         ClassRegistry.ClassDefinitionInfo info = new ClassRegistry.ClassDefinitionInfo(pd, hostKlass, patches);
@@ -232,7 +232,7 @@ public final class Target_sun_misc_Unsafe {
     @Substitution(hasReceiver = true, nameProvider = SharedUnsafeAppend0.class)
     public static long objectFieldOffset(@SuppressWarnings("unused") @JavaType(Unsafe.class) StaticObject self, @JavaType(java.lang.reflect.Field.class) StaticObject field,
                     @Inject Meta meta, @Inject EspressoLanguage language) {
-        Field target = Field.getReflectiveFieldRoot(field, meta);
+        Field target = Field.getVMField(field, meta);
         if (target.isStatic()) {
             meta.throwIllegalArgumentExceptionBoundary();
         }
@@ -664,7 +664,7 @@ public final class Target_sun_misc_Unsafe {
     @Substitution(hasReceiver = true, nameProvider = SharedUnsafeAppend0.class)
     public static long staticFieldOffset(@SuppressWarnings("unused") @JavaType(Unsafe.class) StaticObject self, @JavaType(java.lang.reflect.Field.class) StaticObject fieldMirror,
                     @Inject Meta meta, @Inject EspressoLanguage language) {
-        Field field = Field.getReflectiveFieldRoot(fieldMirror, meta);
+        Field field = Field.getVMField(fieldMirror, meta);
         if (!field.isStatic()) {
             meta.throwIllegalArgumentExceptionBoundary();
         }
@@ -683,7 +683,7 @@ public final class Target_sun_misc_Unsafe {
     public static @JavaType(Object.class) StaticObject staticFieldBase(@SuppressWarnings("unused") @JavaType(Unsafe.class) StaticObject self,
                     @JavaType(java.lang.reflect.Field.class) StaticObject field,
                     @Inject Meta meta) {
-        Field target = Field.getReflectiveFieldRoot(field, meta);
+        Field target = Field.getVMField(field, meta);
         if (!target.isStatic()) {
             meta.throwIllegalArgumentExceptionBoundary();
         }
@@ -777,7 +777,7 @@ public final class Target_sun_misc_Unsafe {
     }
 
     private static EspressoLock getParkLock(StaticObject thread, Meta meta) {
-        return (EspressoLock) meta.HIDDEN_THREAD_PARK_LOCK.getHiddenObject(thread);
+        return (EspressoLock) meta.java_lang_Thread_0parkLock.getHiddenObject(thread);
     }
 
     private static boolean parkReturnCondition(StaticObject thread, Meta meta) {
@@ -786,7 +786,7 @@ public final class Target_sun_misc_Unsafe {
     }
 
     private static boolean consumeUnparkSignal(StaticObject self, Meta meta) {
-        Field signals = meta.HIDDEN_THREAD_UNPARK_SIGNALS;
+        Field signals = meta.java_lang_Thread_0unparkSignals;
         return signals.getAndSetInt(self, 0) > 0;
     }
 
@@ -807,7 +807,7 @@ public final class Target_sun_misc_Unsafe {
         EspressoLock parkLock = getParkLock(thread, meta);
         parkLock.lock();
         try {
-            meta.HIDDEN_THREAD_UNPARK_SIGNALS.setInt(thread, 1, true);
+            meta.java_lang_Thread_0unparkSignals.setInt(thread, 1, true);
             parkLock.signal();
         } finally {
             parkLock.unlock();
@@ -4393,7 +4393,7 @@ public final class Target_sun_misc_Unsafe {
      * double-register addressing mode. When the object reference is null, the offset supplies an
      * absolute base address. If the object reference is a Java array, copying occurs within (or
      * from/to) the array at the given offset.
-     * 
+     *
      * @see NativeMemory#copyMemory(long, long, long)
      */
     @GenerateInline(false) // not available in substitutions

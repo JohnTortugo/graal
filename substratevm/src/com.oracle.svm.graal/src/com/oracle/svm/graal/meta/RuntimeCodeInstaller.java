@@ -36,7 +36,7 @@ import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.NonmovableArray;
 import com.oracle.svm.core.code.AbstractRuntimeCodeInstaller;
 import com.oracle.svm.core.code.CodeInfo;
@@ -66,7 +66,7 @@ import com.oracle.svm.core.meta.SubstrateObjectConstant;
 import com.oracle.svm.core.option.RuntimeOptionValues;
 import com.oracle.svm.core.os.CommittedMemoryProvider;
 import com.oracle.svm.core.util.UnsignedUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.code.CompilationResult;
 import jdk.graal.compiler.code.CompilationResult.CodeAnnotation;

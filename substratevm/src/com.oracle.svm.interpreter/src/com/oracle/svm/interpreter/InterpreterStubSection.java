@@ -25,7 +25,7 @@
 
 package com.oracle.svm.interpreter;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -48,7 +48,6 @@ import com.oracle.svm.core.AlwaysInline;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateTargetDescription;
-import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.c.CGlobalData;
 import com.oracle.svm.core.c.CGlobalDataFactory;
 import com.oracle.svm.core.config.ConfigurationValues;
@@ -60,15 +59,16 @@ import com.oracle.svm.core.handles.ThreadLocalHandles;
 import com.oracle.svm.core.heap.GCCause;
 import com.oracle.svm.core.heap.Heap;
 import com.oracle.svm.core.hub.DynamicHub;
-import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.jdk.UninterruptibleUtils;
 import com.oracle.svm.core.memory.NativeMemory;
 import com.oracle.svm.core.memory.NullableNativeMemory;
 import com.oracle.svm.core.nmt.NmtCategory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalObject;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.graal.meta.SubstrateInstalledCodeImpl;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.guest.staging.jdk.InternalVMMethod;
 import com.oracle.svm.hosted.image.AbstractImage;
 import com.oracle.svm.hosted.image.NativeImage;
 import com.oracle.svm.hosted.image.RelocatableBuffer;
@@ -220,6 +220,15 @@ public abstract class InterpreterStubSection {
         VMError.guarantee(interpreterUniverse != null);
 
         InterpreterResolvedJavaMethod interpreterMethod = (InterpreterResolvedJavaMethod) interpreterUniverse.getMethodForESTOffset(interpreterMethodESTOffset);
+        VMError.guarantee(interpreterMethod != null);
+
+        return enterHelper(interpreterMethod, enterData);
+    }
+
+    @Deoptimizer.DeoptStub(stubType = Deoptimizer.StubType.InterpreterEnterStub)
+    @NeverInline("needs ABI boundary")
+    @Uninterruptible(reason = REASON_REFERENCES_ON_STACK)
+    public static Pointer enterDirectInterpreterStub(InterpreterResolvedJavaMethod interpreterMethod, Pointer enterData) {
         VMError.guarantee(interpreterMethod != null);
 
         return enterHelper(interpreterMethod, enterData);

@@ -46,7 +46,7 @@ import com.oracle.svm.core.interpreter.InterpreterFrameSourceInfo;
 import com.oracle.svm.core.locks.VMMutex;
 import com.oracle.svm.core.meta.SubstrateObjectConstant;
 import com.oracle.svm.core.thread.VMThreads;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.interpreter.DebuggerSupport;
 import com.oracle.svm.interpreter.EspressoFrame;
 import com.oracle.svm.interpreter.InterpreterFrame;
@@ -1920,8 +1920,7 @@ public final class ResidentJDWP implements JDWP {
 
         static Result ofInvoke(boolean isVirtual, InterpreterResolvedJavaMethod method, Object... args) {
             try {
-                boolean isInvokeInterface = method.getDeclaringClass().isInterface();
-                return fromValue(InterpreterToVM.dispatchInvocation(method, args, isVirtual, false, false, isInvokeInterface, false));
+                return fromValue(InterpreterToVM.dispatchInvocation(method, args, isVirtual, false, false, false));
             } catch (SemanticJavaException e) {
                 return fromThrowable(e.getCause());
             } catch (StackOverflowError | OutOfMemoryError error) {

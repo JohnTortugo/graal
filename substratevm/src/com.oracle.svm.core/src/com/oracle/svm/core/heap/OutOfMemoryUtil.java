@@ -26,7 +26,7 @@ package com.oracle.svm.core.heap;
 
 import com.oracle.svm.core.SubstrateGCOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.VMInspectionOptions;
 import com.oracle.svm.core.headers.LibC;
 import com.oracle.svm.core.heap.dump.HeapDumpMetadata;
@@ -36,7 +36,7 @@ import com.oracle.svm.core.jdk.JDKUtils;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.stack.StackOverflowCheck;
 import com.oracle.svm.core.thread.VMOperation;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * This class must be used for {@link OutOfMemoryError}s that are thrown because the VM is out of

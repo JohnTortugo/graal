@@ -25,8 +25,8 @@
 package com.oracle.svm.hosted.image;
 
 import static com.oracle.svm.core.MissingRegistrationUtils.throwMissingRegistrationErrors;
-import static com.oracle.svm.core.util.VMError.shouldNotReachHere;
-import static com.oracle.svm.core.util.VMError.shouldNotReachHereUnexpectedInput;
+import static com.oracle.svm.shared.util.VMError.shouldNotReachHere;
+import static com.oracle.svm.shared.util.VMError.shouldNotReachHereUnexpectedInput;
 
 import java.io.PrintWriter;
 import java.lang.reflect.AccessibleObject;
@@ -49,6 +49,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import jdk.graal.compiler.util.EconomicHashMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Pair;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -66,7 +67,7 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.CompletionExecutor;
 import com.oracle.objectfile.ObjectFile;
-import com.oracle.svm.common.meta.MultiMethod;
+import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.code.CodeInfo;
@@ -92,7 +93,7 @@ import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.sampler.CallStackFrameMethodInfo;
 import com.oracle.svm.core.util.Counter;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.DeadlockWatchdog;
 import com.oracle.svm.hosted.NativeImageOptions;
 import com.oracle.svm.hosted.code.CodeSectionLayouter;
@@ -107,7 +108,7 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.reflect.ReflectionHostedSupport;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.code.CompilationResult;
@@ -129,7 +130,7 @@ import jdk.vm.ci.meta.VMConstant;
 
 public abstract class NativeImageCodeCache {
 
-    private final Map<Constant, Object> embeddedConstants = new HashMap<>();
+    private final Map<Constant, Object> embeddedConstants = new EconomicHashMap<>();
 
     public static class Options {
         @Option(help = "Verify that all possible deoptimization entry points have been properly compiled and registered in the metadata")//
@@ -603,7 +604,7 @@ public abstract class NativeImageCodeCache {
         deoptEntries.sort(Comparator.comparing(e -> e.getKey().format("%H.%n(%p)")));
 
         for (Entry<AnalysisMethod, Map<Long, DeoptSourceFrameInfo>> entry : deoptEntries) {
-            HostedMethod method = imageHeap.hUniverse.lookup(entry.getKey().getMultiMethod(MultiMethod.ORIGINAL_METHOD));
+            HostedMethod method = imageHeap.hUniverse.lookup(entry.getKey().getMethodVariant(MethodVariant.ORIGINAL_METHOD));
 
             if (method.hasCalleeSavedRegisters()) {
                 System.out.println("DeoptEntry has callee saved registers: " + method.format("%H.%n(%p)"));

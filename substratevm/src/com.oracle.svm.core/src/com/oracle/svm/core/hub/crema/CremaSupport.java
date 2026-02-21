@@ -27,6 +27,7 @@ package com.oracle.svm.core.hub.crema;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
+import org.graalvm.nativeimage.c.function.CFunctionPointer;
 
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.RuntimeClassLoading.ClassDefinitionInfo;
@@ -61,7 +62,8 @@ public interface CremaSupport {
 
     Object getStaticStorage(ResolvedJavaField resolved);
 
-    DynamicHub createHub(ParserKlass parsed, ClassDefinitionInfo info, int typeID, String externalName, Module module, ClassLoader classLoader, Class<?> superClass, Class<?>[] superInterfaces);
+    DynamicHub createHub(ParserKlass parsed, ClassDefinitionInfo info, int typeID, String externalName, Module module, ClassLoader classLoader, Class<?> superClass,
+                    Class<?>[] superInterfaces);
 
     DynamicHub getOrCreateArrayHub(DynamicHub dynamicHub);
 
@@ -108,4 +110,9 @@ public interface CremaSupport {
     static CremaSupport singleton() {
         return ImageSingletons.lookup(CremaSupport.class);
     }
+
+    CFunctionPointer getEnterDirectInterpreterStubEntryPoint();
+
+    @Platforms(Platform.HOSTED_ONLY.class)
+    void setEnterDirectInterpreterStubEntryPoint(CFunctionPointer stubEntryPoint);
 }

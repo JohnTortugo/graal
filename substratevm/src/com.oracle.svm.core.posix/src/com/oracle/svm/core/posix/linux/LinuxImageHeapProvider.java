@@ -64,7 +64,7 @@ import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.CGlobalData;
 import com.oracle.svm.core.c.CGlobalDataFactory;
 import com.oracle.svm.core.c.function.CEntryPointErrors;
@@ -82,13 +82,13 @@ import com.oracle.svm.core.posix.PosixUtils;
 import com.oracle.svm.core.posix.headers.Errno;
 import com.oracle.svm.core.posix.headers.Fcntl;
 import com.oracle.svm.core.posix.headers.Unistd;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.core.util.PointerUtils;
 import com.oracle.svm.core.util.UnsignedUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.imagelayer.ImageLayerSectionFeature;
 import com.oracle.svm.hosted.imagelayer.LayeredDispatchTableFeature;
 

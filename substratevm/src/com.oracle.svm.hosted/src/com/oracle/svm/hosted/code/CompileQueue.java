@@ -40,17 +40,17 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import com.oracle.graal.pointsto.reports.ReportUtils;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;
 import com.oracle.graal.pointsto.flow.AnalysisParsedGraph;
 import com.oracle.graal.pointsto.meta.HostedProviders;
+import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.CompletionExecutor;
 import com.oracle.graal.pointsto.util.CompletionExecutor.DebugContextRunnable;
-import com.oracle.svm.common.meta.MultiMethod;
+import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.core.UninterruptibleAnnotationUtils;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.deopt.DeoptTest;
 import com.oracle.svm.core.deopt.Specialize;
@@ -70,7 +70,7 @@ import com.oracle.svm.core.meta.SubstrateMethodOffsetConstant;
 import com.oracle.svm.core.meta.SubstrateMethodPointerConstant;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.InterruptImageBuilding;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.FeatureHandler;
 import com.oracle.svm.hosted.NativeImageGenerator;
 import com.oracle.svm.hosted.NativeImageOptions;
@@ -84,7 +84,7 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.phases.ImageBuildStatisticsCounterPhase;
 import com.oracle.svm.hosted.phases.ImplicitAssertionsPhase;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.GraalAccess;
+import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.ImageBuildStatistics;
 import com.oracle.svm.util.LogUtils;
 import com.oracle.svm.util.OriginalClassProvider;
@@ -412,7 +412,7 @@ public class CompileQueue {
         this.defaultParseHooks = new ParseHooks(this);
 
         callForReplacements(debug, runtimeConfig);
-        generatedFoldInvocationPluginType = GraalAccess.getOriginalProviders().getMetaAccess().lookupJavaType(GeneratedFoldInvocationPlugin.class);
+        generatedFoldInvocationPluginType = GuestAccess.get().getProviders().getMetaAccess().lookupJavaType(GeneratedFoldInvocationPlugin.class);
     }
 
     protected AnalysisToHostedGraphTransplanter createGraphTransplanter() {
@@ -621,7 +621,7 @@ public class CompileQueue {
                                 ci.isTrivialMethod ? "T" : " ");
 
                 int deoptMethodSize = 0;
-                HostedMethod deoptTargetMethod = method.getMultiMethod(DEOPT_TARGET_METHOD);
+                HostedMethod deoptTargetMethod = method.getMethodVariant(DEOPT_TARGET_METHOD);
                 if (deoptTargetMethod != null && isRegisteredDeoptTarget(deoptTargetMethod)) {
                     CompilationInfo dci = deoptTargetMethod.compilationInfo;
 
@@ -689,11 +689,11 @@ public class CompileQueue {
         for (HostedMethod method : universe.getMethods()) {
             if (SubstrateCompilationDirectives.singleton().isRegisteredForDeoptTesting(method)) {
                 method.compilationInfo.canDeoptForTesting = true;
-                assert SubstrateCompilationDirectives.singleton().isRegisteredDeoptTarget(method.getMultiMethod(DEOPT_TARGET_METHOD));
+                assert SubstrateCompilationDirectives.singleton().isRegisteredDeoptTarget(method.getMethodVariant(DEOPT_TARGET_METHOD));
             }
 
-            for (MultiMethod multiMethod : method.getAllMultiMethods()) {
-                HostedMethod hMethod = (HostedMethod) multiMethod;
+            for (MethodVariant methodVariant : method.getAllMethodVariants()) {
+                HostedMethod hMethod = (HostedMethod) methodVariant;
                 if (hMethod.isDeoptTarget() || SubstrateCompilationDirectives.isRuntimeCompiledMethod(hMethod)) {
                     /*
                      * Deoptimization targets are parsed in a later phase.
@@ -746,7 +746,7 @@ public class CompileQueue {
          * Deoptimization target code for all methods that were manually marked as deoptimization
          * targets.
          */
-        universe.getMethods().stream().map(method -> method.getMultiMethod(DEOPT_TARGET_METHOD)).filter(deoptMethod -> {
+        universe.getMethods().stream().map(method -> method.getMethodVariant(DEOPT_TARGET_METHOD)).filter(deoptMethod -> {
             if (deoptMethod != null) {
                 return isRegisteredDeoptTarget(deoptMethod);
             }
@@ -770,8 +770,8 @@ public class CompileQueue {
                 runOnExecutor(() -> {
                     universe.getMethods().forEach(method -> {
                         assert method.isOriginalMethod();
-                        for (MultiMethod multiMethod : method.getAllMultiMethods()) {
-                            HostedMethod hMethod = (HostedMethod) multiMethod;
+                        for (MethodVariant methodVariant : method.getAllMethodVariants()) {
+                            HostedMethod hMethod = (HostedMethod) methodVariant;
                             if (hMethod.compilationInfo.getCompilationGraph() != null) {
                                 executor.execute(new TrivialInlineTask(hMethod));
                             }
@@ -989,8 +989,8 @@ public class CompileQueue {
 
     public void scheduleEntryPoints() {
         for (HostedMethod method : universe.getMethods()) {
-            for (MultiMethod multiMethod : method.getAllMultiMethods()) {
-                HostedMethod hMethod = (HostedMethod) multiMethod;
+            for (MethodVariant methodVariant : method.getAllMethodVariants()) {
+                HostedMethod hMethod = (HostedMethod) methodVariant;
                 if (hMethod.isDeoptTarget() || SubstrateCompilationDirectives.isRuntimeCompiledMethod(hMethod)) {
                     /*
                      * Deoptimization targets are parsed in a later phase.
@@ -1015,7 +1015,7 @@ public class CompileQueue {
                     ensureCompiled(hMethod, new EntryPointReason());
                 }
                 if (hMethod.wrapped.isVirtualRootMethod()) {
-                    MultiMethod.MultiMethodKey key = hMethod.getMultiMethodKey();
+                    MethodVariant.MethodVariantKey key = hMethod.getMethodVariantKey();
                     assert key != DEOPT_TARGET_METHOD && key != SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD : "unexpected method as virtual root " + hMethod;
                     for (HostedMethod impl : hMethod.getImplementations()) {
                         VMError.guarantee(impl.wrapped.isImplementationInvoked());
@@ -1033,7 +1033,7 @@ public class CompileQueue {
 
     public void scheduleDeoptTargets() {
         for (HostedMethod method : universe.getMethods()) {
-            HostedMethod deoptTarget = method.getMultiMethod(DEOPT_TARGET_METHOD);
+            HostedMethod deoptTarget = method.getMethodVariant(DEOPT_TARGET_METHOD);
             if (deoptTarget != null) {
                 /*
                  * Not all methods will be deopt targets since the optimization of runtime compiled
@@ -1228,7 +1228,7 @@ public class CompileQueue {
             return false;
         }
 
-        if (!Uninterruptible.Utils.inliningAllowed(caller, callee)) {
+        if (!UninterruptibleAnnotationUtils.inliningAllowed(caller, callee)) {
             return false;
         }
         if (!mustNotAllocateCallee(caller) && mustNotAllocate(callee)) {
@@ -1286,7 +1286,7 @@ public class CompileQueue {
         }
 
         CompilationInfo compilationInfo = method.compilationInfo;
-        assert method.getMultiMethodKey() != SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
+        assert method.getMethodVariantKey() != SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
 
         if (printMethodHistogram) {
             if (reason instanceof DirectCallReason) {

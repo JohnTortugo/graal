@@ -270,11 +270,11 @@ import java.util.Objects;
 
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
-import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.methodhandles.MethodHandleInterpreterUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.espresso.classfile.ConstantPool;
 import com.oracle.svm.espresso.shared.meta.SignaturePolymorphicIntrinsic;
+import com.oracle.svm.guest.staging.jdk.InternalVMMethod;
 import com.oracle.svm.interpreter.debug.DebuggerEvents;
 import com.oracle.svm.interpreter.debug.EventKind;
 import com.oracle.svm.interpreter.debug.SteppingControl;
@@ -542,7 +542,7 @@ public final class Interpreter {
                     boolean preferStayInInterpreter = forceStayInInterpreter;
                     traceInvokeBasic(target, indent);
                     try {
-                        yield InterpreterToVM.dispatchInvocation(target, calleeArgs, false, forceStayInInterpreter, preferStayInInterpreter, false, false);
+                        yield InterpreterToVM.dispatchInvocation(target, calleeArgs, false, forceStayInInterpreter, preferStayInInterpreter, false);
                     } catch (SemanticJavaException e) {
                         throw uncheckedThrow(e.getCause());
                     }
@@ -558,7 +558,7 @@ public final class Interpreter {
                     try {
                         boolean isInvokeInterface = intrinsic == SignaturePolymorphicIntrinsic.LinkToInterface;
                         boolean isVirtual = isInvokeInterface || intrinsic == SignaturePolymorphicIntrinsic.LinkToVirtual;
-                        Object result = InterpreterToVM.dispatchInvocation(resolutionSeed, basicArgs, isVirtual, forceStayInInterpreter, preferStayInInterpreter, isInvokeInterface, false);
+                        Object result = InterpreterToVM.dispatchInvocation(resolutionSeed, basicArgs, isVirtual, forceStayInInterpreter, preferStayInInterpreter, false);
                         yield rebasic(result, signature.getReturnKind());
                     } catch (SemanticJavaException e) {
                         throw uncheckedThrow(e.getCause());
@@ -593,7 +593,9 @@ public final class Interpreter {
         return res;
     }
 
-    // Transforms ints to sub-words
+    /**
+     * Convert ints to sub-words.
+     */
     private static Object unbasic(Object arg, JavaKind kind) {
         return switch (kind) {
             case Boolean -> (int) arg != 0;
@@ -604,19 +606,19 @@ public final class Interpreter {
         };
     }
 
+    /**
+     * Convert sub-words to int.
+     */
     static Object rebasic(Object value, JavaKind returnType) {
-        // @formatter:off
         return switch (returnType) {
-            case Boolean -> stackIntToBoolean((int) value);
-            case Byte    -> (byte) value;
-            case Short   -> (short) value;
-            case Char    -> (char) value;
-            case Int, Long, Float, Double, Object
-                         -> value;
-            case Void    -> null; // void
-            default      -> throw VMError.shouldNotReachHereAtRuntime();
+            case Boolean -> ((boolean) value) ? 1 : 0;
+            case Byte -> (int) (byte) value;
+            case Short -> (int) (short) value;
+            case Char -> (int) (char) value;
+            case Int, Long, Float, Double, Object -> value;
+            case Void -> null; // void
+            default -> throw VMError.shouldNotReachHereAtRuntime();
         };
-        // @formatter:on
     }
 
     public static final class Root {
@@ -1499,7 +1501,7 @@ public final class Interpreter {
             nullCheck(receiver);
         }
 
-        Object retObj = InterpreterToVM.dispatchInvocation(seedMethod, calleeArgs, isVirtual, forceStayInInterpreter, preferStayInInterpreter, opcode == INVOKEINTERFACE, false);
+        Object retObj = InterpreterToVM.dispatchInvocation(seedMethod, calleeArgs, isVirtual, forceStayInInterpreter, preferStayInInterpreter, false);
 
         retStackEffect += EspressoFrame.putKind(callerFrame, resultAt, retObj, seedSignature.getReturnKind());
 

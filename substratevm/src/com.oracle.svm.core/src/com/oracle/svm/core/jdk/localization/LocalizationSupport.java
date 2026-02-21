@@ -25,8 +25,8 @@
 
 package com.oracle.svm.core.jdk.localization;
 
-import static com.oracle.svm.util.StringUtil.toDotSeparated;
-import static com.oracle.svm.util.StringUtil.toSlashSeparated;
+import static com.oracle.svm.shared.util.StringUtil.toDotSeparated;
+import static com.oracle.svm.shared.util.StringUtil.toSlashSeparated;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -58,8 +58,8 @@ import com.oracle.svm.core.configure.RuntimeDynamicAccessMetadata;
 import com.oracle.svm.core.jdk.Resources;
 import com.oracle.svm.core.metadata.MetadataTracer;
 import com.oracle.svm.core.util.ImageHeapMap;
-import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.debug.GraalError;
 import sun.util.locale.provider.LocaleProviderAdapter;

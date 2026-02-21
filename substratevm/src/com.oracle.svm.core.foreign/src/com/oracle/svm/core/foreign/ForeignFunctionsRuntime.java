@@ -62,7 +62,7 @@ import com.oracle.svm.core.MissingRegistrationUtils;
 import com.oracle.svm.core.OS;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.InvokeJavaFunctionPointer;
 import com.oracle.svm.core.foreign.AbiUtils.TrampolineTemplate;
 import com.oracle.svm.core.foreign.phases.SubstrateOptimizeSharedArenaAccessPhase.OptimizeSharedArenaConfig;
@@ -74,7 +74,7 @@ import com.oracle.svm.core.snippets.SnippetRuntime;
 import com.oracle.svm.core.snippets.SubstrateForeignCallTarget;
 import com.oracle.svm.core.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.ImageHeapMap;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.util.json.JsonPrintable;

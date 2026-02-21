@@ -89,7 +89,6 @@ import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.option.OptionMigrationMessage;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationSupport;
 import com.oracle.svm.hosted.config.ConfigurationParserUtils;
 import com.oracle.svm.hosted.dynamicaccessinference.DynamicAccessInferenceLog;
@@ -99,11 +98,12 @@ import com.oracle.svm.hosted.jdk.localization.LocalizationFeature;
 import com.oracle.svm.hosted.reflect.NativeImageConditionResolver;
 import com.oracle.svm.hosted.snippets.SubstrateGraphBuilderPlugins;
 import com.oracle.svm.hosted.util.ResourcesUtils;
+import com.oracle.svm.shared.util.ModuleSupport;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.GlobUtils;
 import com.oracle.svm.util.LogUtils;
-import com.oracle.svm.util.ModuleSupport;
 import com.oracle.svm.util.NativeImageResourcePathRepresentation;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.graphbuilderconf.GraphBuilderConfiguration;
@@ -658,7 +658,7 @@ public class ResourcesFeature implements InternalFeature {
 
     @Override
     public void afterAnalysis(AfterAnalysisAccess access) {
-        resourcesRegistry.sealed();
+        resourcesRegistry.seal();
         if (Options.GenerateEmbeddedResourcesFile.getValue()) {
             Path reportLocation = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton()).resolve(Options.EMBEDDED_RESOURCES_FILE_NAME);
             try (JsonWriter writer = new JsonWriter(reportLocation)) {

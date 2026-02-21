@@ -26,7 +26,7 @@ package com.oracle.svm.core.meta;
 
 import org.graalvm.nativeimage.c.function.CFunctionPointer;
 
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.code.ImageCodeInfo;
 import com.oracle.svm.core.deopt.Deoptimizer;
 import com.oracle.svm.core.graal.code.SubstrateCallingConventionKind;
@@ -137,4 +137,11 @@ public interface SharedMethod extends ResolvedJavaMethod {
      *         compiled entry point is available.
      */
     CFunctionPointer getAOTEntrypoint();
+
+    /**
+     * Returns the interpreter method representation for this method at runtime.
+     *
+     * @return interpreter method for target method, or {@code null} if not applicable
+     */
+    ResolvedJavaMethod getInterpreterMethod();
 }

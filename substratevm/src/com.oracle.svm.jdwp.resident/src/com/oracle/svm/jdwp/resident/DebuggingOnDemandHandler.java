@@ -42,7 +42,7 @@ import org.graalvm.nativeimage.c.type.CTypeConversion;
 import org.graalvm.word.PointerBase;
 
 import com.oracle.svm.core.OS;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.function.CEntryPointOptions;
 import com.oracle.svm.core.headers.LibC;
 import com.oracle.svm.core.jdk.PlatformNativeLibrarySupport;
@@ -58,7 +58,7 @@ import com.oracle.svm.core.jni.headers.JNIVersion;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalWord;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.interpreter.DebuggerSupport;
 import com.oracle.svm.interpreter.InterpreterOptions;
 import com.oracle.svm.interpreter.debug.DebuggerEvents;

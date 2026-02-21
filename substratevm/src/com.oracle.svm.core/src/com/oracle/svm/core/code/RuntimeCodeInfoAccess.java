@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.code;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 
 import org.graalvm.nativeimage.c.function.CodePointer;
 import org.graalvm.word.Pointer;
@@ -32,7 +32,7 @@ import org.graalvm.word.UnsignedWord;
 
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.NonmovableArray;
 import com.oracle.svm.core.c.NonmovableArrays;
 import com.oracle.svm.core.c.NonmovableObjectArray;
@@ -47,7 +47,7 @@ import com.oracle.svm.core.nmt.NmtCategory;
 import com.oracle.svm.core.os.CommittedMemoryProvider;
 import com.oracle.svm.core.os.VirtualMemoryProvider;
 import com.oracle.svm.core.util.DuplicatedInNativeCode;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import org.graalvm.word.impl.Word;
 
 /**

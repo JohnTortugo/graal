@@ -82,6 +82,9 @@ public interface VMAccess {
      * {@linkplain ResolvedJavaMethod#getDeclaringClass() declaring class} will be created and
      * doesn't need to be prepended.</li>
      * </ul>
+     * Note that if the implementation is backed by an {@link Executable} object, this call will
+     * ensure it is {@linkplain Executable#setAccessible(boolean) accessible} before attempting the
+     * invocation.
      *
      * @param method the method to invoke.
      * @param receiver for non-static, non-constructor methods, the receiver of the invocation
@@ -90,12 +93,33 @@ public interface VMAccess {
      * @param args Arguments of types matching the {@linkplain ResolvedJavaMethod#getSignature()
      *            signature} passed as {@link JavaConstant} objects. The arguments are subject to
      *            conversions as described in the Java Language Specifications' strict invocation
-     *            context (5.3).
+     *            context (JLS 5.3).
      * @return the result as a {@link JavaConstant} or null if the method has a void return type.
      * @throws InvocationException if the invoked method throws an exception, it is wrapped in an
      *             {@link InvocationException}.
      */
     JavaConstant invoke(ResolvedJavaMethod method, JavaConstant receiver, JavaConstant... args);
+
+    /**
+     * Writes a value to a {@link ResolvedJavaField}.
+     *
+     * Note that if the implementation is backed by a {@link Field} object, this call will ensure it
+     * is {@linkplain Field#setAccessible(boolean) accessible} before attempting writing the field.
+     *
+     * @param field the field to write.
+     * @param receiver the receiver object for an instance field, passed as a {@link JavaConstant}.
+     *            This must be {@code null} for a {@linkplain ResolvedJavaField#isStatic() static}
+     *            field.
+     * @param value the value to be written, passed as a {@link JavaConstant}. Primitive values must
+     *            exactly match the type of the {@code field}. For example, an {@code int} value
+     *            cannot be written to a field of type {@code long}). Implementations must not
+     *            perform widening primitive conversion (JLS 5.1.2). This is in contrast to
+     *            {@link #invoke}.
+     * @throws IllegalArgumentException if {@code receiver} is non-null for a static field, if
+     *             {@code receiver} is null for a non-static field, or if {@code value} cannot be
+     *             assigned to the field type.
+     */
+    void writeField(ResolvedJavaField field, JavaConstant receiver, JavaConstant value);
 
     /**
      * Creates an array from an array of values.
@@ -109,17 +133,41 @@ public interface VMAccess {
     JavaConstant asArrayConstant(ResolvedJavaType componentType, JavaConstant... elements);
 
     /**
-     * Returns the {@link ResolvedJavaMethod} for an {@link Executable} object encapsulated in
-     * {@code constant}. Returns {@code null} if the constant does not encapsulate an
+     * Gets a {@link ResolvedJavaMethod} for an {@link Executable} object encapsulated in
+     * {@code constant}. Returns {@code null} if {@code constant} does not encapsulate an
      * {@link Executable}.
      */
     ResolvedJavaMethod asResolvedJavaMethod(Constant constant);
 
     /**
-     * Returns the {@link ResolvedJavaField} for a {@link Field} object encapsulated in
-     * {@code constant}. Returns {@code null} if the constant does not encapsulate a {@link Field}.
+     * Gets a {@link ResolvedJavaField} for a {@link Field} object encapsulated in {@code constant}.
+     * Returns {@code null} if {@code constant} does not encapsulate a {@link Field}.
      */
     ResolvedJavaField asResolvedJavaField(Constant constant);
+
+    /**
+     * Gets the runtime representation of an {@link Executable} object for {@code method}. This is
+     * the inverse of {@link #asResolvedJavaMethod(Constant)}. Not all VM methods (such as
+     * {@linkplain ResolvedJavaMethod#isClassInitializer()} <clint>) have a reflection object, in
+     * which case {@code null} is returned.
+     * <p>
+     * Multiple calls to this method for the same {@code ResolvedJavaMethod} instance can return the
+     * same {@link Executable} object. This is worth keeping in mind since {@link Executable}
+     * objects are {@linkplain Executable#setAccessible(boolean) mutable}.
+     */
+    JavaConstant asExecutableConstant(ResolvedJavaMethod method);
+
+    /**
+     * Gets the runtime representation of a {@link Field} object for {@code field}. This is the
+     * inverse of {@link #asResolvedJavaField}. Not all VM fields (such as
+     * {@linkplain ResolvedJavaField#isInternal() injected} fields) have a reflection object, in
+     * which case {@code null} is returned.
+     * <p>
+     * Multiple calls to this method for the same {@code ResolvedJavaField} instance can return the
+     * same {@link Field} object. This is worth keeping in mind since {@link Field} objects are
+     * {@linkplain Field#setAccessible(boolean) mutable}.
+     */
+    JavaConstant asFieldConstant(ResolvedJavaField field);
 
     /**
      * Lookup a type by name in the {@linkplain ClassLoader#getSystemClassLoader() system/app} class
@@ -149,15 +197,15 @@ public interface VMAccess {
 
     /**
      * Gets the {@link ResolvedJavaModule} of the given {@link ResolvedJavaType}.
-     *
+     * <p>
      * If {@code type.isArray()}, this method returns the {@link ResolvedJavaModule} for
      * {@code type.getElementalType()}. for the element type. If this class represents a primitive
      * type or void, then the {@link ResolvedJavaModule} object for the {@code java.base} module is
      * returned.
-     *
+     * <p>
      * If this class is in an unnamed module then the {@linkplain ClassLoader#getUnnamedModule()
      * unnamed module} of the class loader for {@code type} is returned.
-     *
+     * <p>
      * This method never returns {@code null}.
      */
     ResolvedJavaModule getModule(ResolvedJavaType type);
@@ -196,7 +244,7 @@ public interface VMAccess {
         String getVMAccessName();
 
         /**
-         * The module path to use. This has the semantics of the {@code --class-path} java launcher
+         * The class path to use. This has the semantics of the {@code --class-path} java launcher
          * option.
          */
         Builder classPath(List<String> paths);

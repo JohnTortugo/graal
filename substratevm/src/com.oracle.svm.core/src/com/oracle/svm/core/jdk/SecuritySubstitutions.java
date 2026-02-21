@@ -60,8 +60,8 @@ import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.annotate.TargetElement;
 import com.oracle.svm.core.thread.Target_java_lang_ThreadLocal;
 import com.oracle.svm.core.util.BasedOnJDKFile;
-import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import sun.security.util.SecurityConstants;
 

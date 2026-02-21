@@ -53,8 +53,8 @@ import com.oracle.svm.core.hub.RuntimeClassLoading.ClassDefinitionInfo;
 import com.oracle.svm.core.hub.registry.AbstractClassRegistry;
 import com.oracle.svm.core.hub.registry.ClassRegistries;
 import com.oracle.svm.core.util.BasedOnJDKFile;
-import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.java.LambdaUtils;
 import jdk.graal.compiler.util.Digest;
@@ -128,6 +128,7 @@ public final class Target_java_lang_ClassLoader {
     public native Enumeration<URL> findResources(String name);
 
     @Substitute
+    @TargetElement(onlyWith = ClassForNameSupport.IgnoresClassLoader.class)
     private Enumeration<URL> getResources(String name) {
         /* Every class loader sees every resource, so we still need this substitution (GR-19998). */
         Enumeration<URL> urls = ResourcesHelper.nameToResourceEnumerationURLs(name);

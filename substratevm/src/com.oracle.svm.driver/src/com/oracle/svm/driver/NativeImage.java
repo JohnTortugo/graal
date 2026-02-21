@@ -95,7 +95,6 @@ import com.oracle.svm.core.option.OptionUtils;
 import com.oracle.svm.core.util.ArchiveSupport;
 import com.oracle.svm.core.util.ClasspathUtils;
 import com.oracle.svm.core.util.ExitStatus;
-import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.driver.MacroOption.EnabledOption;
 import com.oracle.svm.driver.MacroOption.Registry;
 import com.oracle.svm.driver.launcher.ContainerSupport;
@@ -104,11 +103,14 @@ import com.oracle.svm.driver.metainf.NativeImageMetaInfResourceProcessor;
 import com.oracle.svm.driver.metainf.NativeImageMetaInfWalker;
 import com.oracle.svm.hosted.CommonPoolUncaughtExceptionHandler;
 import com.oracle.svm.hosted.NativeImageGeneratorRunner;
+import com.oracle.svm.hosted.NativeImageOptions;
 import com.oracle.svm.hosted.NativeImageSystemClassLoader;
 import com.oracle.svm.hosted.util.JDKArgsUtils;
+import com.oracle.svm.shared.util.StringUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.util.GuestAccess;
+import com.oracle.svm.util.HostedModuleSupport;
 import com.oracle.svm.util.LogUtils;
-import com.oracle.svm.util.ModuleSupport;
-import com.oracle.svm.util.StringUtil;
 
 import jdk.graal.compiler.options.OptionKey;
 import jdk.internal.jimage.ImageReader;
@@ -123,6 +125,9 @@ public class NativeImage {
     private static final String CUSTOM_COMMON_FORK_JOIN_POOL_EXCEPTION_HANDLER = CommonPoolUncaughtExceptionHandler.class.getName();
 
     static final String platform = getPlatform();
+
+    // to avoid pulling in hosted classes
+    public static final String COMPATIBILITY_MODE_FLAG_NAME = NativeImageOptions.CompatibilityMode.getName();
 
     private static String getPlatform() {
         return (OS.getCurrent().className + "-" + SubstrateUtil.getArchitectureName()).toLowerCase(Locale.ROOT);
@@ -670,6 +675,12 @@ public class NativeImage {
     }
 
     class DriverMetaInfProcessor implements NativeImageMetaInfResourceProcessor {
+        private final Path graalvmRootDir;
+
+        DriverMetaInfProcessor(Path graalvmRootDir) {
+            this.graalvmRootDir = graalvmRootDir;
+        }
+
         @Override
         public boolean processMetaInfResource(Path classpathEntry, Path resourceRoot, Path resourcePath, MetaInfFileType type) throws IOException {
             boolean isNativeImagePropertiesFile = type.equals(MetaInfFileType.Properties);
@@ -719,9 +730,11 @@ public class NativeImage {
                 if (imageNameValue != null) {
                     addPlainImageBuilderArg(oHName + resolver.apply(imageNameValue), resourcePath.toUri().toString());
                 }
-                forEachPropertyValue(properties.get("JavaArgs"), NativeImage.this::addImageBuilderJavaArgs, resolver);
-                forEachPropertyValue(properties.get("Args"), args, resolver);
-                forEachPropertyValue(properties.get("ProvidedHostedOptions"), apiOptionHandler::injectKnownHostedOption, resolver);
+                if (classpathEntry.startsWith(graalvmRootDir) || !isCompatibilityModeEnabled()) {
+                    forEachPropertyValue(properties.get("JavaArgs"), NativeImage.this::addImageBuilderJavaArgs, resolver);
+                    forEachPropertyValue(properties.get("Args"), args, resolver);
+                    forEachPropertyValue(properties.get("ProvidedHostedOptions"), apiOptionHandler::injectKnownHostedOption, resolver);
+                }
             } else {
                 args.accept(oH(type.optionKey) + resourceRoot.relativize(resourcePath));
             }
@@ -759,7 +772,7 @@ public class NativeImage {
     @SuppressWarnings("this-escape")
     protected NativeImage(BuildConfiguration config) {
         this.config = config;
-        this.metaInfProcessor = new DriverMetaInfProcessor();
+        this.metaInfProcessor = new DriverMetaInfProcessor(config.rootDir);
         this.archiveSupport = new ArchiveSupport(isVerbose());
 
         String configFile = System.getenv(CONFIG_FILE_ENV_VAR_KEY);
@@ -1287,15 +1300,13 @@ public class NativeImage {
         LinkedHashSet<Path> finalImageClasspath = new LinkedHashSet<>(imageClasspath);
 
         LinkedHashSet<Path> finalImageProvidedJars = new LinkedHashSet<>(this.imageProvidedJars);
-        if (!finalImageModulePath.isEmpty() || !finalImageClasspath.isEmpty()) {
-            finalImageProvidedJars.addAll(config.getImageProvidedModulePath());
-        }
+        finalImageProvidedJars.addAll(config.getImageProvidedModulePath());
         finalImageModulePath.addAll(finalImageProvidedJars);
         finalImageProvidedJars.forEach(this::processClasspathNativeImageMetaInf);
         imageBuilderJavaArgs.add("-D" + SharedConstants.IMAGE_PROVIDED_JARS_ENV_VARIABLE + "=" + String.join(File.pathSeparator, finalImageProvidedJars.stream().map(Path::toString).toList()));
 
         if (!limitModules.isEmpty()) {
-            imageBuilderJavaArgs.add("-D" + ModuleSupport.PROPERTY_IMAGE_EXPLICITLY_LIMITED_MODULES + "=" + String.join(",", limitModules));
+            imageBuilderJavaArgs.add("-D" + HostedModuleSupport.PROPERTY_IMAGE_EXPLICITLY_LIMITED_MODULES + "=" + String.join(",", limitModules));
         }
         if (!finalImageClasspath.isEmpty()) {
             imageBuilderJavaArgs.add(DefaultOptionHandler.addModulesOption + "=ALL-DEFAULT");
@@ -1420,7 +1431,12 @@ public class NativeImage {
     }
 
     private static Boolean getHostedOptionBooleanArgumentValue(List<String> args, OptionKey<Boolean> option) {
-        String locationAgnosticBooleanPattern = "^" + oH + "[+-]" + option.getName() + "(@[^=]*)?$";
+        String name = option.getName();
+        return getHostedOptionBooleanArgumentValue(args, name);
+    }
+
+    private static Boolean getHostedOptionBooleanArgumentValue(List<String> args, String optionName) {
+        String locationAgnosticBooleanPattern = "^" + oH + "[+-]" + optionName + "(@[^=]*)?$";
         Pattern pattern = Pattern.compile(locationAgnosticBooleanPattern);
         Boolean result = null;
         for (String arg : args) {
@@ -1430,6 +1446,10 @@ public class NativeImage {
             }
         }
         return result;
+    }
+
+    private boolean isCompatibilityModeEnabled() {
+        return Boolean.TRUE.equals(getHostedOptionBooleanArgumentValue(imageBuilderArgs, COMPATIBILITY_MODE_FLAG_NAME));
     }
 
     private boolean shouldAddCWDToCP() {
@@ -1593,43 +1613,65 @@ public class NativeImage {
         List<Path> localImageModulePath = imagemp.stream().map(substituteModulePath).collect(Collectors.toList());
         Map<String, Path> applicationModules = getModulesFromPath(localImageModulePath);
 
+        String selectEspressoGuest = "-D" + GuestAccess.NAME_PROPERTY + "=espresso";
+        boolean useEspressoGuest = javaArgs.contains(selectEspressoGuest);
+
         if (!applicationModules.isEmpty()) {
-            // Remove modules that we already have built-in
-            applicationModules.keySet().removeAll(getBuiltInModules());
-            // Remove modules that we get from the builder
-            applicationModules.keySet().removeAll(getModulesFromPath(mp).keySet());
+
+            if (!useEspressoGuest) {
+                /* Remove modules that we already have built-in */
+                applicationModules.keySet().removeAll(getBuiltInModules());
+
+                /*
+                 * When using HostVMAccess, the NativeImageClassLoader delegates to
+                 * ClassLoaders#appClassLoader. In that configuration, a module (such as
+                 * org.graalvm.nativeimage.guest.staging) on both the image module path and builder
+                 * module path results in resolving the module twice, causing problems during module
+                 * resolution.
+                 */
+                applicationModules.keySet().removeAll(getModulesFromPath(mp).keySet());
+            }
         }
         List<Path> finalImageModulePath = applicationModules.values().stream().toList();
 
-        /*
-         * Make sure to add all system modules required by the application that might not be part of
-         * the boot module layer of image builder. If we do not do this, the image builder will fail
-         * to create the image-build module layer, as it will attempt to define system modules to
-         * the host VM.
-         */
-        Set<String> implicitlyRequiredSystemModules = getImplicitlyRequiredSystemModules(finalImageModulePath);
-        addModules.addAll(implicitlyRequiredSystemModules);
+        if (!useEspressoGuest) {
+            /*
+             * Make sure to add all system modules required by the application that might not be
+             * part of the boot module layer of image builder. If we do not do this, the image
+             * builder will fail to create the image-build module layer, as it will attempt to
+             * define system modules to the host VM. When running with Espresso Guest Context this
+             * is not needed because the application gets loaded in a VM Context isolated from the
+             * builder VM.
+             */
+            Set<String> implicitlyRequiredSystemModules = getImplicitlyRequiredSystemModules(mp, finalImageModulePath);
+            addModules.addAll(implicitlyRequiredSystemModules);
+        }
 
         if (!addModules.isEmpty()) {
 
-            arguments.add("-D" + ModuleSupport.PROPERTY_IMAGE_EXPLICITLY_ADDED_MODULES + "=" +
+            arguments.add("-D" + HostedModuleSupport.PROPERTY_IMAGE_EXPLICITLY_ADDED_MODULES + "=" +
                             String.join(",", addModules));
 
-            List<String> addModulesForBuilderVM = new ArrayList<>();
-            for (String moduleNameInAddModules : addModules) {
-                if (!applicationModules.containsKey(moduleNameInAddModules)) {
-                    /*
-                     * Module names given to native-image --add-modules that are not referring to
-                     * modules that are passed to native-image via -p/--module-path are considered
-                     * to be part of the module-layer that contains the builder itself. Those module
-                     * names need to be passed as --add-modules arguments to the builder VM.
-                     */
-                    addModulesForBuilderVM.add(moduleNameInAddModules);
+            if (!useEspressoGuest) {
+                List<String> addModulesForBuilderVM = new ArrayList<>();
+                for (String moduleNameInAddModules : addModules) {
+                    if (!applicationModules.containsKey(moduleNameInAddModules)) {
+                        /*
+                         * Module names given to native-image --add-modules that are not referring
+                         * to modules that are passed to native-image via -p/--module-path are
+                         * considered to be part of the module-layer that contains the builder
+                         * itself. Those module names need to be passed as --add-modules arguments
+                         * to the builder VM. When running with Espresso Guest Context this is not
+                         * needed because the application gets loaded in a VM Context isolated from
+                         * the builder VM.
+                         */
+                        addModulesForBuilderVM.add(moduleNameInAddModules);
+                    }
                 }
-            }
 
-            if (!addModulesForBuilderVM.isEmpty()) {
-                arguments.add(DefaultOptionHandler.addModulesOption + "=" + String.join(",", addModulesForBuilderVM));
+                if (!addModulesForBuilderVM.isEmpty()) {
+                    arguments.add(DefaultOptionHandler.addModulesOption + "=" + String.join(",", addModulesForBuilderVM));
+                }
             }
         }
 
@@ -1839,35 +1881,61 @@ public class NativeImage {
         return mrefs;
     }
 
-    private Set<String> getImplicitlyRequiredSystemModules(Collection<Path> modulePath) {
-        ModuleFinder finder = ModuleFinder.ofSystem();
-        if (!modulePath.isEmpty()) {
-            ModuleFinder appModuleFinder = ModuleFinder.of(modulePath.toArray(Path[]::new));
-            finder = ModuleFinder.compose(appModuleFinder, finder);
+    private Set<String> getImplicitlyRequiredSystemModules(Collection<Path> builderMP, Collection<Path> imageMP) {
+        if (imageMP.isEmpty()) {
+            return Set.of();
         }
+
+        /* All modules the builder transitively depends on */
+        Set<String> builderRequired = modulePathRequiredModules(builderMP);
+        /*
+         * N.B. without Espresso Guest Context we need to combine builderMP and imageMP because the
+         * loader for imageMP has the loader that loaded builderMP as parent.
+         */
+        Set<Path> combinedMP = Stream.concat(builderMP.stream(), imageMP.stream()).collect(Collectors.toUnmodifiableSet());
+        /* All modules the application transitively depends on */
+        Set<String> imageRequired = modulePathRequiredModules(combinedMP);
+
+        Set<String> remainingImageRequiredBuiltInModules = new HashSet<>(imageRequired); // noEconomicSet(api)
+        /* Only modules not already required by the builder */
+        remainingImageRequiredBuiltInModules.removeAll(builderRequired);
+        /* Only built-in modules not already required by the builder */
+        remainingImageRequiredBuiltInModules.retainAll(getBuiltInModules());
+        return Set.copyOf(remainingImageRequiredBuiltInModules);
+    }
+
+    Set<String> modulePathRequiredModules(Collection<Path> modulePath) {
+
+        ModuleFinder systemFinder = ModuleFinder.ofSystem();
+        ModuleFinder modulePathFinder = ModuleFinder.of(modulePath.toArray(Path[]::new));
+        ModuleFinder finder = ModuleFinder.compose(modulePathFinder, systemFinder);
         Map<String, ModuleReference> modules = finder.findAll().stream()
                         .collect(Collectors.toMap(m -> m.descriptor().name(), m -> m));
 
-        Set<String> applicationModulePathRequiredModules = new HashSet<>(); // noEconomicSet(api)
+        Set<String> modulePathRequiredModules = new HashSet<>(); // noEconomicSet(api)
         Queue<ModuleReference> discoveryQueue = new ArrayDeque<>(modules.values());
 
         while (!discoveryQueue.isEmpty()) {
             ModuleReference module = discoveryQueue.poll();
+            if ("java.se".equals(module.descriptor().name())) {
+                /* Skip java.se-module pseudo-dependencies */
+                continue;
+            }
             Set<String> requiredModules = getRequiredModules(module);
             List<ModuleReference> requiredModuleReferences = requiredModules.stream()
                             .map(mn -> modules.getOrDefault(mn, null))
                             .filter(Objects::nonNull)
                             .toList();
             discoveryQueue.addAll(requiredModuleReferences);
-            applicationModulePathRequiredModules.addAll(requiredModules);
+            modulePathRequiredModules.addAll(requiredModules);
         }
 
-        applicationModulePathRequiredModules.retainAll(getBuiltInModules());
-        return applicationModulePathRequiredModules;
+        return Set.copyOf(modulePathRequiredModules);
     }
 
     private static Set<String> getRequiredModules(ModuleReference mref) {
         return mref.descriptor().requires().stream()
+                        .map(r -> Objects.requireNonNull(r, () -> "ModuleReference " + mref + " requires-Set has null-entries"))
                         .map(ModuleDescriptor.Requires::name)
                         .collect(Collectors.toSet());
     }

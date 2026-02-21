@@ -29,7 +29,7 @@ import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.BuildPhaseProvider.AfterHeapLayout;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.genscavenge.AlignedHeapChunk.AlignedHeader;
 import com.oracle.svm.core.genscavenge.UnalignedHeapChunk.UnalignedHeader;
 import com.oracle.svm.core.heap.UnknownObjectField;
@@ -37,10 +37,10 @@ import com.oracle.svm.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.core.hub.LayoutEncoding;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.MultiLayer;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.MultiLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 
 /**
  * Information on the multiple partitions that make up the image heap, which don't necessarily form

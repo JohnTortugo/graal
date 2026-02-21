@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.interpreter.metadata;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.espresso.classfile.Constants.ACC_CALLER_SENSITIVE;
 import static com.oracle.svm.espresso.classfile.Constants.ACC_FINAL;
 import static com.oracle.svm.espresso.classfile.Constants.ACC_NATIVE;
@@ -48,11 +48,12 @@ import java.util.function.Function;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.function.CFunctionPointer;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.FunctionPointerHolder;
 import com.oracle.svm.core.SubstrateMetadata;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.graal.code.PreparedSignature;
 import com.oracle.svm.core.heap.UnknownObjectField;
 import com.oracle.svm.core.hub.RuntimeClassLoading;
@@ -61,7 +62,7 @@ import com.oracle.svm.core.hub.registry.SymbolsSupport;
 import com.oracle.svm.core.invoke.ResolvedMember;
 import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
 import com.oracle.svm.core.meta.MethodPointer;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.espresso.classfile.Constants;
 import com.oracle.svm.espresso.classfile.JavaVersion;
 import com.oracle.svm.espresso.classfile.ParserMethod;
@@ -75,7 +76,7 @@ import com.oracle.svm.espresso.shared.meta.SignaturePolymorphicIntrinsic;
 import com.oracle.svm.espresso.shared.vtable.PartialMethod;
 import com.oracle.svm.interpreter.metadata.serialization.VisibleForSerialization;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.vm.ci.meta.Constant;
 import jdk.vm.ci.meta.ExceptionHandler;
@@ -87,7 +88,6 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.SpeculationLog;
 import jdk.vm.ci.meta.annotation.AnnotationsInfo;
-import org.graalvm.word.impl.Word;
 
 /**
  * Encapsulates resolved methods used under close-world assumptions, compiled and interpretable, but
@@ -411,7 +411,7 @@ public class InterpreterResolvedJavaMethod extends InterpreterAnnotated implemen
         }
         assert Modifier.isNative(newModifiers);
         InterpreterUnresolvedSignature jvmciSignature = CremaMethodAccess.toJVMCI(newSignature, SymbolsSupport.getTypes());
-        return new InterpreterResolvedJavaMethod(name, jvmciSignature.getParameterCount(true), newModifiers, declaringClass, jvmciSignature, newSignature,
+        return new InterpreterResolvedJavaMethod(name, jvmciSignature.slotsForParameters(true), newModifiers, declaringClass, jvmciSignature, newSignature,
                         vtableIndex, gotOffset, enterStubOffset, methodId, iid);
     }
 
@@ -776,6 +776,11 @@ public class InterpreterResolvedJavaMethod extends InterpreterAnnotated implemen
         return preparedSignature;
     }
 
+    @Override
+    public final boolean canBeStaticallyBound() {
+        return (isFinal() || isPrivate() || isStatic() || getDeclaringClass().isLeaf() || isConstructor()) && isConcrete();
+    }
+
     // region Unimplemented methods
 
     @Override
@@ -865,11 +870,6 @@ public class InterpreterResolvedJavaMethod extends InterpreterAnnotated implemen
 
     @Override
     public final boolean isDefault() {
-        throw VMError.intentionallyUnimplemented();
-    }
-
-    @Override
-    public final boolean canBeStaticallyBound() {
         throw VMError.intentionallyUnimplemented();
     }
 

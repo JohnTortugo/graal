@@ -113,6 +113,7 @@ import com.oracle.truffle.espresso.classfile.attributes.ExceptionsAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.LineNumberTableAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.Local;
 import com.oracle.truffle.espresso.classfile.attributes.LocalVariableTable;
+import com.oracle.truffle.espresso.classfile.attributes.MethodParametersAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.SignatureAttribute;
 import com.oracle.truffle.espresso.classfile.attributes.SourceFileAttribute;
 import com.oracle.truffle.espresso.classfile.bytecode.BytecodeStream;
@@ -141,6 +142,7 @@ import com.oracle.truffle.espresso.impl.jvmci.JVMCIIndyData;
 import com.oracle.truffle.espresso.impl.jvmci.external.ExceptionHandlerInteropWrapper;
 import com.oracle.truffle.espresso.impl.jvmci.external.InteropLineNumberTableHelper;
 import com.oracle.truffle.espresso.impl.jvmci.external.LocalInteropWrapper;
+import com.oracle.truffle.espresso.impl.jvmci.external.ParameterInteropWrapper;
 import com.oracle.truffle.espresso.jdwp.api.KlassRef;
 import com.oracle.truffle.espresso.jdwp.api.MethodHook;
 import com.oracle.truffle.espresso.jdwp.api.MethodRef;
@@ -762,26 +764,51 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
         return getParameterCount() + (isStatic() ? 0 : 1);
     }
 
-    public static Method getHostReflectiveMethodRoot(StaticObject seed, Meta meta) {
-        assert seed.getKlass().getMeta().java_lang_reflect_Method.isAssignableFrom(seed.getKlass());
-        StaticObject curMethod = seed;
+    //@formatter:off
+    /// Gets the [Method] value associated with `reflectMethod`.
+    ///
+    /// ```
+    /// while (reflectMethod.0vmMethod == null) {
+    ///     reflectMethod = reflectMethod.root;
+    /// }
+    /// reflectMethod.0vmMethod
+    /// ```
+    //@formatter:on
+    public static Method getVMMethod(@JavaType(java.lang.reflect.Method.class) StaticObject reflectMethod, Meta meta) {
+        assert reflectMethod.getKlass().getMeta().java_lang_reflect_Method.isAssignableFrom(reflectMethod.getKlass());
+        StaticObject curMethod = reflectMethod;
         do {
-            Method target = (Method) meta.HIDDEN_METHOD_KEY.getHiddenObject(curMethod);
+            Method target = (Method) meta.java_lang_reflect_Method_0vmMethod.getHiddenObject(curMethod);
             if (target != null) {
                 return target;
             }
             curMethod = meta.java_lang_reflect_Method_root.getObject(curMethod);
         } while (StaticObject.notNull(curMethod));
         CompilerDirectives.transferToInterpreterAndInvalidate();
-        throw EspressoError.shouldNotReachHere("Could not find HIDDEN_METHOD_KEY");
+        throw EspressoError.shouldNotReachHere("Could not find non-null Method.0vmMethod");
     }
 
-    public static Method getHostReflectiveConstructorRoot(StaticObject seed, Meta meta) {
-        assert seed.getKlass().getMeta().java_lang_reflect_Constructor.isAssignableFrom(seed.getKlass());
-        StaticObject curMethod = seed;
+    //@formatter:off
+    /// Gets the [Method] value associated with `reflectConstructor`.
+    ///
+    /// ```
+    /// var root;
+    /// do {
+    ///     if (reflectConstructor.0vmMethod != null) {
+    ///         return reflectConstructor.0vmMethod;
+    ///     }
+    ///     root = reflectConstructor;
+    ///     reflectConstructor = reflectConstructor.root;
+    /// } while (reflectConstructor != null);
+    /// return (root.0vmMethod = lookupDeclaredMethod(root.clazz, "<init>", root.parameterTypes));
+    /// ```
+    //@formatter:on
+    public static Method getVMMethodForConstructor(@JavaType(java.lang.reflect.Constructor.class) StaticObject reflectConstructor, Meta meta) {
+        assert reflectConstructor.getKlass().getMeta().java_lang_reflect_Constructor.isAssignableFrom(reflectConstructor.getKlass());
+        StaticObject curMethod = reflectConstructor;
         StaticObject rootMethod;
         do {
-            Method target = (Method) meta.HIDDEN_CONSTRUCTOR_KEY.getHiddenObject(curMethod);
+            Method target = (Method) meta.java_lang_reflect_Constructor_0vmMethod.getHiddenObject(curMethod);
             if (target != null) {
                 return target;
             }
@@ -789,10 +816,10 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
             curMethod = meta.java_lang_reflect_Constructor_root.getObject(curMethod);
         } while ((StaticObject.notNull(curMethod)));
         CompilerDirectives.transferToInterpreter();
-        // the root Constructor was not created by makeConstructor
-        // this can happen in ReflectionFactory#generateConstructor
-        // use the reflection data to find the constructor.
-        // the best would be to use the slot, but we don't have a redefinition-stable int that
+        // The root Constructor was not created by makeConstructor.
+        // This can happen in ReflectionFactory#generateConstructor.
+        // Use the reflection data to find the constructor.
+        // Best would be to use Constructor.slot, but we don't have a redefinition-stable int that
         // identifies the constructor.
         Klass holder = meta.java_lang_reflect_Constructor_clazz.getObject(rootMethod).getMirrorKlass(meta);
         Symbol<Signature> signature = rebuildConstructorSignature(meta, rootMethod);
@@ -800,7 +827,7 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
         Method method = holder.lookupDeclaredMethod(Names._init_, signature, LookupMode.INSTANCE_ONLY);
         assert method != null;
         // remember the mapping for the next query
-        meta.HIDDEN_CONSTRUCTOR_KEY.setHiddenObject(rootMethod, method);
+        meta.java_lang_reflect_Constructor_0vmMethod.setHiddenObject(rootMethod, method);
         return method;
     }
 
@@ -1147,8 +1174,8 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
                         /* annotations */ runtimeVisibleAnnotations,
                         /* parameterAnnotations */ runtimeVisibleParameterAnnotations);
 
-        meta.HIDDEN_CONSTRUCTOR_KEY.setHiddenObject(instance, this);
-        meta.HIDDEN_CONSTRUCTOR_RUNTIME_VISIBLE_TYPE_ANNOTATIONS.setHiddenObject(instance, runtimeVisibleTypeAnnotations);
+        meta.java_lang_reflect_Constructor_0vmMethod.setHiddenObject(instance, this);
+        meta.java_lang_reflect_Constructor_0runtimeVisibleTypeAnnotations.setHiddenObject(instance, runtimeVisibleTypeAnnotations);
 
         return instance;
     }
@@ -1215,8 +1242,8 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
                         /* annotations */ runtimeVisibleAnnotations,
                         /* parameterAnnotations */ runtimeVisibleParameterAnnotations,
                         /* annotationDefault */ annotationDefault);
-        meta.HIDDEN_METHOD_KEY.setHiddenObject(instance, this);
-        meta.HIDDEN_METHOD_RUNTIME_VISIBLE_TYPE_ANNOTATIONS.setHiddenObject(instance, runtimeVisibleTypeAnnotations);
+        meta.java_lang_reflect_Method_0vmMethod.setHiddenObject(instance, this);
+        meta.java_lang_reflect_Method_0runtimeVisibleTypeAnnotations.setHiddenObject(instance, runtimeVisibleTypeAnnotations);
         return instance;
     }
 
@@ -2183,6 +2210,9 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
                         ReadMember.LEAF_METHOD,
                         ReadMember.HAS_POISON,
                         ReadMember.HOLDER,
+                        ReadMember.PARAMETERS,
+                        ReadMember.VTABLE_INDEX,
+                        ReadMember.METHOD_HANDLE_INTRINSIC,
         };
         ALL_MEMBERS = new KeysArray<>(readableMembers);
         ALL_MEMBERS_SET = Set.of(readableMembers);
@@ -2205,6 +2235,9 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
         static final String LEAF_METHOD = "leafMethod";
         static final String HAS_POISON = "hasPoison";
         static final String HOLDER = "holder";
+        static final String PARAMETERS = "parameters";
+        static final String VTABLE_INDEX = "vtableIndex";
+        static final String METHOD_HANDLE_INTRINSIC = "methodHandleIntrinsic";
 
         @Specialization(guards = "FLAGS.equals(member)")
         static int getFlags(Method receiver, @SuppressWarnings("unused") String member) {
@@ -2349,6 +2382,47 @@ public final class Method extends Member<Signature> implements MethodRef, Truffl
         static ObjectKlass holder(Method receiver, @SuppressWarnings("unused") String member) {
             assert EspressoLanguage.get(null).isExternalJVMCIEnabled();
             return receiver.getDeclaringKlass();
+        }
+
+        @Specialization(guards = "PARAMETERS.equals(member)")
+        static Object parameters(Method receiver, @SuppressWarnings("unused") String member) {
+            assert EspressoLanguage.get(null).isExternalJVMCIEnabled();
+            MethodParametersAttribute methodParameters = receiver.getAttribute(MethodParametersAttribute.NAME, MethodParametersAttribute.class);
+            if (methodParameters == null) {
+                return StaticObject.NULL;
+            }
+            MethodParametersAttribute.Entry[] entries = methodParameters.getEntries();
+            ParameterInteropWrapper[] parameters = new ParameterInteropWrapper[entries.length];
+            ConstantPool constantPool = receiver.getConstantPool();
+            for (int i = 0; i < entries.length; i++) {
+                MethodParametersAttribute.Entry entry = entries[i];
+                parameters[i] = new ParameterInteropWrapper(constantPool.utf8At(entry.getNameIndex()), entry.getAccessFlags());
+            }
+            return new KeysArray<>(parameters);
+        }
+
+        @Specialization(guards = "VTABLE_INDEX.equals(member)")
+        static int getVTableIndex(Method receiver, @SuppressWarnings("unused") String member) {
+            assert EspressoLanguage.get(null).isExternalJVMCIEnabled();
+            return receiver.getVTableIndex();
+        }
+
+        @Specialization(guards = "METHOD_HANDLE_INTRINSIC.equals(member)")
+        static Object getMethodHandleIntrinsic(Method receiver, @SuppressWarnings("unused") String member) {
+            assert EspressoLanguage.get(null).isExternalJVMCIEnabled();
+            SignaturePolymorphicIntrinsic id = SignaturePolymorphicIntrinsic.getId(receiver);
+            if (id == null) {
+                return StaticObject.NULL;
+            }
+            return switch (id) {
+                case InvokeBasic -> "INVOKE_BASIC";
+                case LinkToStatic -> "LINK_TO_STATIC";
+                case LinkToSpecial -> "LINK_TO_SPECIAL";
+                case LinkToVirtual -> "LINK_TO_VIRTUAL";
+                case LinkToInterface -> "LINK_TO_INTERFACE";
+                case LinkToNative -> "LINK_TO_NATIVE";
+                case InvokeGeneric -> StaticObject.NULL;
+            };
         }
 
         @Fallback

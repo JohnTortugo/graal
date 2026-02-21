@@ -41,11 +41,11 @@ import org.graalvm.nativeimage.ImageSingletons;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.hosted.reflect.proxy.ProxyRenamingSubstitutionProcessor;
-import com.oracle.svm.util.GraalAccess;
+import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 
 import jdk.vm.ci.meta.MetaAccessProvider;
@@ -69,7 +69,7 @@ public class BootstrapMethodConfiguration implements InternalFeature {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
-        MetaAccessProvider metaAccess = GraalAccess.getOriginalProviders().getMetaAccess();
+        MetaAccessProvider metaAccess = GuestAccess.get().getProviders().getMetaAccess();
         /*
          * Bootstrap method used for Lambdas. Executing this method at run time implies defining
          * hidden class at run time, which is unsupported.

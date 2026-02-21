@@ -55,8 +55,8 @@ import org.graalvm.nativeimage.c.constant.CConstant;
 import org.graalvm.nativeimage.c.function.CEntryPoint;
 import org.graalvm.nativeimage.c.function.CLibrary;
 import org.graalvm.nativeimage.hosted.Feature;
-import org.graalvm.word.impl.Word.Operation;
 import org.graalvm.word.WordBase;
+import org.graalvm.word.impl.Word.Operation;
 
 import com.oracle.graal.pointsto.BigBang;
 import com.oracle.graal.pointsto.PointsToAnalysis;
@@ -75,7 +75,7 @@ import com.oracle.graal.pointsto.phases.InlineBeforeAnalysisGraphDecoder;
 import com.oracle.graal.pointsto.phases.InlineBeforeAnalysisPolicy;
 import com.oracle.graal.pointsto.util.AnalysisError;
 import com.oracle.svm.common.meta.GuaranteeFolded;
-import com.oracle.svm.common.meta.MultiMethod;
+import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.AlwaysInline;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.MissingRegistrationSupport;
@@ -106,7 +106,6 @@ import com.oracle.svm.core.hub.ReferenceType;
 import com.oracle.svm.core.imagelayer.DynamicImageLayerInfo;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.interpreter.InterpreterSupport;
-import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.jdk.LambdaFormHiddenMethod;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
@@ -116,7 +115,6 @@ import com.oracle.svm.core.threadlocal.VMThreadLocalInfo;
 import com.oracle.svm.core.util.Counter;
 import com.oracle.svm.core.util.HostedStringDeduplication;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
 import com.oracle.svm.hosted.analysis.SVMParsingSupport;
 import com.oracle.svm.hosted.c.libc.HostedLibCBase;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationFeature;
@@ -146,13 +144,14 @@ import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyImpl;
 import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyUtils;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.hosted.substitute.AutomaticUnsafeTransformationSupport;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.GraalAccess;
+import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.LogUtils;
 import com.oracle.svm.util.OriginalClassProvider;
 import com.oracle.svm.util.OriginalFieldProvider;
 import com.oracle.svm.util.OriginalMethodProvider;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.annotation.AnnotationValueSupport;
 import jdk.graal.compiler.api.replacements.Fold;
@@ -233,7 +232,7 @@ public class SVMHost extends HostVM {
      * results should still be deterministic.
      */
     private final Set<AnalysisField> stableFieldsToFoldBeforeAnalysis = ConcurrentHashMap.newKeySet();
-    private final MultiMethodAnalysisPolicy multiMethodAnalysisPolicy;
+    private final MethodVariantsAnalysisPolicy methodVariantsAnalysisPolicy;
     private final SVMParsingSupport parsingSupport;
     private final InlineBeforeAnalysisPolicy inlineBeforeAnalysisPolicy;
 
@@ -286,18 +285,18 @@ public class SVMHost extends HostVM {
         this.classInitializationSupport = classInitializationSupport;
         this.annotationSubstitutions = annotationSubstitutions;
         this.missingRegistrationSupport = missingRegistrationSupport;
-        this.originalMetaAccess = GraalAccess.getOriginalProviders().getMetaAccess();
+        this.originalMetaAccess = GuestAccess.get().getProviders().getMetaAccess();
         this.stringTable = HostedStringDeduplication.singleton();
         this.forbiddenTypes = setupForbiddenTypes(options);
         this.automaticUnsafeTransformations = new AutomaticUnsafeTransformationSupport(options, annotationSubstitutions, loader);
         this.platform = loader.platform;
         this.linkAtBuildTimeSupport = LinkAtBuildTimeSupport.singleton();
-        if (ImageSingletons.contains(MultiMethodAnalysisPolicy.class)) {
-            multiMethodAnalysisPolicy = ImageSingletons.lookup(MultiMethodAnalysisPolicy.class);
+        if (ImageSingletons.contains(MethodVariantsAnalysisPolicy.class)) {
+            methodVariantsAnalysisPolicy = ImageSingletons.lookup(MethodVariantsAnalysisPolicy.class);
         } else {
             /* Install the default so no other policy can be installed. */
-            ImageSingletons.add(HostVM.MultiMethodAnalysisPolicy.class, DEFAULT_MULTIMETHOD_ANALYSIS_POLICY);
-            multiMethodAnalysisPolicy = DEFAULT_MULTIMETHOD_ANALYSIS_POLICY;
+            ImageSingletons.add(MethodVariantsAnalysisPolicy.class, DEFAULT_METHOD_VARIANTS_ANALYSIS_POLICY);
+            methodVariantsAnalysisPolicy = DEFAULT_METHOD_VARIANTS_ANALYSIS_POLICY;
         }
         InlineBeforeAnalysisPolicyUtils inliningUtils = getInlineBeforeAnalysisPolicyUtils();
         inlineBeforeAnalysisPolicy = new InlineBeforeAnalysisPolicyImpl(this, inliningUtils);
@@ -331,7 +330,7 @@ public class SVMHost extends HostVM {
      */
     @Override
     public boolean isCoreType(ResolvedJavaType type) {
-        return loader.getBuilderModules().contains(OriginalClassProvider.getJavaClass(type).getModule());
+        return loader.getBuilderModules().contains(GuestAccess.get().getModule(OriginalClassProvider.getOriginalType(type)));
     }
 
     @Override
@@ -464,8 +463,8 @@ public class SVMHost extends HostVM {
     public void registerType(AnalysisType analysisType, int identityHashCode) {
         DynamicHub hub = createHub(analysisType);
 
-        ConstantReflectionProvider constantReflection = GraalAccess.getOriginalProviders().getConstantReflection();
-        JavaConstant hubConstant = GraalAccess.getOriginalSnippetReflection().forObject(hub);
+        ConstantReflectionProvider constantReflection = GuestAccess.get().getProviders().getConstantReflection();
+        JavaConstant hubConstant = GuestAccess.get().getSnippetReflection().forObject(hub);
         int actualHashCode = constantReflection.makeIdentityHashCode(hubConstant, identityHashCode);
         if (actualHashCode != identityHashCode) {
             throw VMError.shouldNotReachHere("The identity hash code was already set to %d when trying to set it to %d from the base layer.",
@@ -621,7 +620,7 @@ public class SVMHost extends HostVM {
         boolean isRecord = javaClass.isRecord();
         boolean assertionStatus = RuntimeAssertionsSupport.singleton().desiredAssertionStatus(javaClass);
         boolean isSealed = javaClass.isSealed();
-        boolean isVMInternal = AnnotationUtil.isAnnotationPresent(type, InternalVMMethod.class);
+        boolean isVMInternal = AnnotationUtil.isAnnotationPresent(type, GuestAccess.elements().InternalVMMethod);
         boolean isLambdaFormHidden = AnnotationUtil.isAnnotationPresent(type, LambdaFormHiddenMethod.class);
         boolean isLinked = type.isLinked();
 
@@ -766,7 +765,7 @@ public class SVMHost extends HostVM {
         /*
          * Runtime compiled methods can deoptimize.
          */
-        return method.getMultiMethodKey() != SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
+        return method.getMethodVariantKey() != SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
     }
 
     @Override
@@ -787,13 +786,13 @@ public class SVMHost extends HostVM {
                  * image run time.
                  */
                 if (StaticFinalFieldFoldingPhase.isEnabled() && !SubstrateCompilationDirectives.isDeoptTarget(method)) {
-                    new StaticFinalFieldFoldingPhase().apply(graph, getProviders(method.getMultiMethodKey()));
+                    new StaticFinalFieldFoldingPhase().apply(graph, getProviders(method.getMethodVariantKey()));
                 }
                 /*
                  * Runtime compiled methods should not have assertions. If they do, then they should
                  * be caught via the blocklist instead of being converted to bytecode exceptions.
                  */
-                new ImplicitAssertionsPhase().apply(graph, getProviders(method.getMultiMethodKey()));
+                new ImplicitAssertionsPhase().apply(graph, getProviders(method.getMethodVariantKey()));
             }
             UninterruptibleAnnotationChecker.checkAfterParsing(method, graph, bb.getConstantReflectionProvider());
 
@@ -802,7 +801,7 @@ public class SVMHost extends HostVM {
              * Do a complete Canonicalizer run once before graph encoding, to clean up any leftover
              * uncanonicalized nodes.
              */
-            CanonicalizerPhase.create().apply(graph, getProviders(method.getMultiMethodKey()));
+            CanonicalizerPhase.create().apply(graph, getProviders(method.getMethodVariantKey()));
             /*
              * To avoid keeping the whole Graal graphs alive in production use cases, we extract the
              * necessary bits of information and store them in secondary storage maps.
@@ -833,8 +832,8 @@ public class SVMHost extends HostVM {
                  * For runtime compiled methods, PEA should run after analysis, since
                  * InlinedInvokeArgumentNodes from early inlining would keep objects materialized.
                  */
-                new BoxNodeIdentityPhase().apply(graph, getProviders(method.getMultiMethodKey()));
-                new PartialEscapePhase(false, false, CanonicalizerPhase.create(), null, options).apply(graph, getProviders(method.getMultiMethodKey()));
+                new BoxNodeIdentityPhase().apply(graph, getProviders(method.getMethodVariantKey()));
+                new PartialEscapePhase(false, false, CanonicalizerPhase.create(), null, options).apply(graph, getProviders(method.getMethodVariantKey()));
             }
         }
     }
@@ -933,16 +932,16 @@ public class SVMHost extends HostVM {
         return AnnotationUtil.isAnnotationPresent(method, AlwaysInline.class) || AnnotationUtil.isAnnotationPresent(method, ForceInline.class);
     }
 
-    private InlineBeforeAnalysisPolicy inlineBeforeAnalysisPolicy(MultiMethod.MultiMethodKey multiMethodKey) {
+    private InlineBeforeAnalysisPolicy inlineBeforeAnalysisPolicy(MethodVariant.MethodVariantKey methodVariantKey) {
         if (parsingSupport != null) {
-            return parsingSupport.inlineBeforeAnalysisPolicy(multiMethodKey, inlineBeforeAnalysisPolicy);
+            return parsingSupport.inlineBeforeAnalysisPolicy(methodVariantKey, inlineBeforeAnalysisPolicy);
         }
         return inlineBeforeAnalysisPolicy;
     }
 
     @Override
     public InlineBeforeAnalysisGraphDecoder createInlineBeforeAnalysisGraphDecoder(BigBang bb, AnalysisMethod method, StructuredGraph resultGraph) {
-        return new InlineBeforeAnalysisGraphDecoderImpl(bb, inlineBeforeAnalysisPolicy(method.getMultiMethodKey()), resultGraph, bb.getProviders(method));
+        return new InlineBeforeAnalysisGraphDecoderImpl(bb, inlineBeforeAnalysisPolicy(method.getMethodVariantKey()), resultGraph, bb.getProviders(method));
     }
 
     public static class Options {
@@ -971,7 +970,7 @@ public class SVMHost extends HostVM {
 
     @Override
     public boolean platformSupported(AnnotatedElement element) {
-        return platformSupported(GraalAccess.toAnnotated(element));
+        return platformSupported(GuestAccess.get().toAnnotated(element));
     }
 
     @Override
@@ -1182,7 +1181,7 @@ public class SVMHost extends HostVM {
         }
 
         /* Methods with an invocation plugin should not be included. */
-        InvocationPlugins invocationPlugins = getProviders(MultiMethod.ORIGINAL_METHOD).getGraphBuilderPlugins().getInvocationPlugins();
+        InvocationPlugins invocationPlugins = getProviders(MethodVariant.ORIGINAL_METHOD).getGraphBuilderPlugins().getInvocationPlugins();
         if (invocationPlugins.lookupInvocation(method, bb.getOptions()) != null) {
             return false;
         }
@@ -1505,7 +1504,7 @@ public class SVMHost extends HostVM {
     }
 
     @Override
-    public HostedProviders getProviders(MultiMethod.MultiMethodKey key) {
+    public HostedProviders getProviders(MethodVariant.MethodVariantKey key) {
         if (parsingSupport != null) {
             HostedProviders p = parsingSupport.getHostedProviders(key);
             if (p != null) {
@@ -1516,8 +1515,8 @@ public class SVMHost extends HostVM {
     }
 
     @Override
-    public MultiMethodAnalysisPolicy getMultiMethodAnalysisPolicy() {
-        return multiMethodAnalysisPolicy;
+    public MethodVariantsAnalysisPolicy getMethodVariantsAnalysisPolicy() {
+        return methodVariantsAnalysisPolicy;
     }
 
     @Override
@@ -1535,7 +1534,7 @@ public class SVMHost extends HostVM {
     }
 
     @Override
-    public Predicate<AnalysisType> getStrengthenGraphsTypePredicate(MultiMethod.MultiMethodKey key) {
+    public Predicate<AnalysisType> getStrengthenGraphsTypePredicate(MethodVariant.MethodVariantKey key) {
         if (parsingSupport != null) {
             var result = parsingSupport.getStrengthenGraphsTypePredicate(key);
             if (result != null) {

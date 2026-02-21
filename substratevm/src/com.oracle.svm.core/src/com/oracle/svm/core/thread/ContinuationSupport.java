@@ -31,7 +31,7 @@ import org.graalvm.nativeimage.c.function.CodePointer;
 import org.graalvm.word.Pointer;
 
 import com.oracle.svm.core.NeverInline;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.UnmanagedMemoryUtil;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.graal.nodes.WriteStackPointerNode;
@@ -39,10 +39,10 @@ import com.oracle.svm.core.heap.StoredContinuation;
 import com.oracle.svm.core.heap.StoredContinuationAccess;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.options.Option;

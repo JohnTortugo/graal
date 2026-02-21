@@ -33,14 +33,16 @@ import org.graalvm.nativeimage.c.function.CFunction;
 
 import com.oracle.svm.core.AlwaysInline;
 import com.oracle.svm.core.NeverInline;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.core.UninterruptibleAnnotationUtils;
+import com.oracle.svm.core.UninterruptibleAnnotationUtils.UninterruptibleGuestValue;
 import com.oracle.svm.core.classinitialization.EnsureClassInitializedNode;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.util.AnnotationUtil;
 
@@ -76,7 +78,7 @@ public final class UninterruptibleAnnotationChecker {
     }
 
     public static void checkAfterParsing(ResolvedJavaMethod method, StructuredGraph graph, ConstantReflectionProvider constantReflectionProvider) {
-        if (Uninterruptible.Utils.isUninterruptible(method) && graph != null) {
+        if (UninterruptibleAnnotationUtils.isUninterruptible(method) && graph != null) {
             singleton().checkGraph(method, graph, constantReflectionProvider);
         }
     }
@@ -88,7 +90,7 @@ public final class UninterruptibleAnnotationChecker {
 
         UninterruptibleAnnotationChecker c = singleton();
         for (HostedMethod method : methods) {
-            Uninterruptible annotation = Uninterruptible.Utils.getAnnotation(method);
+            UninterruptibleGuestValue annotation = UninterruptibleAnnotationUtils.getAnnotation(method);
             CompilationGraph graph = method.compilationInfo.getCompilationGraph();
             c.checkSpecifiedOptions(method, annotation);
             c.checkOverrides(method, annotation);
@@ -113,7 +115,7 @@ public final class UninterruptibleAnnotationChecker {
         }
     }
 
-    private void checkSpecifiedOptions(HostedMethod method, Uninterruptible annotation) {
+    private void checkSpecifiedOptions(HostedMethod method, UninterruptibleGuestValue annotation) {
         if (annotation == null) {
             return;
         }
@@ -180,12 +182,12 @@ public final class UninterruptibleAnnotationChecker {
      * {@linkplain Uninterruptible} even though the overridden method is not annotated with
      * {@linkplain Uninterruptible}.
      */
-    private void checkOverrides(HostedMethod method, Uninterruptible methodAnnotation) {
+    private void checkOverrides(HostedMethod method, UninterruptibleGuestValue methodAnnotation) {
         if (methodAnnotation == null) {
             return;
         }
         for (HostedMethod impl : method.getImplementations()) {
-            Uninterruptible implAnnotation = Uninterruptible.Utils.getAnnotation(impl);
+            UninterruptibleGuestValue implAnnotation = UninterruptibleAnnotationUtils.getAnnotation(impl);
             if (implAnnotation != null) {
                 if (methodAnnotation.callerMustBe() != implAnnotation.callerMustBe()) {
                     violations.add("callerMustBe: " + method.format("%H.%n(%p):%r") + " != " + impl.format("%H.%n(%p):%r"));
@@ -207,7 +209,7 @@ public final class UninterruptibleAnnotationChecker {
      * A caller can be annotated with "calleeMustBe = false" to allow calls to methods that are not
      * annotated with {@link Uninterruptible}, to allow the few cases where that should be allowed.
      */
-    private void checkCallees(HostedMethod caller, Uninterruptible callerAnnotation, CompilationGraph graph) {
+    private void checkCallees(HostedMethod caller, UninterruptibleGuestValue callerAnnotation, CompilationGraph graph) {
         if (callerAnnotation == null || graph == null) {
             return;
         }
@@ -217,13 +219,13 @@ public final class UninterruptibleAnnotationChecker {
                 printDotGraphEdge(caller, callee);
             }
 
-            Uninterruptible directCallerAnnotation = Uninterruptible.Utils.getAnnotation(invoke.getDirectCaller());
+            UninterruptibleGuestValue directCallerAnnotation = UninterruptibleAnnotationUtils.getAnnotation(invoke.getDirectCaller());
             if (directCallerAnnotation == null) {
                 violations.add("Unannotated callee: " + invoke.getDirectCaller().format("%H.%n(%p):%r") + " inlined into annotated caller " + caller.format("%H.%n(%p):%r") +
                                 System.lineSeparator() + invoke.getNodeSourcePosition());
             } else {
                 if (directCallerAnnotation.calleeMustBe()) {
-                    if (!Uninterruptible.Utils.isUninterruptible(callee)) {
+                    if (!UninterruptibleAnnotationUtils.isUninterruptible(callee)) {
                         violations.add("Unannotated callee: " + callee.format("%H.%n(%p):%r") + " called by annotated caller " + caller.format("%H.%n(%p):%r") +
                                         System.lineSeparator() + invoke.getNodeSourcePosition());
                     }
@@ -246,7 +248,7 @@ public final class UninterruptibleAnnotationChecker {
      * Check that each method that calls a method annotated with {@linkplain Uninterruptible} that
      * has "callerMustBe = true" is also annotated with {@linkplain Uninterruptible}.
      */
-    private void checkCallers(HostedMethod caller, Uninterruptible callerAnnotation, CompilationGraph graph) {
+    private void checkCallers(HostedMethod caller, UninterruptibleGuestValue callerAnnotation, CompilationGraph graph) {
         if (callerAnnotation != null || graph == null) {
             return;
         }
@@ -259,7 +261,7 @@ public final class UninterruptibleAnnotationChecker {
     }
 
     private void checkGraph(ResolvedJavaMethod method, StructuredGraph graph, ConstantReflectionProvider constantReflectionProvider) {
-        Uninterruptible annotation = Uninterruptible.Utils.getAnnotation(method);
+        UninterruptibleGuestValue annotation = UninterruptibleAnnotationUtils.getAnnotation(method);
         for (Node node : graph.getNodes()) {
             if (isAllocationNode(node)) {
                 violations.add("Uninterruptible method " + method.format("%H.%n(%p)") + " is not allowed to allocate.");
@@ -284,25 +286,25 @@ public final class UninterruptibleAnnotationChecker {
     }
 
     private static boolean isCallerMustBe(HostedMethod method) {
-        Uninterruptible annotation = Uninterruptible.Utils.getAnnotation(method);
+        UninterruptibleGuestValue annotation = UninterruptibleAnnotationUtils.getAnnotation(method);
         return annotation != null && annotation.callerMustBe();
     }
 
     private static boolean isCalleeMustBe(HostedMethod method) {
-        Uninterruptible annotation = Uninterruptible.Utils.getAnnotation(method);
+        UninterruptibleGuestValue annotation = UninterruptibleAnnotationUtils.getAnnotation(method);
         return annotation != null && annotation.calleeMustBe();
     }
 
     private static void printDotGraphEdge(HostedMethod caller, HostedMethod callee) {
         String callerColor = " [color=black]";
         String calleeColor;
-        if (Uninterruptible.Utils.isUninterruptible(caller)) {
+        if (UninterruptibleAnnotationUtils.isUninterruptible(caller)) {
             callerColor = " [color=blue]";
             if (!isCalleeMustBe(caller)) {
                 callerColor = " [color=orange]";
             }
         }
-        if (Uninterruptible.Utils.isUninterruptible(callee)) {
+        if (UninterruptibleAnnotationUtils.isUninterruptible(callee)) {
             calleeColor = " [color=blue]";
             if (!isCalleeMustBe(callee)) {
                 calleeColor = " [color=purple]";

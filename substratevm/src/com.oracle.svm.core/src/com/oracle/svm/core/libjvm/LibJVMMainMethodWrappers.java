@@ -32,11 +32,11 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.BuiltinTraits.PartiallyLayerAware;
-import com.oracle.svm.core.traits.BuiltinTraits.RuntimeAccessOnly;
-import com.oracle.svm.core.traits.SingletonTraits;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.PartiallyLayerAware;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * The methods in this class are stand-ins for the JNI entrypoints of a Crema-loaded application

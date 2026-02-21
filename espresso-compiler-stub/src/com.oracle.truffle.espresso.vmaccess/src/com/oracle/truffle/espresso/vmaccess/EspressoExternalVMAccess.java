@@ -97,16 +97,16 @@ final class EspressoExternalVMAccess implements VMAccess {
     // Checkstyle: stop field name check
     // j.l.Object
     private final EspressoExternalResolvedInstanceType java_lang_Object;
-    private final ResolvedJavaMethod java_lang_Object_toString;
+    private final EspressoExternalResolvedJavaMethod java_lang_Object_toString;
     // j.l.Class
-    private final ResolvedJavaMethod java_lang_Class_forName_String_boolean_ClassLoader;
-    private final ResolvedJavaMethod java_lang_Class_getProtectionDomain;
+    private final EspressoExternalResolvedJavaMethod java_lang_Class_forName_String_boolean_ClassLoader;
+    private final EspressoExternalResolvedJavaMethod java_lang_Class_getProtectionDomain;
+    final EspressoExternalResolvedJavaMethod java_lang_Class_arrayType;
+    private final EspressoExternalResolvedJavaMethod java_lang_Class_getModule;
+    private final EspressoExternalResolvedJavaMethod java_lang_Class_getPackage;
     // j.l.ClassNotFoundException
-    private final ResolvedJavaType java_lang_ClassNotFoundException;
+    private final EspressoExternalResolvedInstanceType java_lang_ClassNotFoundException;
     // j.l.Module
-    final ResolvedJavaType java_lang_Module;
-    private final ResolvedJavaMethod java_lang_Class_getModule;
-    private final ResolvedJavaMethod java_lang_Class_getPackage;
     final EspressoExternalResolvedJavaMethod java_lang_Module_getDescriptor;
     final EspressoExternalResolvedJavaMethod java_lang_Module_getPackages;
     final EspressoExternalResolvedJavaMethod java_lang_Module_isExported_String;
@@ -114,6 +114,8 @@ final class EspressoExternalVMAccess implements VMAccess {
     final EspressoExternalResolvedJavaMethod java_lang_Module_isOpen_String;
     final EspressoExternalResolvedJavaMethod java_lang_Module_isOpen_String_Module;
     final EspressoExternalResolvedJavaMethod java_lang_Module_getName;
+    // j.l.Throwable
+    final EspressoExternalResolvedInstanceType java_lang_Throwable;
     // j.l.module.ModuleDescriptor
     final EspressoExternalResolvedJavaMethod java_lang_module_ModuleDescriptor_isAutomatic;
     // j.l.NamedPackage
@@ -121,10 +123,40 @@ final class EspressoExternalVMAccess implements VMAccess {
     // j.l.Package
     final EspressoExternalResolvedJavaMethod java_lang_Package_getPackageInfo;
     // java.security
-    private final ResolvedJavaMethod java_security_ProtectionDomain_getCodeSource;
-    private final ResolvedJavaMethod java_security_CodeSource_getLocation;
+    private final EspressoExternalResolvedJavaMethod java_security_ProtectionDomain_getCodeSource;
+    private final EspressoExternalResolvedJavaMethod java_security_CodeSource_getLocation;
     // jdk.internal.misc.Unsafe
-    private final ResolvedJavaMethod jdk_internal_misc_Unsafe_allocateInstance_Class;
+    private final EspressoExternalResolvedJavaMethod jdk_internal_misc_Unsafe_allocateInstance_Class;
+    // Boxes
+    final EspressoExternalResolvedInstanceType java_lang_Boolean;
+    final EspressoExternalResolvedInstanceType java_lang_Byte;
+    final EspressoExternalResolvedInstanceType java_lang_Short;
+    final EspressoExternalResolvedInstanceType java_lang_Character;
+    final EspressoExternalResolvedInstanceType java_lang_Integer;
+    final EspressoExternalResolvedInstanceType java_lang_Long;
+    final EspressoExternalResolvedInstanceType java_lang_Float;
+    final EspressoExternalResolvedInstanceType java_lang_Double;
+
+    final EspressoExternalResolvedJavaMethod java_lang_Boolean_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Byte_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Short_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Character_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Integer_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Long_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Float_valueOf;
+    final EspressoExternalResolvedJavaMethod java_lang_Double_valueOf;
+
+    final EspressoExternalResolvedJavaMethod java_lang_Boolean_booleanValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Byte_byteValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Short_shortValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Character_charValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Integer_intValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Long_longValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Float_floatValue;
+    final EspressoExternalResolvedJavaMethod java_lang_Double_doubleValue;
+
+    final Value java_lang_String_class;
+    final Value byte_array_class;
     // Checkstyle: resume field name check
 
     @SuppressWarnings("this-escape")
@@ -150,95 +182,97 @@ final class EspressoExternalVMAccess implements VMAccess {
         platformClassLoader = invoke(getPlatformClassLoader, null);
 
         ResolvedJavaType classType = providers.getMetaAccess().lookupJavaType(Class.class);
-        Signature forNameSignature = providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;");
-        java_lang_Class_forName_String_boolean_ClassLoader = classType.findMethod("forName", forNameSignature);
-        java_lang_ClassNotFoundException = providers.getMetaAccess().lookupJavaType(ClassNotFoundException.class);
+        java_lang_Class_forName_String_boolean_ClassLoader = requireMethod(classType, "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", providers);
+        java_lang_ClassNotFoundException = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(ClassNotFoundException.class);
+
+        java_lang_Throwable = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Throwable.class);
 
         ResolvedJavaType unsafeType = lookupBootClassLoaderType("jdk.internal.misc.Unsafe");
-        jdk_internal_misc_Unsafe_allocateInstance_Class = unsafeType.findMethod("allocateInstance", providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/Class;)Ljava/lang/Object;"));
-        ResolvedJavaMethod unsafeGetter = unsafeType.findMethod("getUnsafe", providers.getMetaAccess().parseMethodDescriptor("()Ljdk/internal/misc/Unsafe;"));
-        unsafe = invoke(unsafeGetter, null);
+        jdk_internal_misc_Unsafe_allocateInstance_Class = requireMethod(unsafeType, "allocateInstance", "(Ljava/lang/Class;)Ljava/lang/Object;", providers);
+        unsafe = invoke(requireMethod(unsafeType, "getUnsafe", "()Ljdk/internal/misc/Unsafe;", providers), null);
 
         ResolvedJavaType protectionDomainType = providers.getMetaAccess().lookupJavaType(ProtectionDomain.class);
         ResolvedJavaType codeSourceType = providers.getMetaAccess().lookupJavaType(CodeSource.class);
 
-        Signature getProtectionDomainSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/security/ProtectionDomain;");
-        java_lang_Class_getProtectionDomain = classType.findMethod("getProtectionDomain", getProtectionDomainSignature);
+        java_lang_Class_getProtectionDomain = requireMethod(classType, "getProtectionDomain", "()Ljava/security/ProtectionDomain;", providers);
+        java_security_ProtectionDomain_getCodeSource = requireMethod(protectionDomainType, "getCodeSource", "()Ljava/security/CodeSource;", providers);
+        java_security_CodeSource_getLocation = requireMethod(codeSourceType, "getLocation", "()Ljava/net/URL;", providers);
+        java_lang_Object_toString = requireMethod(java_lang_Object, "toString", "()Ljava/lang/String;", providers);
+        java_lang_Class_getModule = requireMethod(classType, "getModule", "()Ljava/lang/Module;", providers);
+        java_lang_Class_getPackage = requireMethod(classType, "getPackage", "()Ljava/lang/Package;", providers);
+        java_lang_Class_arrayType = requireMethod(classType, "arrayType", "()Ljava/lang/Class;", providers);
 
-        Signature getCodeSourceSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/security/CodeSource;");
-        java_security_ProtectionDomain_getCodeSource = protectionDomainType.findMethod("getCodeSource", getCodeSourceSignature);
+        java_lang_String_class = constantReflection.asJavaClass(metaAccess.lookupJavaType(String.class)).getValue();
+        byte_array_class = constantReflection.asJavaClass(metaAccess.lookupJavaType(byte[].class)).getValue();
 
-        Signature getLocationSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/net/URL;");
-        java_security_CodeSource_getLocation = codeSourceType.findMethod("getLocation", getLocationSignature);
-
-        Signature toStringSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/String;");
-        java_lang_Object_toString = java_lang_Object.findMethod("toString", toStringSignature);
-
-        Signature getModuleSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/Module;");
-        java_lang_Class_getModule = classType.findMethod("getModule", getModuleSignature);
-
-        Signature getPackageSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/Package;");
-        java_lang_Class_getPackage = classType.findMethod("getPackage", getPackageSignature);
-
-        java_lang_Module = providers.getMetaAccess().lookupJavaType(Module.class);
-
-        Signature getDescriptorSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/module/ModuleDescriptor;");
-        java_lang_Module_getDescriptor = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("getDescriptor", getDescriptorSignature);
-
-        Signature getPackagesSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/util/Set;");
-        java_lang_Module_getPackages = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("getPackages", getPackagesSignature);
-
-        Signature isExportedStringSignature = providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/String;)Z");
-        java_lang_Module_isExported_String = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("isExported", isExportedStringSignature);
-
-        Signature isExportedStringModuleSignature = providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/String;Ljava/lang/Module;)Z");
-        java_lang_Module_isExported_String_Module = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("isExported", isExportedStringModuleSignature);
-
-        Signature isOpenStringSignature = providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/String;)Z");
-        java_lang_Module_isOpen_String = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("isOpen", isOpenStringSignature);
-
-        Signature isOpenStringModuleSignature = providers.getMetaAccess().parseMethodDescriptor("(Ljava/lang/String;Ljava/lang/Module;)Z");
-        java_lang_Module_isOpen_String_Module = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("isOpen", isOpenStringModuleSignature);
-
-        Signature getNameSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/String;");
-        java_lang_Module_getName = (EspressoExternalResolvedJavaMethod) java_lang_Module.findMethod("getName", getNameSignature);
-
+        // j.l.Module
+        EspressoExternalResolvedInstanceType moduleType = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Module.class);
+        java_lang_Module_getDescriptor = requireMethod(moduleType, "getDescriptor", "()Ljava/lang/module/ModuleDescriptor;", providers);
+        java_lang_Module_getPackages = requireMethod(moduleType, "getPackages", "()Ljava/util/Set;", providers);
+        java_lang_Module_isExported_String = requireMethod(moduleType, "isExported", "(Ljava/lang/String;)Z", providers);
+        java_lang_Module_isExported_String_Module = requireMethod(moduleType, "isExported", "(Ljava/lang/String;Ljava/lang/Module;)Z", providers);
+        java_lang_Module_isOpen_String = requireMethod(moduleType, "isOpen", "(Ljava/lang/String;)Z", providers);
+        java_lang_Module_isOpen_String_Module = requireMethod(moduleType, "isOpen", "(Ljava/lang/String;Ljava/lang/Module;)Z", providers);
+        java_lang_Module_getName = requireMethod(moduleType, "getName", "()Ljava/lang/String;", providers);
         ResolvedJavaType moduleDescriptorType = providers.getMetaAccess().lookupJavaType(java.lang.module.ModuleDescriptor.class);
-        Signature isAutomaticSignature = providers.getMetaAccess().parseMethodDescriptor("()Z");
-        java_lang_module_ModuleDescriptor_isAutomatic = (EspressoExternalResolvedJavaMethod) moduleDescriptorType.findMethod("isAutomatic", isAutomaticSignature);
+        java_lang_module_ModuleDescriptor_isAutomatic = requireMethod(moduleDescriptorType, "isAutomatic", "()Z", providers);
 
         ResolvedJavaType namedPackageType = lookupBootClassLoaderType("java.lang.NamedPackage");
-        java_lang_NamedPackage_module = (EspressoExternalResolvedJavaField) lookupField(namedPackageType, "module");
+        java_lang_NamedPackage_module = requireField(namedPackageType, "module");
 
         ResolvedJavaType packageType = providers.getMetaAccess().lookupJavaType(java.lang.Package.class);
-        Signature getPackageInforSignature = providers.getMetaAccess().parseMethodDescriptor("()Ljava/lang/Class;");
-        java_lang_Package_getPackageInfo = (EspressoExternalResolvedJavaMethod) packageType.findMethod("getPackageInfo", getPackageInforSignature);
+        java_lang_Package_getPackageInfo = requireMethod(packageType, "getPackageInfo", "()Ljava/lang/Class;", providers);
 
-        JVMCIError.guarantee(java_lang_Class_forName_String_boolean_ClassLoader != null, "Required method: forName");
-        JVMCIError.guarantee(jdk_internal_misc_Unsafe_allocateInstance_Class != null, "Required method: unsafeAllocateInstance");
-        JVMCIError.guarantee(java_lang_Class_getProtectionDomain != null, "Required method: getProtectionDomain");
-        JVMCIError.guarantee(java_security_ProtectionDomain_getCodeSource != null, "Required method: getCodeSource");
-        JVMCIError.guarantee(java_security_CodeSource_getLocation != null, "Required method: getLocation");
-        JVMCIError.guarantee(java_lang_Object_toString != null, "Required method: toString");
-        JVMCIError.guarantee(java_lang_Class_getModule != null, "Required method: getModule");
-        JVMCIError.guarantee(java_lang_Class_getPackage != null, "Required method: getPackage");
-        JVMCIError.guarantee(java_lang_Module_getDescriptor != null, "Required method: Module.getDescriptor");
-        JVMCIError.guarantee(java_lang_module_ModuleDescriptor_isAutomatic != null, "Required method: ModuleDescriptor.isAutomatic");
-        JVMCIError.guarantee(java_lang_Module_getPackages != null, "Required method: Module.getPackages");
-        JVMCIError.guarantee(java_lang_Module_isExported_String != null, "Required method: Module.isExported(String)");
-        JVMCIError.guarantee(java_lang_Module_isExported_String_Module != null, "Required method: Module.isExported(String, Module)");
-        JVMCIError.guarantee(java_lang_Module_isOpen_String != null, "Required method: Module.isOpen(String)");
-        JVMCIError.guarantee(java_lang_Module_isOpen_String_Module != null, "Required method: Module.isOpen(String, Module)");
-        JVMCIError.guarantee(java_lang_Module_getName != null, "Required method: Module.getName");
-        JVMCIError.guarantee(java_lang_Package_getPackageInfo != null, "Required method: Package.getPackageInfo()");
-        JVMCIError.guarantee(java_lang_NamedPackage_module != null, "Required field: NamedPackage.module");
+        java_lang_Boolean = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Boolean.class);
+        java_lang_Byte = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Byte.class);
+        java_lang_Short = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Short.class);
+        java_lang_Character = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Character.class);
+        java_lang_Integer = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Integer.class);
+        java_lang_Long = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Long.class);
+        java_lang_Float = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Float.class);
+        java_lang_Double = (EspressoExternalResolvedInstanceType) providers.getMetaAccess().lookupJavaType(Double.class);
+
+        java_lang_Boolean_valueOf = requireMethod(java_lang_Boolean, "valueOf", "(Z)Ljava/lang/Boolean;", providers);
+        java_lang_Byte_valueOf = requireMethod(java_lang_Byte, "valueOf", "(B)Ljava/lang/Byte;", providers);
+        java_lang_Short_valueOf = requireMethod(java_lang_Short, "valueOf", "(S)Ljava/lang/Short;", providers);
+        java_lang_Character_valueOf = requireMethod(java_lang_Character, "valueOf", "(C)Ljava/lang/Character;", providers);
+        java_lang_Integer_valueOf = requireMethod(java_lang_Integer, "valueOf", "(I)Ljava/lang/Integer;", providers);
+        java_lang_Long_valueOf = requireMethod(java_lang_Long, "valueOf", "(J)Ljava/lang/Long;", providers);
+        java_lang_Float_valueOf = requireMethod(java_lang_Float, "valueOf", "(F)Ljava/lang/Float;", providers);
+        java_lang_Double_valueOf = requireMethod(java_lang_Double, "valueOf", "(D)Ljava/lang/Double;", providers);
+
+        java_lang_Boolean_booleanValue = requireMethod(java_lang_Boolean, "booleanValue", "()Z", providers);
+        java_lang_Byte_byteValue = requireMethod(java_lang_Byte, "byteValue", "()B", providers);
+        java_lang_Short_shortValue = requireMethod(java_lang_Short, "shortValue", "()S", providers);
+        java_lang_Character_charValue = requireMethod(java_lang_Character, "charValue", "()C", providers);
+        java_lang_Integer_intValue = requireMethod(java_lang_Integer, "intValue", "()I", providers);
+        java_lang_Long_longValue = requireMethod(java_lang_Long, "longValue", "()J", providers);
+        java_lang_Float_floatValue = requireMethod(java_lang_Float, "floatValue", "()F", providers);
+        java_lang_Double_doubleValue = requireMethod(java_lang_Double, "doubleValue", "()D", providers);
     }
 
-    private static ResolvedJavaField lookupField(ResolvedJavaType namedPackageType, String fieldName) {
-        ResolvedJavaField[] namedPackageFields = namedPackageType.getInstanceFields(false);
+    private static EspressoExternalResolvedJavaMethod requireMethod(ResolvedJavaType type, String name, String methodDescriptor, Providers providers) {
+        Signature forNameSignature = providers.getMetaAccess().parseMethodDescriptor(methodDescriptor);
+        EspressoExternalResolvedJavaMethod method = (EspressoExternalResolvedJavaMethod) type.findMethod(name, forNameSignature);
+        if (method == null) {
+            throw JVMCIError.shouldNotReachHere("Could not find required method:  " + type + "." + name + " " + methodDescriptor);
+        }
+        return method;
+    }
+
+    private static EspressoExternalResolvedJavaField requireField(ResolvedJavaType type, String fieldName) {
+        EspressoExternalResolvedJavaField field = lookupField(type, fieldName);
+        if (field == null) {
+            throw JVMCIError.shouldNotReachHere("Could not find required field: " + type + "." + fieldName);
+        }
+        return field;
+    }
+
+    private static EspressoExternalResolvedJavaField lookupField(ResolvedJavaType type, String fieldName) {
+        ResolvedJavaField[] namedPackageFields = type.getInstanceFields(false);
         for (ResolvedJavaField field : namedPackageFields) {
             if (fieldName.equals(field.getName())) {
-                return field;
+                return (EspressoExternalResolvedJavaField) field;
             }
         }
         return null;
@@ -266,7 +300,7 @@ final class EspressoExternalVMAccess implements VMAccess {
         LoweringProvider lowerer = new DummyLoweringProvider(target);
         StampProvider stampProvider = new DummyStampProvider();
         PlatformConfigurationProvider platformConfigurationProvider = new DummyPlatformConfigurationProvider();
-        SnippetReflectionProvider snippetReflection = new EspressoExternalSnippetReflectionProvider(this, metaAccess, constantReflection);
+        SnippetReflectionProvider snippetReflection = new EspressoExternalSnippetReflectionProvider(this);
         WordTypes wordTypes = new WordTypes(metaAccess, target.wordJavaKind);
         LoopsDataProvider loopsDataProvider = new LoopsDataProviderImpl();
         Providers newProviders = new Providers(metaAccess, codeCache, constantReflection, constantFieldProvider, foreignCalls,
@@ -384,6 +418,9 @@ final class EspressoExternalVMAccess implements VMAccess {
             if (java_lang_ClassNotFoundException.isInstance(exceptionObject)) {
                 return null;
             }
+            if (e.getCause() instanceof PolyglotException pe) {
+                throw throwHostException(pe);
+            }
             throw e;
         }
         return constantReflection.asJavaType(cls);
@@ -423,6 +460,14 @@ final class EspressoExternalVMAccess implements VMAccess {
             throw new IllegalArgumentException("Expected an EspressoExternalResolvedJavaMethod, got " + safeGetClass(method));
         }
         return espressoMethod.invoke(receiver, arguments);
+    }
+
+    @Override
+    public void writeField(ResolvedJavaField field, JavaConstant receiver, JavaConstant value) {
+        if (!(field instanceof EspressoExternalResolvedJavaField espressoField)) {
+            throw new IllegalArgumentException("Expected an EspressoExternalResolvedJavaField, got " + safeGetClass(field));
+        }
+        espressoField.writeValue(receiver, value);
     }
 
     @Override
@@ -499,29 +544,119 @@ final class EspressoExternalVMAccess implements VMAccess {
         return null;
     }
 
+    @Override
+    public JavaConstant asFieldConstant(ResolvedJavaField field) {
+        if (!(field instanceof EspressoExternalResolvedJavaField espressoField)) {
+            throw new IllegalArgumentException("Expected an EspressoExternalResolvedJavaMethod, got " + safeGetClass(field));
+        }
+        if (field.isInternal()) {
+            return null;
+        }
+        Value value = espressoField.getReflectFieldMirror();
+        if (value.isNull()) {
+            return null;
+        }
+        return new EspressoExternalObjectConstant(this, value);
+    }
+
+    @Override
+    public JavaConstant asExecutableConstant(ResolvedJavaMethod method) {
+        if (!(method instanceof EspressoExternalResolvedJavaMethod espressoMethod)) {
+            throw new IllegalArgumentException("Expected an EspressoExternalResolvedJavaMethod, got " + safeGetClass(method));
+        }
+        if (espressoMethod.isClassInitializer()) {
+            return null;
+        }
+        Value value = espressoMethod.getReflectExecutableMirror();
+        if (value.isNull()) {
+            return null;
+        }
+        return new EspressoExternalObjectConstant(this, value);
+    }
+
     static RuntimeException throwHostException(PolyglotException e) {
+        throw sneakyThrow(asHostException(e));
+    }
+
+    /**
+     * Attempts to convert {@code e} into an equivalent host-side Java exception. This allows
+     * host-side {@code catch} statements to work as expected instead of being by-passed due to
+     * exception wrapping. Conversion fails if {@code !e.isGuestException()} or the type of the
+     * guest exception is missing or is not one of the handled conversion types.
+     * <p>
+     * Conversion is applied recursively to {@code e.getCause()} if it's non-null.
+     *
+     * @return the converted exception if conversion was possible, {@code e} otherwise
+     */
+    private static Throwable asHostException(PolyglotException e) {
         if (!e.isGuestException()) {
-            throw e;
+            return e;
         }
         Value guestException = e.getGuestObject();
         if (guestException == null || guestException.isNull()) {
-            throw e;
+            return e;
         }
         Value guestExceptionMetaobject = guestException.getMetaObject();
         if (guestExceptionMetaobject == null || guestExceptionMetaobject.isNull()) {
-            throw e;
+            return e;
         }
         String guestExceptionQualifiedType = guestExceptionMetaobject.getMetaQualifiedName();
+        final String message = e.getMessage();
         Throwable t = switch (guestExceptionQualifiedType) {
-            case "java.lang.IndexOutOfBoundsException" -> new IndexOutOfBoundsException(e.getMessage());
-            case "java.lang.IllegalArgumentException" -> new IllegalArgumentException(e.getMessage());
-            case "java.lang.ClassFormatError" -> new ClassFormatError(e.getMessage());
-            default -> e;
+            // Exceptions
+            case "java.lang.ArithmeticException" -> new ArithmeticException(message);
+            case "java.lang.ArrayIndexOutOfBoundsException" -> new ArrayIndexOutOfBoundsException(message);
+            case "java.lang.ArrayStoreException" -> new ArrayStoreException(message);
+            case "java.lang.ClassCastException" -> new ClassCastException(message);
+            case "java.lang.ClassNotFoundException" -> new ClassNotFoundException(message);
+            case "java.lang.CloneNotSupportedException" -> new CloneNotSupportedException(message);
+            case "java.lang.IllegalAccessException" -> new IllegalAccessException(message);
+            case "java.lang.IllegalArgumentException" -> new IllegalArgumentException(message);
+            case "java.lang.IndexOutOfBoundsException" -> new IndexOutOfBoundsException(message);
+            case "java.lang.InstantiationException" -> new InstantiationException(message);
+            case "java.lang.reflect.InaccessibleObjectException" -> new java.lang.reflect.InaccessibleObjectException(message);
+            case "java.lang.NegativeArraySizeException" -> new NegativeArraySizeException(message);
+            case "java.lang.NoSuchFieldException" -> new NoSuchFieldException(message);
+            case "java.lang.NoSuchMethodException" -> new NoSuchMethodException(message);
+            case "java.lang.NullPointerException" -> new NullPointerException(message);
+            case "java.lang.RuntimeException" -> new RuntimeException(message);
+            case "java.lang.StringIndexOutOfBoundsException" -> new StringIndexOutOfBoundsException(message);
+            case "java.lang.UnsupportedOperationException" -> new UnsupportedOperationException(message);
+
+            // Errors
+            case "java.lang.AbstractMethodError" -> new AbstractMethodError(message);
+            case "java.lang.BootstrapMethodError" -> new BootstrapMethodError(message);
+            case "java.lang.ClassCircularityError" -> new ClassCircularityError(message);
+            case "java.lang.ClassFormatError" -> new ClassFormatError(message);
+            case "java.lang.IllegalAccessError" -> new IllegalAccessError(message);
+            case "java.lang.IncompatibleClassChangeError" -> new IncompatibleClassChangeError(message);
+            case "java.lang.InstantiationError" -> new InstantiationError(message);
+            case "java.lang.InternalError" -> new InternalError(message);
+            case "java.lang.LinkageError" -> new LinkageError(message);
+            case "java.lang.NoClassDefFoundError" -> new NoClassDefFoundError(message);
+            case "java.lang.NoSuchFieldError" -> new NoSuchFieldError(message);
+            case "java.lang.NoSuchMethodError" -> new NoSuchMethodError(message);
+            case "java.lang.OutOfMemoryError" -> new OutOfMemoryError(message);
+            case "java.lang.StackOverflowError" -> new StackOverflowError(message);
+            case "java.lang.UnsatisfiedLinkError" -> new UnsatisfiedLinkError(message);
+            default -> {
+                // All exceptions in the `java.` namespace should be converted.
+                assert !guestExceptionQualifiedType.startsWith("java.") : "missing conversion for " + guestExceptionQualifiedType;
+                yield e;
+            }
         };
         if (t != e) {
-            t.initCause(e);
+            t.setStackTrace(e.getStackTrace());
+            Throwable cause = e.getCause();
+            if (cause != null) {
+                if (cause instanceof PolyglotException polyglotCause) {
+                    t.initCause(asHostException(polyglotCause));
+                } else {
+                    t.initCause(cause);
+                }
+            }
         }
-        throw sneakyThrow(t);
+        return t;
     }
 
     @SuppressWarnings("unchecked")
@@ -640,7 +775,11 @@ final class EspressoExternalVMAccess implements VMAccess {
     }
 
     Value invokeJVMCIHelper(String method, Object... args) {
-        return jvmciHelper.invokeMember(method, args);
+        try {
+            return jvmciHelper.invokeMember(method, args);
+        } catch (PolyglotException e) {
+            throw throwHostException(e);
+        }
     }
 
     JavaType toJavaType(Value value) {

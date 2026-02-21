@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,7 +29,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import org.graalvm.collections.Pair;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.nativeimage.c.type.CIntPointer;
 import org.graalvm.nativeimage.c.type.CShortPointer;
@@ -41,11 +40,11 @@ import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.option.ReplacingLocatableMultiOptionValue;
 import com.oracle.svm.core.util.ExitStatus;
 import com.oracle.svm.hosted.ImageClassLoader;
+import com.oracle.svm.hosted.MainEntryPoint;
 import com.oracle.svm.hosted.NativeImageGenerator;
 import com.oracle.svm.hosted.NativeImageGeneratorRunner;
 import com.oracle.svm.hosted.ProgressReporter;
 import com.oracle.svm.hosted.c.CAnnotationProcessorCache;
-import com.oracle.svm.hosted.code.CEntryPointData;
 import com.oracle.svm.hosted.image.AbstractImage;
 import com.oracle.svm.hosted.jdk.localization.LocalizationFeature;
 import com.oracle.svm.hosted.option.HostedOptionParser;
@@ -56,12 +55,16 @@ import com.oracle.svm.hosted.webimage.options.WebImageOptions.CompilerBackend;
 import com.oracle.svm.hosted.webimage.util.BenchmarkLogger;
 import com.oracle.svm.hosted.webimage.wasm.WebImageWasmLMJavaMainSupport;
 import com.oracle.svm.hosted.webimage.wasmgc.WebImageWasmGCJavaMainSupport;
+import com.oracle.svm.util.AnnotatedObjectAccess;
+import com.oracle.svm.util.GuestAccess;
+import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.webimage.WebImageJSJavaMainSupport;
 import com.oracle.svm.webimage.WebImageJavaMainSupport;
 
-import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.options.OptionDescriptor;
 import jdk.graal.compiler.options.OptionValues;
+import jdk.vm.ci.meta.MetaAccessProvider;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
  * Main entry point called from the driver for Web Image (despite the name) and the Native Image
@@ -191,13 +194,14 @@ public class NativeImageWasmGeneratorRunner extends NativeImageGeneratorRunner {
     }
 
     @Override
-    protected NativeImageGenerator createImageGenerator(ImageClassLoader classLoader, HostedOptionParser optionParser, Pair<Method, CEntryPointData> mainEntryPointData, ProgressReporter reporter) {
-        return new WebImageGenerator(classLoader, optionParser, mainEntryPointData, reporter);
+    protected NativeImageGenerator createImageGenerator(ImageClassLoader classLoader, HostedOptionParser optionParser, MainEntryPoint mainEntryPoint,
+                    ProgressReporter reporter) {
+        return new WebImageGenerator(classLoader, optionParser, mainEntryPoint, reporter);
     }
 
     @Override
-    protected Pair<Method, CEntryPointData> createMainEntryPointData(AbstractImage.NativeImageKind imageKind, Method mainEntryPoint) {
-        return Pair.createLeft(mainEntryPoint);
+    protected MainEntryPoint createMainEntryPoint(AbstractImage.NativeImageKind imageKind, ResolvedJavaMethod mainEntryMethod) {
+        return new MainEntryPoint(mainEntryMethod, null);
     }
 
     @Override
@@ -209,16 +213,13 @@ public class NativeImageWasmGeneratorRunner extends NativeImageGeneratorRunner {
         };
     }
 
-    protected static Method getLibraryEntyPointMethod(ImageClassLoader classLoader) {
-        try {
-            return switch (WebImageOptions.getBackend(classLoader)) {
-                case JS -> WebImageJavaMainSupport.class.getDeclaredMethod("initializeLibrary", String[].class);
-                case WASM -> WebImageWasmLMJavaMainSupport.class.getDeclaredMethod("initializeLibrary", int.class, CIntPointer.class, CShortPointer.class);
-                case WASMGC -> WebImageWasmGCJavaMainSupport.class.getDeclaredMethod("initializeLibrary", String[].class);
-            };
-        } catch (NoSuchMethodException e) {
-            throw GraalError.shouldNotReachHere(e, "Could not reflectively lookup internal library entry point.");
-        }
+    protected static ResolvedJavaMethod getLibraryEntyPointMethod(ImageClassLoader classLoader) {
+        MetaAccessProvider meta = GuestAccess.get().getProviders().getMetaAccess();
+        return switch (WebImageOptions.getBackend(classLoader)) {
+            case JS -> JVMCIReflectionUtil.getUniqueDeclaredMethod(meta, WebImageJavaMainSupport.class, "initializeLibrary", String[].class);
+            case WASM -> JVMCIReflectionUtil.getUniqueDeclaredMethod(meta, WebImageWasmLMJavaMainSupport.class, "initializeLibrary", int.class, CIntPointer.class, CShortPointer.class);
+            case WASMGC -> JVMCIReflectionUtil.getUniqueDeclaredMethod(meta, WebImageWasmGCJavaMainSupport.class, "initializeLibrary", String[].class);
+        };
     }
 
     @Override
@@ -231,6 +232,6 @@ public class NativeImageWasmGeneratorRunner extends NativeImageGeneratorRunner {
     }
 
     @Override
-    protected void verifyMainEntryPoint(Method mainEntryPoint) {
+    protected void verifyMainEntryPoint(ResolvedJavaMethod mainEntryPoint, AnnotatedObjectAccess annotationAccess) {
     }
 }

@@ -213,6 +213,7 @@ class Tags(set):
 
 GraalTags = Tags([
     'helloworld',
+    'terminus',
     'debuginfotest',
     'standalone_pointsto_unittests',
     'native_unittests',
@@ -421,6 +422,9 @@ def svm_gate_body(args, tasks):
                 image_demo_task(args.extra_image_builder_arguments)
                 helloworld(svm_experimental_options(['-H:+RunMainInNewThread']) + args.extra_image_builder_arguments)
 
+    with Task('terminus helloworld', tasks, tags=[GraalTags.terminus]) as t:
+        if t: _run_terminus_gate(args)
+
     with Task('image debuginfotest', tasks, tags=[GraalTags.debuginfotest]) as t:
         if t:
             if mx.is_windows():
@@ -546,6 +550,81 @@ def svm_gate_body(args, tasks):
     with Task('java agent tests', tasks, tags=[GraalTags.java_agent]) as t:
         if t:
             java_agent_test(args.extra_image_builder_arguments)
+
+
+# THIS IS THE EXPECTED FAILURE STACK TRACE FOR TERMINUS HELLO WORLD MVP (GR-72797).
+# Whitespaces are stripped and line numbers are replaced with a placeholder to account for line changes.
+TERMINUS_HELLO_WORLD_EXPECTED_FAILURE = """
+    at jdk.graal.compiler.espresso.vmaccess/com.oracle.truffle.espresso.vmaccess.EspressoExternalSnippetReflectionProvider.originalMethod(EspressoExternalSnippetReflectionProvider.java:104)
+    at org.graalvm.nativeimage.base/com.oracle.svm.util.OriginalMethodProvider.getJavaMethod(OriginalMethodProvider.java:68)
+    at org.graalvm.nativeimage.builder/com.oracle.svm.hosted.NativeImageGeneratorRunner.buildImage(NativeImageGeneratorRunner.java:579)
+    at org.graalvm.nativeimage.builder/com.oracle.svm.hosted.NativeImageGeneratorRunner.build(NativeImageGeneratorRunner.java:768)
+    at org.graalvm.nativeimage.builder/com.oracle.svm.hosted.NativeImageGeneratorRunner.start(NativeImageGeneratorRunner.java:183)
+    at org.graalvm.nativeimage.builder/com.oracle.svm.hosted.NativeImageGeneratorRunner.main(NativeImageGeneratorRunner.java:131)
+"""
+
+
+def _run_terminus_gate(args):
+    # check for the espresso compiler stub suite
+    espresso_compiler_stub = 'espresso-compiler-stub'
+    if not mx.suite(espresso_compiler_stub, fatalIfMissing=False):
+        mx.abort(f'The {espresso_compiler_stub} suite is require for running terminus.\n' +
+                 f'Use `mx --dy /{espresso_compiler_stub}` to dynamically import it.')
+
+    # we need to wrap the native_image command to inject the output capture and ignore non-zero return values
+    out = mx.LinesOutputCapture()
+    def _native_image_wrapper(native_image_func):
+        def _native_image_with_out(*args, **kwargs):
+            kwargs.update(out=mx.TeeOutputCapture(out), nonZeroIsFatal=False)
+            native_image_func(*args, **kwargs)
+        return _native_image_with_out
+
+    # running with --build-only since for now there won't be anything to execute
+    run_helloworld_command(
+        ['--build-only'] + svm_experimental_options(['-H:+RunMainInNewThread']) + ['-Dorg.graalvm.nativeimage.vmaccess.name=espresso'] + args.extra_image_builder_arguments,
+        config=None, command_name="helloworld", native_image_wrapper=_native_image_wrapper
+    )
+
+    # pattern to remove line number from the end of the stack trace
+    line_number_pattern = re.compile(r':\d+\)$')
+    def _strip_line_numbers(lines):
+        return [line_number_pattern.sub(':xxx)', s.strip()) for s in lines if s.strip()]
+
+    # split and strip
+    expected_lines = _strip_line_numbers(TERMINUS_HELLO_WORLD_EXPECTED_FAILURE.splitlines())
+    actual_lines = _strip_line_numbers(out.lines)
+
+    # sanity check
+    if len(actual_lines) < len(expected_lines):
+        mx.log_error(f"Actual output too short. Expected {len(expected_lines)} lines, got {len(actual_lines)}.")
+        mx.log_error("Expected output:")
+        mx.log_error("\n".join(expected_lines))
+        mx.abort("Truncated output.")
+
+    # compare expected and actual from bottom to top
+    for idx in range(len(expected_lines)):
+        expected_line = expected_lines[-idx-1]
+        actual_line = actual_lines[-idx-1]
+
+        if expected_line != actual_line:
+            mx.log_error("Actual output does not match expected:")
+
+            # print lines before mismatch
+            for s in expected_lines[0:idx]:
+                mx.log_error(" " + s)
+
+            # print mismatching line in diff style
+            mx.log_error(mx.colorize(f"+{actual_line}", color="green"))
+            mx.log_error(mx.colorize(f"-{expected_line}", color="red"))
+
+            # print lines after mismatch
+            for s in expected_lines[idx+1:]:
+                mx.log_error(" " + s)
+
+            mx.abort("Please update TERMINUS_HELLO_WORLD_EXPECTED_FAILURE in mx_substrate.py")
+
+    mx.log(mx.colorize("Detected the expected failure pattern!", color="green"))
+
 
 def _compute_native_unittest_args(extra_build_args=None, include_svm_test_features=True):
     """
@@ -721,6 +800,7 @@ def _native_junit(native_image, unittest_args, build_args=None, run_args=None, b
         build_args.append("-D" + key + "=" + value)
 
     build_args.append('--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED')
+    build_args.append('--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED')
     run_args = run_args or ['--verbose']
     junit_native_dir = join(svmbuild_dir(), platform_name(), 'junit')
     mx_util.ensure_dir_exists(junit_native_dir)
@@ -1316,7 +1396,7 @@ def _runtimedebuginfotest(native_image, output_path, with_isolates_only, args=No
         # We do not want to step into class initializer, so initialize everything at build time.
         '--initialize-at-build-time=com.oracle.svm.test.debug.helper',
         # We need access to ModuleSupport
-        '--add-exports=org.graalvm.nativeimage.base/com.oracle.svm.util=ALL-UNNAMED',
+        '--add-exports=org.graalvm.nativeimage.shared/com.oracle.svm.shared.util=ALL-UNNAMED',
         '--features=com.oracle.svm.test.debug.helper.RuntimeCompileDebugInfoTest$RegisterMethodsFeature',
         'com.oracle.svm.test.debug.helper.RuntimeCompileDebugInfoTest',
     ] + svm_experimental_options([
@@ -1418,10 +1498,17 @@ svm = mx_sdk_vm.GraalVmJreComponent(
     third_party_license_files=[],
     # Use short name for Truffle Runtime SVM to select by priority
     dependencies=['GraalVM compiler', 'SubstrateVM Static Libraries', 'Graal SDK Native Image', 'svmt'],
-    jar_distributions=['substratevm:LIBRARY_SUPPORT', 'substratevm:SVM_GUEST'],
+    # Note that SVM_GUEST_STAGING is loaded by the guest (`jar_distributions`) and the builder (`builder_jar_distributions`).
+    # It is a transitional module will be merged to SVM_GUEST once all dependencies from the builder are removed.
+    # On the other hand, SVM_SHARED contains code that is shared between the guest and the builder. Conceptually, the
+    # module is loaded twice, once in the guest and once in the builder. Thus, it can not be used for data sharing,
+    # e.g., via static fields. It is only for sharing implementation for functionality that is used in both.
+    jar_distributions=['substratevm:LIBRARY_SUPPORT', 'substratevm:SVM_GUEST', 'substratevm:SVM_GUEST_STAGING', 'substratevm:SVM_SHARED'],
     builder_jar_distributions=[
         'substratevm:SVM',
         'substratevm:SVM_CONFIGURE',
+        'substratevm:SVM_GUEST_STAGING',
+        'substratevm:SVM_SHARED',
         'espresso-shared:ESPRESSO_SVM',
         'substratevm:OBJECTFILE',
         'substratevm:POINTSTO',
@@ -1853,7 +1940,8 @@ lib_jvm_preserved_packages = [
     'java.lang',
     'java.lang.invoke',
     'java.lang.constant',
-    'java.io'
+    'java.io',
+    'jdk.internal.misc'
 ]
 
 mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(
@@ -1886,6 +1974,28 @@ mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(
     stability="experimental",
     jlink=False,
 ))
+
+if os.environ.get('LIBJVM_IMAGE_AS_DEFAULT') == 'true':
+    mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(
+        suite=suite,
+        name='SubstrateVM java as default',
+        short_name='svmjavad',
+        dir_name='svm',
+        license_files=[],
+        third_party_license_files=[],
+        dependencies=[],
+        jar_distributions=[],
+        builder_jar_distributions=[],
+        support_distributions=[],
+        priority=0,
+        jvm_configs=[{
+            'configs': ['-svm KNOWN'],
+            'priority': -1,  # 0 is invalid; < 0 prepends to the default configs; > 0 appends
+        }],
+        support_libraries_distributions=[],
+        stability="experimental",
+        jlink=False,
+    ))
 
 def _native_image_utils_extra_jvm_args():
     packages = ['jdk.graal.compiler/jdk.graal.compiler.phases.common', 'jdk.internal.vm.ci/jdk.vm.ci.meta', 'jdk.internal.vm.ci/jdk.vm.ci.services', 'jdk.graal.compiler/jdk.graal.compiler.core.common.util']
@@ -1925,7 +2035,7 @@ mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(
 ))
 
 
-def run_helloworld_command(args, config, command_name):
+def run_helloworld_command(args, config, command_name, native_image_wrapper=None):
     parser = ArgumentParser(prog='mx ' + command_name)
     all_args = ['--output-path', '--javac-command', '--build-only', '--variant', '--list']
     masked_args = [_mask(arg, all_args) for arg in args]
@@ -1946,7 +2056,7 @@ def run_helloworld_command(args, config, command_name):
         return
     native_image_context_run(
         lambda native_image, a:
-        _helloworld(native_image, javac_command, output_path, build_only, a, variant=parsed.variant), unmask(image_args),
+        _helloworld(native_image_wrapper(native_image) if native_image_wrapper else native_image, javac_command, output_path, build_only, a, variant=parsed.variant), unmask(image_args),
         config=config,
     )
 

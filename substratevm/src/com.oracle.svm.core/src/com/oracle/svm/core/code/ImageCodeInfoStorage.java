@@ -29,16 +29,16 @@ import org.graalvm.nativeimage.c.struct.SizeOf;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.CIsolateData;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.BuiltinTraits.RuntimeAccessOnly;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.MultiLayer;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.MultiLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.core.common.NumUtil;

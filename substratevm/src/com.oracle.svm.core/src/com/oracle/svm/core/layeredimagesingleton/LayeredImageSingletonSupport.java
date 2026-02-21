@@ -31,12 +31,9 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.InstallationKind;
-import com.oracle.svm.core.traits.SingletonTrait;
-import com.oracle.svm.core.traits.SingletonTraitKind;
-
-import jdk.vm.ci.meta.JavaConstant;
+import com.oracle.svm.shared.singletons.SingletonAccessFlags;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind;
+import com.oracle.svm.shared.singletons.traits.SingletonTrait;
 
 @Platforms(Platform.HOSTED_ONLY.class)
 public interface LayeredImageSingletonSupport {
@@ -49,20 +46,16 @@ public interface LayeredImageSingletonSupport {
      * This method is intended to be used in special situations during the building process to
      * access singletons which (1) are only allowed to be accessed at runtime
      * ({@link SingletonAccessFlags#RUNTIME_ACCESS_ONLY}) and/or (2) are annotated with
-     * {@link InstallationKind#MULTI_LAYER}.
+     * {@link SingletonLayeredInstallationKind#MULTI_LAYER}.
      */
     <T> T lookup(Class<T> key, boolean accessRuntimeOnly, boolean accessMultiLayer);
 
-    Set<Object> getSingletonsWithTrait(SingletonLayeredInstallationKind.InstallationKind kind);
+    Set<Object> getSingletonsWithTrait(SingletonLayeredInstallationKind kind);
 
-    Collection<Class<?>> getKeysWithTrait(SingletonLayeredInstallationKind.InstallationKind kind);
-
-    void forbidNewTraitInstallations(SingletonLayeredInstallationKind.InstallationKind kind);
-
-    JavaConstant getInitialLayerOnlyImageSingleton(Class<?> key);
+    Collection<Class<?>> getKeysWithTrait(SingletonLayeredInstallationKind kind);
 
     /**
      * @return trait associated with this key if it exists, or else {@code null}.
      */
-    SingletonTrait getTraitForUninstalledSingleton(Class<?> key, SingletonTraitKind kind);
+    <S extends SingletonTrait<?>> S getTraitForUninstalledSingleton(Class<?> key, Class<S> traitClass);
 }

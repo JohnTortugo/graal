@@ -24,14 +24,14 @@
  */
 package com.oracle.svm.core.graal.phases;
 
-import com.oracle.svm.core.SkipEpilogueSafepointCheck;
-import com.oracle.svm.util.RuntimeAnnotated;
+import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.function.CFunction;
 import org.graalvm.nativeimage.c.function.InvokeCFunctionPointer;
 
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.core.SkipEpilogueSafepointCheck;
+import com.oracle.svm.core.UninterruptibleAnnotationUtils;
 import com.oracle.svm.core.graal.code.SubstrateBackend;
 import com.oracle.svm.core.meta.SharedMethod;
 import com.oracle.svm.util.AnnotationUtil;
@@ -50,7 +50,7 @@ public class SubstrateSafepointInsertionPhase extends LoopSafepointInsertionPhas
 
     @Platforms(Platform.HOSTED_ONLY.class)
     public static boolean needSafepointCheck(ResolvedJavaMethod method) {
-        if (Uninterruptible.Utils.isUninterruptible(method)) {
+        if (UninterruptibleAnnotationUtils.isUninterruptible(method)) {
             /* Uninterruptible methods must not have a safepoint inserted. */
             return false;
         }
@@ -80,7 +80,7 @@ public class SubstrateSafepointInsertionPhase extends LoopSafepointInsertionPhas
     public static void insertMethodEndSafepoints(StructuredGraph graph, MidTierContext context) {
         SharedMethod method = (SharedMethod) graph.method();
         if (!((SubstrateBackend) context.getTargetProvider()).safepointCheckedInEpilogue(method) &&
-                        !(method instanceof RuntimeAnnotated && AnnotationUtil.isAnnotationPresent(method, SkipEpilogueSafepointCheck.class))) {
+                        (ImageInfo.inImageRuntimeCode() || !AnnotationUtil.isAnnotationPresent(method, SkipEpilogueSafepointCheck.class))) {
             /* Insert method-end safepoints. */
             for (ReturnNode returnNode : graph.getNodes(ReturnNode.TYPE)) {
                 SafepointNode safepointNode = graph.add(new SafepointNode());

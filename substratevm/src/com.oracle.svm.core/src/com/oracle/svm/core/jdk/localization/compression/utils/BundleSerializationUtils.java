@@ -34,8 +34,8 @@ import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.jdk.localization.BundleContentSubstitutedLocalizationSupport;
-import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.debug.GraalError;
 

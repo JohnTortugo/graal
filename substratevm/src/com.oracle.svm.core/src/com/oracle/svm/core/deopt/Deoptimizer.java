@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.deopt;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.core.stack.JavaFrameAnchors.verifyTopFrameAnchor;
 
 import java.lang.annotation.ElementType;
@@ -47,7 +47,7 @@ import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.Isolates;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.code.CodeInfo;
 import com.oracle.svm.core.code.CodeInfoAccess;
 import com.oracle.svm.core.code.CodeInfoQueryResult;
@@ -84,7 +84,7 @@ import com.oracle.svm.core.thread.VMOperation;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.util.PointerUtils;
 import com.oracle.svm.core.util.TimeUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.core.common.NumUtil;

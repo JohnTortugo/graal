@@ -24,18 +24,16 @@
  */
 package com.oracle.svm.hosted.image;
 
-import java.util.Collection;
-
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.image.ImageHeapLayoutInfo;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.meta.HostedConstantReflectionProvider;
 import com.oracle.svm.hosted.meta.HostedField;
 
@@ -414,7 +412,7 @@ public class ImageHeapReasonSupport {
         return msg.append("    root: ").append(reason).append(System.lineSeparator());
     }
 
-    public void dumpMetadata(@SuppressWarnings("unused") ImageHeapLayoutInfo heapLayout, @SuppressWarnings("unused") Collection<NativeImageHeap.ObjectInfo> objects) {
+    public void dumpMetadata(@SuppressWarnings("unused") ImageHeapLayoutInfo heapLayout, @SuppressWarnings("unused") Iterable<NativeImageHeap.ObjectInfo> objects) {
         // no metadata to dump
     }
 }

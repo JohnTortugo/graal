@@ -83,7 +83,7 @@ import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.LayoutEncoding;
 import com.oracle.svm.core.jdk.UninterruptibleUtils.CharReplacer;
 import com.oracle.svm.core.jdk.UninterruptibleUtils.ReplaceDotWithSlash;
-import com.oracle.svm.core.layeredimagesingleton.MultiLayeredImageSingleton;
+import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.metaspace.Metaspace;
 import com.oracle.svm.core.nmt.NmtCategory;
@@ -99,7 +99,7 @@ import com.oracle.svm.core.thread.VMOperation;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.threadlocal.VMThreadLocalSupport;
 import com.oracle.svm.core.util.TimeUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.core.common.NumUtil;

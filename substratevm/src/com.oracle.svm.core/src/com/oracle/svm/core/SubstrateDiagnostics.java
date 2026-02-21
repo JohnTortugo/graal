@@ -28,6 +28,7 @@ import static com.oracle.svm.core.option.RuntimeOptionKey.RuntimeOptionKeyFlag.R
 
 import java.util.Arrays;
 
+import com.oracle.svm.guest.staging.Uninterruptible;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.IsolateThread;
@@ -41,6 +42,7 @@ import org.graalvm.nativeimage.c.type.CCharPointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.ObjectAccess;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.SubstrateDiagnostics.DiagnosticThunkRegistry;
@@ -91,16 +93,16 @@ import com.oracle.svm.core.thread.VMThreads.SafepointBehavior;
 import com.oracle.svm.core.threadlocal.FastThreadLocalBytes;
 import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.VMThreadLocalInfos;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.core.util.AbstractImageHeapList;
 import com.oracle.svm.core.util.CounterSupport;
 import com.oracle.svm.core.util.ImageHeapList;
 import com.oracle.svm.core.util.TimeUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.core.common.NumUtil;
@@ -109,7 +111,6 @@ import jdk.graal.compiler.nodes.PauseNode;
 import jdk.graal.compiler.nodes.java.ArrayLengthNode;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionType;
-import org.graalvm.word.impl.ObjectAccess;
 
 public class SubstrateDiagnostics {
     private static final int MAX_THREADS_TO_PRINT = 100_000;

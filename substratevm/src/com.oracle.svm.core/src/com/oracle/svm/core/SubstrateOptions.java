@@ -73,12 +73,12 @@ import com.oracle.svm.core.option.RuntimeOptionKey;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.pltgot.PLTGOTConfiguration;
 import com.oracle.svm.core.thread.VMOperationControl;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.core.util.TimeUtils;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.LogUtils;
 
@@ -1391,6 +1391,9 @@ public class SubstrateOptions {
     @APIOption(name = "configure-reflection-metadata", deprecated = "This option has no function anymore.")//
     @Option(help = "Enable runtime instantiation of reflection objects for non-invoked methods.", type = OptionType.Expert, deprecated = true)//
     public static final HostedOptionKey<Boolean> ConfigureReflectionMetadata = new HostedOptionKey<>(true);
+
+    @Option(help = "Print a list of parsed metadata configuration files.", type = OptionType.Expert)//
+    public static final HostedOptionKey<Boolean> ReportUsedMetadataFiles = new HostedOptionKey<>(false);
 
     @Option(help = "Include a list of methods included in the image for runtime inspection.", type = OptionType.Expert)//
     public static final HostedOptionKey<Boolean> IncludeMethodData = new HostedOptionKey<>(false);

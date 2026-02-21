@@ -64,16 +64,20 @@ import org.graalvm.collections.Equivalence;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
+import org.graalvm.nativeimage.c.function.CFunctionPointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.WordBase;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.graal.pointsto.constraints.UnsupportedPlatformException;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
+import com.oracle.svm.core.BuildPhaseProvider.ReadyForCompilation;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.graal.meta.KnownOffsets;
+import com.oracle.svm.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.DynamicHubUtils;
 import com.oracle.svm.core.hub.DynamicHubUtils.TypeCheckData;
@@ -90,7 +94,7 @@ import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.meta.MethodPointer;
 import com.oracle.svm.core.util.BasedOnJDKFile;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.espresso.classfile.ConstantPool;
 import com.oracle.svm.espresso.classfile.Constants;
 import com.oracle.svm.espresso.classfile.JavaKind;
@@ -136,11 +140,13 @@ import jdk.graal.compiler.nodes.extended.MembarNode;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
-import org.graalvm.word.impl.Word;
 
 public class CremaSupportImpl implements CremaSupport {
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private final MethodHandleIntrinsics<InterpreterResolvedJavaType, InterpreterResolvedJavaMethod, InterpreterResolvedJavaField> methodHandleIntrinsics = new MethodHandleIntrinsics<>();
+
+    @UnknownPrimitiveField(availability = ReadyForCompilation.class) //
+    private CFunctionPointer enterDirectInterpreterStubEntryPoint;
 
     @Platforms(Platform.HOSTED_ONLY.class)
     @Override
@@ -246,7 +252,9 @@ public class CremaSupportImpl implements CremaSupport {
     }
 
     @Override
-    public DynamicHub createHub(ParserKlass parsed, ClassDefinitionInfo info, int typeID, String externalName, Module module, ClassLoader classLoader, Class<?> superClass,
+    public DynamicHub createHub(ParserKlass parsed, ClassDefinitionInfo info, int typeID, String externalName,
+                    Module module, ClassLoader classLoader,
+                    Class<?> superClass,
                     Class<?>[] superInterfaces) {
         String simpleBinaryName = getSimpleBinaryName(parsed);
         String sourceFile = getSourceFile(parsed);
@@ -275,7 +283,7 @@ public class CremaSupportImpl implements CremaSupport {
         Object interfacesEncoding = getInterfaceEncodings(superInterfaces);
 
         Class<?>[] transitiveSuperInterfaces = getSortedTransitiveSuperInterfaces(superClass, superInterfaces);
-        AbstractCremaDispatchTable dispatchTable = createDispatchTable(parsed, superClass, transitiveSuperInterfaces);
+        AbstractCremaDispatchTable dispatchTable = createDispatchTable(parsed, classLoader, superClass, transitiveSuperInterfaces);
 
         /*
          * Compute the type check slots depending on the kind of type
@@ -512,8 +520,8 @@ public class CremaSupportImpl implements CremaSupport {
         }
     }
 
-    private static AbstractCremaDispatchTable createDispatchTable(ParserKlass parsed, Class<?> superClass, Class<?>[] transitiveSuperInterfaces) {
-        CremaPartialType partialType = new CremaPartialType(parsed, superClass, transitiveSuperInterfaces);
+    private static AbstractCremaDispatchTable createDispatchTable(ParserKlass parsed, ClassLoader loader, Class<?> superClass, Class<?>[] transitiveSuperInterfaces) {
+        CremaPartialType partialType = new CremaPartialType(parsed, loader, superClass, transitiveSuperInterfaces);
         try {
             if (Modifier.isInterface(parsed.getFlags())) {
                 return new CremaInterfaceDispatchTable(partialType);
@@ -867,14 +875,18 @@ public class CremaSupportImpl implements CremaSupport {
 
     static final class CremaPartialType implements PartialType<InterpreterResolvedJavaType, InterpreterResolvedJavaMethod, InterpreterResolvedJavaField> {
         private final ParserKlass parserKlass;
+        private final ClassLoader loader;
+        private final Symbol<Name> symbolicRuntimePackage;
         private final List<CremaPartialMethod> declared;
         private final List<InterpreterResolvedJavaMethod> parentTable;
         private final EconomicMap<InterpreterResolvedJavaType, List<InterpreterResolvedJavaMethod>> interfacesData = EconomicMap.create(Equivalence.IDENTITY);
         private InterpreterResolvedObjectType thisJavaType;
 
         @SuppressWarnings("this-escape")
-        CremaPartialType(ParserKlass parsed, Class<?> superClass, Class<?>[] superInterfaces) {
+        CremaPartialType(ParserKlass parsed, ClassLoader loader, Class<?> superClass, Class<?>[] superInterfaces) {
             this.parserKlass = parsed;
+            this.loader = loader;
+            this.symbolicRuntimePackage = SymbolsSupport.getNames().getOrCreate(TypeSymbols.getRuntimePackage(parsed.getType()));
             parentTable = computeParentTable(superClass);
             for (Class<?> intf : superInterfaces) {
                 DynamicHub intfHub = DynamicHub.fromClass(intf);
@@ -921,10 +933,8 @@ public class CremaSupportImpl implements CremaSupport {
 
         @Override
         public boolean sameRuntimePackage(InterpreterResolvedJavaType otherType) {
-            // GR-62339 runtime packages
-            ByteSequence thisRuntimePackage = TypeSymbols.getRuntimePackage(parserKlass.getType());
-            Symbol<Name> thatRuntimePackage = otherType.getSymbolicRuntimePackage();
-            return thisRuntimePackage.equals(thatRuntimePackage);
+            return loader == otherType.getClassLoader() &&
+                            symbolicRuntimePackage == otherType.getSymbolicRuntimePackage();
         }
 
         @Override
@@ -1196,22 +1206,12 @@ public class CremaSupportImpl implements CremaSupport {
 
     private static Class<?> loadClass(Symbol<Type> type, InterpreterResolvedJavaType accessingClass) throws ClassNotFoundException {
         JavaKind kind = TypeSymbols.getJavaKind(type);
-        return switch (kind) {
-            case Object -> {
-                AbstractClassRegistry registry = ClassRegistries.singleton().getRegistry(accessingClass.getJavaClass().getClassLoader());
-                yield registry.loadClass(type);
-            }
-            case Boolean -> boolean.class;
-            case Byte -> byte.class;
-            case Short -> short.class;
-            case Char -> char.class;
-            case Int -> int.class;
-            case Long -> long.class;
-            case Float -> float.class;
-            case Double -> double.class;
-            case Void -> void.class;
-            default -> throw VMError.shouldNotReachHere(kind.toString());
-        };
+        if (kind.isPrimitive()) {
+            return kind.toJavaClass();
+        }
+        assert kind == JavaKind.Object;
+        AbstractClassRegistry registry = ClassRegistries.singleton().getRegistry(accessingClass.getJavaClass().getClassLoader());
+        return registry.loadClass(type);
     }
 
     @Override
@@ -1227,10 +1227,16 @@ public class CremaSupportImpl implements CremaSupport {
             // type is not loaded
             return null;
         }
-        AbstractClassRegistry registry = ClassRegistries.singleton().getRegistry(((InterpreterResolvedJavaType) accessingClass).getJavaClass().getClassLoader());
-        Class<?> result = registry.findLoadedClass(elementalType);
-        if (result == null) {
-            return null;
+        JavaKind kind = TypeSymbols.getJavaKind(elementalType);
+        Class<?> result;
+        if (kind.isPrimitive()) {
+            result = kind.toJavaClass();
+        } else {
+            AbstractClassRegistry registry = ClassRegistries.singleton().getRegistry(((InterpreterResolvedJavaType) accessingClass).getJavaClass().getClassLoader());
+            result = registry.findLoadedClass(elementalType);
+            if (result == null) {
+                return null;
+            }
         }
         if (arrayDimensions > 0) {
             while (arrayDimensions-- > 0) {
@@ -1255,7 +1261,7 @@ public class CremaSupportImpl implements CremaSupport {
     public Object execute(ResolvedJavaMethod targetMethod, Object[] args, boolean isVirtual) {
         InterpreterResolvedJavaMethod iMethod = (InterpreterResolvedJavaMethod) targetMethod;
         try {
-            return InterpreterToVM.dispatchInvocation(iMethod, args, isVirtual, false, false, iMethod.isInterface(), false);
+            return InterpreterToVM.dispatchInvocation(iMethod, args, isVirtual, false, false, false);
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
         }
@@ -1486,7 +1492,7 @@ public class CremaSupportImpl implements CremaSupport {
         System.arraycopy(args, 0, basicArgs, 1, args.length);
         logIntrinsic("[from compiled] invokeBasic ", vmentry, basicArgs);
         try {
-            return InterpreterToVM.dispatchInvocation(vmentry, basicArgs, false, false, false, false, true);
+            return InterpreterToVM.dispatchInvocation(vmentry, basicArgs, false, false, false, true);
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
         }
@@ -1502,7 +1508,7 @@ public class CremaSupportImpl implements CremaSupport {
         Object[] basicArgs = unbasic(args, signature, true);
         logIntrinsic("[from compiled] linkToVirtual ", target, basicArgs);
         try {
-            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, true, false, false, false, true);
+            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, true, false, false, true);
             return Interpreter.rebasic(result, signature.getReturnKind());
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
@@ -1519,7 +1525,7 @@ public class CremaSupportImpl implements CremaSupport {
         Object[] basicArgs = unbasic(args, signature, false);
         logIntrinsic("[from compiled] linkToStatic ", target, basicArgs);
         try {
-            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, false, false, false, false, true);
+            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, false, false, false, true);
             return Interpreter.rebasic(result, signature.getReturnKind());
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
@@ -1536,7 +1542,7 @@ public class CremaSupportImpl implements CremaSupport {
         Object[] basicArgs = unbasic(args, signature, true);
         logIntrinsic("[from compiled] linkToSpecial ", target, basicArgs);
         try {
-            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, false, false, false, false, true);
+            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, false, false, false, true);
             return Interpreter.rebasic(result, signature.getReturnKind());
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
@@ -1553,7 +1559,7 @@ public class CremaSupportImpl implements CremaSupport {
         Object[] basicArgs = unbasic(args, signature, true);
         logIntrinsic("[from compiled] linkToInterface ", target, basicArgs);
         try {
-            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, true, false, false, true, true);
+            Object result = InterpreterToVM.dispatchInvocation(target, basicArgs, true, false, false, true);
             return Interpreter.rebasic(result, signature.getReturnKind());
         } catch (SemanticJavaException e) {
             throw uncheckedThrow(e.getCause());
@@ -1593,5 +1599,17 @@ public class CremaSupportImpl implements CremaSupport {
         }
         // GR-70363
         throw VMError.unimplemented("computeEnclosingClass");
+    }
+
+    @Override
+    public CFunctionPointer getEnterDirectInterpreterStubEntryPoint() {
+        VMError.guarantee(enterDirectInterpreterStubEntryPoint.isNonNull(), "entry point for enterDirectInterpreterStub was not setup at build-time");
+        return enterDirectInterpreterStubEntryPoint;
+    }
+
+    @Override
+    @Platforms(Platform.HOSTED_ONLY.class)
+    public void setEnterDirectInterpreterStubEntryPoint(CFunctionPointer stubEntryPoint) {
+        enterDirectInterpreterStubEntryPoint = stubEntryPoint;
     }
 }

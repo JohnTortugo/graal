@@ -42,24 +42,23 @@ import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.heap.UnknownObjectField;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
-import com.oracle.svm.core.layeredimagesingleton.ImageSingletonLoader;
-import com.oracle.svm.core.layeredimagesingleton.ImageSingletonWriter;
 import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
-import com.oracle.svm.core.layeredimagesingleton.LayeredPersistFlags;
-import com.oracle.svm.core.layeredimagesingleton.MultiLayeredImageSingleton;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.BuiltinTraits.RuntimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.SingleLayer;
-import com.oracle.svm.core.traits.SingletonLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredCallbacksSupplier;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.MultiLayer;
-import com.oracle.svm.core.traits.SingletonTrait;
-import com.oracle.svm.core.traits.SingletonTraitKind;
-import com.oracle.svm.core.traits.SingletonTraits;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.singletons.ImageSingletonLoader;
+import com.oracle.svm.shared.singletons.ImageSingletonWriter;
+import com.oracle.svm.shared.singletons.LayeredPersistFlags;
+import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+import com.oracle.svm.shared.singletons.traits.LayeredCallbacksSingletonTrait;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacksSupplier;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.MultiLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 @AutomaticallyRegisteredImageSingleton
 @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = StringInternSupport.LayeredCallbacks.class)
@@ -169,8 +168,8 @@ public final class StringInternSupport {
 
     static class LayeredCallbacks extends SingletonLayeredCallbacksSupplier {
         @Override
-        public SingletonTrait getLayeredCallbacksTrait() {
-            return new SingletonTrait(SingletonTraitKind.LAYERED_CALLBACKS, new SingletonLayeredCallbacks<StringInternSupport>() {
+        public LayeredCallbacksSingletonTrait getLayeredCallbacksTrait() {
+            return new LayeredCallbacksSingletonTrait(new SingletonLayeredCallbacks<StringInternSupport>() {
                 @Override
                 public LayeredPersistFlags doPersist(ImageSingletonWriter writer, StringInternSupport singleton) {
                     // This can be switched to use constant ids in the future
@@ -236,6 +235,7 @@ class ImageInternedStrings {
  * required information from the build.
  */
 @AutomaticallyRegisteredFeature
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
 class LayeredStringInternFeature implements InternalFeature {
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {

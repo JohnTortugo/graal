@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.genscavenge;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.core.genscavenge.ThreadLocalAllocation.Descriptor;
 import static com.oracle.svm.core.genscavenge.ThreadLocalAllocation.allocatedAlignedBytes;
 import static com.oracle.svm.core.genscavenge.ThreadLocalAllocation.getTlab;
@@ -42,7 +42,7 @@ import org.graalvm.word.UnsignedWord;
 
 import com.oracle.svm.core.SubstrateDiagnostics;
 import com.oracle.svm.core.SubstrateGCOptions;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.config.ObjectLayout;
 import com.oracle.svm.core.graal.snippets.SubstrateAllocationSnippets;
@@ -56,7 +56,7 @@ import com.oracle.svm.core.threadlocal.FastThreadLocalInt;
 import com.oracle.svm.core.threadlocal.FastThreadLocalWord;
 import com.oracle.svm.core.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.UnsignedUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import org.graalvm.word.impl.Word;

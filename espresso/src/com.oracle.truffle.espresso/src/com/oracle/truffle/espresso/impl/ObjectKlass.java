@@ -224,10 +224,10 @@ public final class ObjectKlass extends Klass implements AttributedElement {
         if (info.protectionDomain != null && !StaticObject.isNull(info.protectionDomain)) {
             // Protection domain should not be host null, and will be initialized to guest null on
             // mirror creation.
-            getMeta().HIDDEN_PROTECTION_DOMAIN.setMaybeHiddenObject(initializeEspressoClass(), info.protectionDomain);
+            getMeta().java_lang_Class_0protectedDomain.setMaybeHiddenObject(initializeGuestClassMirror(), info.protectionDomain);
         }
         if (info.classData != null) {
-            getMeta().java_lang_Class_classData.setObject(initializeEspressoClass(), info.classData);
+            getMeta().java_lang_Class_classData.setObject(initializeGuestClassMirror(), info.classData);
         }
         if (!info.addedToRegistry()) {
             initSelfReferenceInPool();
@@ -237,7 +237,7 @@ public final class ObjectKlass extends Klass implements AttributedElement {
         getContext().getClassHierarchyOracle().registerNewKlassVersion(klassVersion);
         this.initState = LOADED;
         if (getMeta().java_lang_Class != null) {
-            initializeEspressoClass();
+            initializeGuestClassMirror();
         }
     }
 
@@ -734,21 +734,12 @@ public final class ObjectKlass extends Klass implements AttributedElement {
         return getKlassVersion().pool;
     }
 
-    @Override
-    public boolean isLocal() {
-        return false;
-    }
-
-    @Override
-    public boolean isMember() {
-        return false;
-    }
-
     /**
      * Returns the binary name of this class without the leading enclosing class name. Returns null
      * if this class is a top level class.
      */
     @SuppressWarnings("unchecked")
+    @TruffleBoundary
     public Symbol<Name> getSimpleBinaryName() {
         RuntimeConstantPool pool = getConstantPool();
         InnerClassesAttribute inner = getInnerClasses();
@@ -778,13 +769,13 @@ public final class ObjectKlass extends Klass implements AttributedElement {
      *         method or constructor)
      * @see Class#getDeclaringClass()
      */
+    @TruffleBoundary
     public Klass getDeclaringClass() {
         InnerClassesAttribute innerClasses = getAttribute(InnerClassesAttribute.NAME, InnerClassesAttribute.class);
         if (innerClasses == null) {
             return null;
         }
         RuntimeConstantPool pool = getConstantPool();
-
         for (int i = 0; i < innerClasses.entryCount(); i++) {
             InnerClassesAttribute.Entry entry = innerClasses.entryAt(i);
             if (entry.innerClassIndex != 0) {
@@ -841,6 +832,7 @@ public final class ObjectKlass extends Klass implements AttributedElement {
         }
     }
 
+    @TruffleBoundary
     public EnclosingMethodInfo getEnclosingMethodInfo() {
         EnclosingMethodAttribute enclosingMethodAttr = getEnclosingMethod();
         if (enclosingMethodAttr == null) {
@@ -1068,6 +1060,7 @@ public final class ObjectKlass extends Klass implements AttributedElement {
     }
 
     @Override
+    @TruffleBoundary
     public Klass[] getNestMembers() {
         if (this != nest()) {
             return nest().getNestMembers();
@@ -1708,6 +1701,12 @@ public final class ObjectKlass extends Klass implements AttributedElement {
         return innerKlasses;
     }
 
+    /**
+     * The versioned, immutable backbone of class metadata in Espresso. It encapsulates all
+     * execution-critical state (dispatch tables, methods, hierarchy, flags, attributes) with a
+     * Truffle Assumption for safe speculative compilation and seamless class redefinition by
+     * swapping versions and invalidating previous ones.
+     */
     public final class KlassVersion implements AttributedElement {
         final Assumption assumption;
         final RuntimeConstantPool pool;

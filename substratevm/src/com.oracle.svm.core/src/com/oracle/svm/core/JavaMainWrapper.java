@@ -26,6 +26,7 @@ package com.oracle.svm.core;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles.Lookup;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -67,7 +68,6 @@ import com.oracle.svm.core.c.function.CEntryPointOptions.NoPrologue;
 import com.oracle.svm.core.c.function.CEntryPointSetup;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.graal.snippets.CEntryPointSnippets;
-import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.jni.JNIJavaVMList;
 import com.oracle.svm.core.jni.functions.JNIFunctionTables;
@@ -77,16 +77,20 @@ import com.oracle.svm.core.thread.PlatformThreads;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.thread.VMThreads.OSThreadHandle;
-import com.oracle.svm.core.traits.BuiltinTraits.AllAccess;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredInstallationKind.ApplicationLayerOnly;
-import com.oracle.svm.core.traits.SingletonTraits;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.guest.staging.jdk.InternalVMMethod;
 import com.oracle.svm.sdk.staging.layeredimage.LayeredCompilationBehavior;
 import com.oracle.svm.sdk.staging.layeredimage.LayeredCompilationBehavior.Behavior;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.ApplicationLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.ModuleSupport;
+import com.oracle.svm.shared.util.ModuleSupport.Access;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.ClassUtil;
-import com.oracle.svm.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 @InternalVMMethod
 public class JavaMainWrapper {
@@ -119,20 +123,49 @@ public class JavaMainWrapper {
             int mods = javaMainMethod.getModifiers();
             this.mainNonstatic = !Modifier.isStatic(mods);
             this.mainWithoutArgs = javaMainMethod.getParameterCount() == 0;
+
+            makeUnreflectable(javaMainMethod);
+
             MethodHandle mainHandle = MethodHandles.lookup().unreflect(javaMainMethod);
             MethodHandle ctorHandle = null;
+            Class<?> javaMainClass = javaMainMethod.getDeclaringClass();
             if (mainNonstatic) {
                 // Instance main
                 try {
-                    Constructor<?> ctor = ReflectionUtil.lookupConstructor(javaMainMethod.getDeclaringClass());
+                    Constructor<?> ctor = ReflectionUtil.lookupConstructor(javaMainClass);
                     ctorHandle = MethodHandles.lookup().unreflectConstructor(ctor);
                 } catch (ReflectionUtil.ReflectionUtilError ex) {
-                    throw UserError.abort(ex, "No non-private zero argument constructor found in class %s", ClassUtil.getUnqualifiedName(javaMainMethod.getDeclaringClass()));
+                    throw UserError.abort(ex, "No non-private zero argument constructor found in class %s", ClassUtil.getUnqualifiedName(javaMainClass));
                 }
             }
             this.javaMainHandle = mainHandle;
             this.javaMainClassCtorHandle = ctorHandle;
-            this.javaMainClassName = javaMainMethod.getDeclaringClass().getName();
+            this.javaMainClassName = javaMainClass.getName();
+        }
+
+        /**
+         * Ensures {@code method} can be converted via {@link Lookup#unreflect} to a
+         * {@link MethodHandle}.
+         * <p>
+         * This method can probably be deleted or substantially reduced once GR-72850 is resolved.
+         */
+        @Platforms(Platform.HOSTED_ONLY.class)
+        @SuppressWarnings("deprecation")
+        private static void makeUnreflectable(Method method) {
+            if (!method.isAccessible()) {
+                Class<?> declaringClass = method.getDeclaringClass();
+                Module module = declaringClass.getModule();
+                if (module.isNamed()) {
+                    Module myModule = JavaMainWrapper.class.getModule();
+                    String declaringPackage = declaringClass.getPackageName();
+                    if (!module.isExported(declaringPackage, myModule)) {
+                        // Package containing main method must be exported for
+                        // Method.setAccessible to succeed.
+                        ModuleSupport.accessModule(Access.EXPORT, myModule, module, declaringPackage);
+                    }
+                }
+                method.setAccessible(true);
+            }
         }
 
         public String getJavaCommand() {
@@ -463,8 +496,8 @@ public class JavaMainWrapper {
             args.setVersion(4);
             args.setArgc(paramArgc);
             args.setArgv(paramArgv);
-            args.setIgnoreUnrecognizedArguments(false);
-            args.setExitWhenArgumentParsingFails(true);
+            args.setIgnoreUnrecognizedArgs(false);
+            args.setForJavaMainCall(true);
 
             int code = CEntryPointActions.enterCreateIsolate(args);
             if (code != CEntryPointErrors.NO_ERROR) {
@@ -486,11 +519,26 @@ public class JavaMainWrapper {
         }
     }
 
-    /** Support for platform-specific conversion of the command line to Java main arguments. */
+    /**
+     * Support for platform-specific conversion of the command line to Java main arguments. This
+     * singleton is also used to store the initial Java args that have been passed to create the
+     * current VM.
+     */
     @AutomaticallyRegisteredImageSingleton(ArgsSupport.class)
     public static class ArgsSupport {
-        private static ArgsSupport singleton() {
+        public static ArgsSupport singleton() {
             return ImageSingletons.lookup(ArgsSupport.class);
+        }
+
+        private String[] initialArgs;
+
+        public void setInitialArgs(String[] initialArgs) {
+            VMError.guarantee(this.initialArgs == null, "The initial Java args this VM was started with, can only be set once.");
+            this.initialArgs = initialArgs;
+        }
+
+        public String[] getInitialArgs() {
+            return initialArgs;
         }
 
         /**

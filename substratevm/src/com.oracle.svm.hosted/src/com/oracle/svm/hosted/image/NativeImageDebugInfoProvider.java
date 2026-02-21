@@ -74,7 +74,7 @@ import com.oracle.svm.core.imagelayer.DynamicImageLayerInfo;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.meta.SharedMethod;
 import com.oracle.svm.core.meta.SharedType;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.c.NativeLibraries;
 import com.oracle.svm.hosted.c.info.AccessorInfo;
@@ -391,7 +391,7 @@ class NativeImageDebugInfoProvider extends SharedDebugInfoProvider {
      */
     @Override
     protected Stream<Object> dataInfo() {
-        return heap.getObjects().stream().map(obj -> obj);
+        return heap.streamObjects().map(obj -> obj);
     }
 
     @Override

@@ -38,7 +38,7 @@ import org.graalvm.nativeimage.dynamicaccess.AccessCondition;
 import org.graalvm.nativeimage.impl.TypeReachabilityCondition;
 
 import com.oracle.svm.core.hub.DynamicHub;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.LogUtils;
 
 /**
@@ -59,7 +59,6 @@ public class RuntimeDynamicAccessMetadata {
     private boolean satisfied;
     private volatile boolean preserved;
 
-    @Platforms(Platform.HOSTED_ONLY.class)
     public static RuntimeDynamicAccessMetadata emptySet(boolean preserved) {
         return new RuntimeDynamicAccessMetadata(new Object[0], preserved);
     }
@@ -145,6 +144,13 @@ public class RuntimeDynamicAccessMetadata {
         }
 
         return result;
+    }
+
+    /*
+     * Used in snippets, returns true only if the condition was already satisfied beforehand.
+     */
+    public final boolean fastPathSatisfied() {
+        return satisfied;
     }
 
     public boolean isPreserved() {

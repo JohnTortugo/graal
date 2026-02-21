@@ -33,15 +33,14 @@ import org.graalvm.nativeimage.ImageSingletons;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
-import com.oracle.svm.core.layeredimagesingleton.ImageSingletonLoader;
-import com.oracle.svm.core.layeredimagesingleton.ImageSingletonWriter;
-import com.oracle.svm.core.layeredimagesingleton.LayeredPersistFlags;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.SingletonLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonLayeredCallbacksSupplier;
-import com.oracle.svm.core.traits.SingletonTrait;
-import com.oracle.svm.core.traits.SingletonTraitKind;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.ImageSingletonLoader;
+import com.oracle.svm.shared.singletons.ImageSingletonWriter;
+import com.oracle.svm.shared.singletons.LayeredPersistFlags;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.LayeredCallbacksSingletonTrait;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacksSupplier;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 
 /**
  * Tracks fields with constant values which could be inlined, but which must exist in memory -- for
@@ -80,7 +79,7 @@ public class MaterializedConstantFields implements InternalFeature {
         private static final String FIELDS = "fields";
 
         @Override
-        public SingletonTrait getLayeredCallbacksTrait() {
+        public LayeredCallbacksSingletonTrait getLayeredCallbacksTrait() {
             var action = new SingletonLayeredCallbacks<MaterializedConstantFields>() {
                 @Override
                 public LayeredPersistFlags doPersist(ImageSingletonWriter writer, MaterializedConstantFields singleton) {
@@ -93,7 +92,7 @@ public class MaterializedConstantFields implements InternalFeature {
                     singleton.fields.addAll(loader.readIntList(FIELDS));
                 }
             };
-            return new SingletonTrait(SingletonTraitKind.LAYERED_CALLBACKS, action);
+            return new LayeredCallbacksSingletonTrait(action);
         }
     }
 }

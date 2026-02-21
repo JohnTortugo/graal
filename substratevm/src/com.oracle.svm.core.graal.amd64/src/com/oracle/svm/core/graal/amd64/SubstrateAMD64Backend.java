@@ -28,7 +28,7 @@ import static com.oracle.svm.core.graal.code.SubstrateBackend.SubstrateMarkId.PR
 import static com.oracle.svm.core.graal.code.SubstrateBackend.SubstrateMarkId.PROLOGUE_END;
 import static com.oracle.svm.core.graal.code.SubstrateBackend.SubstrateMarkId.PROLOGUE_PUSH_RBP;
 import static com.oracle.svm.core.graal.code.SubstrateBackend.SubstrateMarkId.PROLOGUE_SET_FRAME_POINTER;
-import static com.oracle.svm.core.util.VMError.unsupportedFeature;
+import static com.oracle.svm.shared.util.VMError.unsupportedFeature;
 import static jdk.graal.compiler.lir.LIRInstruction.OperandFlag.REG;
 import static jdk.graal.compiler.lir.LIRValueUtil.asConstantValue;
 import static jdk.graal.compiler.lir.LIRValueUtil.differentRegisters;
@@ -95,10 +95,11 @@ import com.oracle.svm.core.meta.SharedMethod;
 import com.oracle.svm.core.meta.SubstrateMethodPointerConstant;
 import com.oracle.svm.core.meta.SubstrateObjectConstant;
 import com.oracle.svm.core.nodes.SafepointCheckNode;
+import com.oracle.svm.core.nodes.SubstrateIndirectCallTargetNode;
 import com.oracle.svm.core.pltgot.GOTAccess;
 import com.oracle.svm.core.pltgot.PLTGOTConfiguration;
 import com.oracle.svm.core.thread.VMThreads.StatusSupport;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.asm.BranchTargetOutOfBoundsException;
 import jdk.graal.compiler.asm.Label;
@@ -222,6 +223,7 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.Value;
 
 public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64MacroAssembler> implements LIRGenerationProvider {
+    public static final Register HIDDEN_ARGUMENT_REGISTER = AMD64.rax;
 
     protected static CompressEncoding getCompressEncoding() {
         return ImageSingletons.lookup(CompressEncoding.class);
@@ -309,42 +311,56 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
 
         private final boolean destroysCallerSavedRegisters;
         @Temp({REG, OperandFlag.ILLEGAL}) private Value exceptionTemp;
+
+        /*
+         * Make it explicit that this operation overrides a given register (rax or r10).
+         */
+        @Temp({REG}) private Value targetAddressRegister;
         private final BiConsumer<CompilationResultBuilder, Integer> offsetRecorder;
 
         @Def({REG}) private Value[] multipleResults;
 
         @Temp({REG, OperandFlag.ILLEGAL}) AllocatableValue cfiTargetRegister;
 
-        private SubstrateCallingConventionType callingConventionType;
+        @Use({REG, OperandFlag.ILLEGAL}) private Value hiddenArgument;
+        /* Make HIDDEN_ARGUMENT_REGISTER usage explicit */
+        @Temp({REG, OperandFlag.ILLEGAL}) private Value hiddenArgumentTemp;
+
+        SubstrateCallingConventionType callingConventionType;
 
         public SubstrateAMD64IndirectCallOp(ResolvedJavaMethod callTarget, Value result,
                         Value[] parameters, Value[] temps, Value targetAddress, LIRFrameState state,
                         Value javaFrameAnchor, Value javaFrameAnchorTemp, int newThreadStatus, boolean destroysCallerSavedRegisters, Value exceptionTemp,
                         BiConsumer<CompilationResultBuilder, Integer> offsetRecorder) {
             this(callTarget, result, parameters, temps, targetAddress, state, javaFrameAnchor, javaFrameAnchorTemp, newThreadStatus, destroysCallerSavedRegisters, exceptionTemp, offsetRecorder,
-                            new Value[0], null);
+                            new Value[0], null, Value.ILLEGAL);
         }
 
         public SubstrateAMD64IndirectCallOp(ResolvedJavaMethod callTarget, Value result, Value[] parameters, Value[] temps, Value targetAddress,
                         LIRFrameState state, Value javaFrameAnchor, Value javaFrameAnchorTemp, int newThreadStatus, boolean destroysCallerSavedRegisters, Value exceptionTemp,
-                        BiConsumer<CompilationResultBuilder, Integer> offsetRecorder, Value[] multipleResults, SubstrateCallingConventionType callingConventionType) {
+                        BiConsumer<CompilationResultBuilder, Integer> offsetRecorder, Value[] multipleResults, SubstrateCallingConventionType callingConventionType, Value hiddenArgument) {
             super(TYPE, callTarget, result, parameters, temps, targetAddress, state);
             this.newThreadStatus = newThreadStatus;
             this.javaFrameAnchor = javaFrameAnchor;
             this.javaFrameAnchorTemp = javaFrameAnchorTemp;
             this.destroysCallerSavedRegisters = destroysCallerSavedRegisters;
             this.exceptionTemp = exceptionTemp;
+            this.targetAddress = targetAddress;
+            this.targetAddressRegister = targetAddress;
             this.offsetRecorder = offsetRecorder;
             this.multipleResults = multipleResults;
             this.callingConventionType = callingConventionType;
             this.cfiTargetRegister = getCFITargetRegister();
+            this.hiddenArgument = hiddenArgument;
+            this.hiddenArgumentTemp = hiddenArgument;
 
-            assert differentRegisters(parameters, temps, targetAddress, javaFrameAnchor, javaFrameAnchorTemp, cfiTargetRegister);
+            assert differentRegisters(parameters, temps, targetAddress, javaFrameAnchor, javaFrameAnchorTemp, cfiTargetRegister, hiddenArgumentTemp);
         }
 
         @Override
         public void emitCode(CompilationResultBuilder crb, AMD64MacroAssembler masm) {
             maybeTransitionToNative(crb, masm, javaFrameAnchor, javaFrameAnchorTemp, state, newThreadStatus);
+
             int offset = AMD64Call.indirectCall(crb, masm, asRegister(targetAddress), callTarget, state, callingConventionType);
             if (offsetRecorder != null) {
                 offsetRecorder.accept(crb, offset);
@@ -910,7 +926,7 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
             }
 
             CallingConvention convention = gen.getRegisterConfig().getCallingConvention(SubstrateCallingConventionKind.Java.toType(true), null, sig, gen);
-            append(new AMD64BreakpointOp(visitInvokeArguments(convention, node.arguments())));
+            append(new AMD64BreakpointOp(visitInvokeArguments(convention, node.arguments(), null)));
         }
 
         @Override
@@ -948,8 +964,14 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
         }
 
         @Override
-        public Value[] visitInvokeArguments(CallingConvention invokeCc, Collection<ValueNode> arguments) {
-            Value[] values = super.visitInvokeArguments(invokeCc, arguments);
+        public Value[] visitInvokeArguments(CallingConvention invokeCc, Collection<ValueNode> arguments, LoweredCallTargetNode callTarget) {
+            if (callTarget instanceof SubstrateIndirectCallTargetNode substrateCallTarget && substrateCallTarget.getHiddenArgument() != null) {
+                // See SubstrateAMD64NodeLIRBuilder#emitIndirectCall
+                Value hiddenArgument = HIDDEN_ARGUMENT_REGISTER.asValue(LIRKind.value(AMD64Kind.QWORD));
+                gen.emitMove((AllocatableValue) hiddenArgument, operand(substrateCallTarget.getHiddenArgument()));
+            }
+
+            Value[] values = super.visitInvokeArguments(invokeCc, arguments, callTarget);
             SubstrateCallingConventionType type = (SubstrateCallingConventionType) ((SubstrateCallingConvention) invokeCc).getType();
 
             if (type.usesReturnBuffer()) {
@@ -1068,13 +1090,17 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
 
         @Override
         protected void emitIndirectCall(IndirectCallTargetNode callTarget, Value result, Value[] parameters, Value[] temps, LIRFrameState callState) {
+            boolean hasHiddenArgument = callTarget instanceof SubstrateIndirectCallTargetNode substrateIndirectCallTargetNode && substrateIndirectCallTargetNode.getHiddenArgument() != null;
+            boolean isNativeABI = ((SubstrateCallingConventionType) callTarget.callType()).nativeABI();
+
             // The register allocator cannot handle variables at call sites, need a fixed register.
-            Register targetRegister = AMD64.rax;
-            if (((SubstrateCallingConventionType) callTarget.callType()).nativeABI()) {
-                // Do not use RAX for C calls, it contains the number of XMM registers for varargs.
-                targetRegister = AMD64.r10;
+            // Do not use RAX for C calls, it contains the number of XMM registers for varargs.
+            // RAX can also be used for the hidden argument (non-native ABI only).
+            Register targetAddressRegister = AMD64.rax;
+            if (hasHiddenArgument || isNativeABI) {
+                targetAddressRegister = AMD64.r10;
             }
-            AllocatableValue targetAddress = targetRegister.asValue(FrameAccess.getWordStamp().getLIRKind(getLIRGeneratorTool().getLIRKindTool()));
+            AllocatableValue targetAddress = targetAddressRegister.asValue(FrameAccess.getWordStamp().getLIRKind(getLIRGeneratorTool().getLIRKindTool()));
             gen.emitMove(targetAddress, operand(callTarget.computedAddress()));
             ResolvedJavaMethod targetMethod = callTarget.targetMethod();
             vzeroupperBeforeCall((SubstrateAMD64LIRGenerator) getLIRGeneratorTool(), parameters, callState, (SharedMethod) targetMethod);
@@ -1087,9 +1113,15 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
                                 .toList().toArray(new Value[0]);
             }
 
+            Value hiddenArgument = Value.ILLEGAL;
+            if (hasHiddenArgument) {
+                // See SubstrateAMD64NodeLIRBuilder#visitInvokeArguments
+                hiddenArgument = HIDDEN_ARGUMENT_REGISTER.asValue(LIRKind.value(AMD64Kind.QWORD));
+            }
+
             append(new SubstrateAMD64IndirectCallOp(targetMethod, result, parameters, temps, targetAddress, callState,
                             setupJavaFrameAnchor(callTarget), setupJavaFrameAnchorTemp(callTarget), getNewThreadStatus(callTarget),
-                            getDestroysCallerSavedRegisters(targetMethod), getExceptionTemp(callTarget), getOffsetRecorder(callTarget), multipleResults, callingConventionType));
+                            getDestroysCallerSavedRegisters(targetMethod), getExceptionTemp(callTarget), getOffsetRecorder(callTarget), multipleResults, callingConventionType, hiddenArgument));
         }
 
         protected void emitComputedIndirectCall(ComputedIndirectCallTargetNode callTarget, Value result, Value[] parameters, Value[] temps, LIRFrameState callState) {
@@ -1873,9 +1905,14 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
             int length = kind.getPlatformKind().getVectorLength();
             if (length == 1) {
                 return super.emitConstant(kind, constant);
-            } else if (constant instanceof SimdConstant) {
-                assert ((SimdConstant) constant).getVectorLength() == length;
-                return super.emitConstant(kind, constant);
+            } else if (constant instanceof SimdConstant simd) {
+                /*
+                 * JVMCI doesn't have a 16-bit vector kind. Two-byte constants are assigned a 32-bit
+                 * kind instead.
+                 */
+                boolean specialCaseTwoBytes = kind.getPlatformKind().equals(AMD64Kind.V32_BYTE) && simd.getSerializedSize() == 2;
+                assert specialCaseTwoBytes || simd.getVectorLength() == length : constant + " " + length;
+                return super.emitConstant(kind, simd);
             } else {
                 return super.emitConstant(kind, SimdConstant.broadcast(constant, length));
             }

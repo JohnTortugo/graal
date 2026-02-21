@@ -42,6 +42,7 @@ import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.type.CCharPointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.common.meta.GuaranteeFolded;
 import com.oracle.svm.core.annotate.Alias;
@@ -49,9 +50,10 @@ import com.oracle.svm.core.annotate.RecomputeFieldValue;
 import com.oracle.svm.core.annotate.RecomputeFieldValue.Kind;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.util.HostedSubstrateUtil;
-import com.oracle.svm.core.util.VMError;
-import com.oracle.svm.util.ReflectionUtil;
-import com.oracle.svm.util.StringUtil;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.util.StringUtil;
+import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.graph.Node.NodeIntrinsic;
 import jdk.graal.compiler.java.LambdaUtils;
@@ -60,7 +62,6 @@ import jdk.graal.compiler.util.Digest;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.Signature;
-import org.graalvm.word.impl.Word;
 
 public class SubstrateUtil {
 

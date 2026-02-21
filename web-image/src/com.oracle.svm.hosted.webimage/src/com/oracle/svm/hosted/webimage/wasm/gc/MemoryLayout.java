@@ -38,13 +38,13 @@ import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.AlwaysInline;
 import com.oracle.svm.core.Isolates;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.CGlobalData;
 import com.oracle.svm.core.c.CGlobalDataFactory;
 import com.oracle.svm.core.heap.RestrictHeapAccess;
 import com.oracle.svm.core.heap.RestrictHeapAccess.Access;
 import com.oracle.svm.core.util.UnsignedUtils;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.webimage.wasm.nodes.WasmMemoryGrowNode;
 import com.oracle.svm.hosted.webimage.wasm.nodes.WasmMemorySizeNode;
 import com.oracle.svm.webimage.wasm.types.WasmUtil;

@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.snippets;
 
-import static com.oracle.svm.core.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideEffect.HAS_SIDE_EFFECT;
 import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideEffect.NO_SIDE_EFFECT;
 
@@ -32,15 +32,15 @@ import java.lang.reflect.GenericSignatureFormatError;
 
 import com.oracle.svm.core.SubstrateDiagnostics;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.Uninterruptible;
 import com.oracle.svm.core.code.FactoryMethodMarker;
-import com.oracle.svm.core.jdk.InternalVMMethod;
 import com.oracle.svm.core.jdk.StackTraceUtils;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.snippets.SnippetRuntime.SubstrateForeignCallDescriptor;
 import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalInt;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.guest.staging.jdk.InternalVMMethod;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * This class contains support methods to throw implicit exceptions according to the specification

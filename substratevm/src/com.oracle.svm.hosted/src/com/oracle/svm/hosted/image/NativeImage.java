@@ -26,7 +26,7 @@ package com.oracle.svm.hosted.image;
 
 import static com.oracle.svm.core.SubstrateOptions.SpawnIsolates;
 import static com.oracle.svm.core.SubstrateUtil.mangleName;
-import static com.oracle.svm.core.util.VMError.shouldNotReachHere;
+import static com.oracle.svm.shared.util.VMError.shouldNotReachHere;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
@@ -99,12 +99,12 @@ import com.oracle.svm.core.meta.MethodRef;
 import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.os.ImageHeapProvider;
 import com.oracle.svm.core.reflect.SubstrateAccessor;
-import com.oracle.svm.core.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.core.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.core.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.core.util.ByteFormattingUtil;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.DeadlockWatchdog;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.NativeImageOptions;
@@ -125,8 +125,8 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.ReflectionUtil;
-import com.oracle.svm.util.ReflectionUtil.ReflectionUtilError;
+import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil.ReflectionUtilError;
 
 import jdk.graal.compiler.asm.aarch64.AArch64Assembler;
 import jdk.graal.compiler.code.CompilationResult;
@@ -1035,6 +1035,7 @@ final class MethodPointerInvalidHandlerFeature implements InternalFeature {
             access.registerAsRoot(invalidCodeAddressHandler, true, "Registered in " + MethodPointerInvalidHandlerFeature.class);
         }
         access.registerAsRoot(InvalidMethodPointerHandler.METHOD_POINTER_NOT_COMPILED_HANDLER_METHOD, true, "Registered in " + MethodPointerInvalidHandlerFeature.class);
+        access.registerAsRoot(InvalidMethodPointerHandler.INVALID_VTABLE_ENTRY_HANDLER_METHOD, true, "Registered in " + MethodPointerInvalidHandlerFeature.class);
     }
 
     static Method getInvalidCodeAddressHandler() {

@@ -24,20 +24,20 @@
  */
 package com.oracle.svm.graal.meta;
 
-import static com.oracle.svm.core.util.VMError.shouldNotReachHere;
+import static com.oracle.svm.shared.util.VMError.shouldNotReachHere;
 
 import com.oracle.svm.core.code.CodeInfoAccess;
 import com.oracle.svm.core.code.UntetheredCodeInfo;
 import jdk.graal.compiler.core.common.CompilationIdentifier;
 
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.code.CodeInfo;
 import com.oracle.svm.core.code.CodeInfoTable;
 import com.oracle.svm.core.deopt.SubstrateInstalledCode;
 import com.oracle.svm.core.deopt.SubstrateSpeculationLog;
 import com.oracle.svm.core.graal.meta.SharedRuntimeMethod;
 import com.oracle.svm.core.thread.VMOperation;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.vm.ci.code.InstalledCode;
 import jdk.vm.ci.meta.ResolvedJavaMethod;

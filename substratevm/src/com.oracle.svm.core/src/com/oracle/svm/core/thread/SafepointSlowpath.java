@@ -28,7 +28,7 @@ import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideE
 
 import com.oracle.svm.core.AlwaysInline;
 import com.oracle.svm.core.NeverInline;
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.graal.code.StubCallingConvention;
 import com.oracle.svm.core.graal.snippets.SafepointSnippets;
 import com.oracle.svm.core.nodes.CFunctionEpilogueNode;
@@ -41,7 +41,7 @@ import com.oracle.svm.core.stack.JavaFrameAnchors;
 import com.oracle.svm.core.thread.RecurringCallbackSupport.RecurringCallbackTimer;
 import com.oracle.svm.core.thread.VMThreads.ActionOnTransitionToJavaSupport;
 import com.oracle.svm.core.thread.VMThreads.StatusSupport;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * A safepoint check compares the value of the thread-local {@link SafepointCheckCounter} to 0. If

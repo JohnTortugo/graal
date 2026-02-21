@@ -24,13 +24,14 @@
  */
 package com.oracle.svm.core;
 
+import com.oracle.svm.guest.staging.Uninterruptible;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.hub.LayoutEncoding;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 
 import org.graalvm.word.impl.BarrieredAccess;
 

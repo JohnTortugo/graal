@@ -24,13 +24,12 @@
  */
 package com.oracle.svm.hosted.image;
 
-import static com.oracle.svm.core.util.VMError.shouldNotReachHereUnexpectedInput;
+import static com.oracle.svm.shared.util.VMError.shouldNotReachHereUnexpectedInput;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
@@ -40,7 +39,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
+import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.c.function.RelocatedPointer;
 import org.graalvm.word.UnsignedWord;
@@ -76,7 +78,7 @@ import com.oracle.svm.core.jdk.StringInternSupport;
 import com.oracle.svm.core.meta.MethodOffset;
 import com.oracle.svm.core.util.HostedStringDeduplication;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.HostedConfiguration;
 import com.oracle.svm.hosted.ameta.SVMHostedValueProvider;
 import com.oracle.svm.hosted.config.DynamicHubLayout;
@@ -138,7 +140,7 @@ public final class NativeImageHeap implements ImageHeap {
      * The constants stored in the image heap are always uncompressed. The same object info is
      * returned whenever the map is queried regardless of the compressed flag value.
      */
-    private final HashMap<JavaConstant, ObjectInfo> objects = new HashMap<>();
+    private final EconomicMap<JavaConstant, ObjectInfo> objects = EconomicMap.create();
 
     /** Objects that must not be written to the native image heap. */
     private final Set<Object> blacklist = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -184,16 +186,24 @@ public final class NativeImageHeap implements ImageHeap {
     }
 
     @Override
-    public Collection<ObjectInfo> getObjects() {
-        return objects.values();
+    public Iterable<ObjectInfo> getObjects() {
+        return objects.getValues();
+    }
+
+    public Stream<ObjectInfo> streamObjects() {
+        return StreamSupport.stream(objects.getValues().spliterator(), false);
     }
 
     public int getObjectCount() {
         return objects.size();
     }
 
-    public int getLayerObjectCount() {
-        return (int) objects.values().stream().filter(o -> !o.constant.isWrittenInPreviousLayer()).count();
+    private Stream<ObjectInfo> getCurrentLayerObjects() {
+        return streamObjects().filter(o -> !o.constant.isWrittenInPreviousLayer());
+    }
+
+    public int getCurrentLayerObjectCount() {
+        return (int) getCurrentLayerObjects().count();
     }
 
     public ObjectInfo getObjectInfo(Object obj) {
@@ -220,9 +230,7 @@ public final class NativeImageHeap implements ImageHeap {
     }
 
     public boolean hasDuplicateObjects() {
-        Set<NativeImageHeap.ObjectInfo> deduplicated = Collections.newSetFromMap(new IdentityHashMap<>());
-        deduplicated.addAll(objects.values());
-        return deduplicated.size() != getObjectCount();
+        return streamObjects().distinct().count() != getObjectCount();
     }
 
     @Fold
@@ -413,10 +421,13 @@ public final class NativeImageHeap implements ImageHeap {
         int identityHashCode = computeIdentityHashCode(uncompressed);
         VMError.guarantee(identityHashCode != 0, "0 is used as a marker value for 'hash code not yet computed'");
 
+        /* This unwrapping of JavaConstants should be removed once GR-72922 is done. */
         Object objectConstant = hUniverse.getSnippetReflection().asObject(Object.class, uncompressed);
-        ImageHeapScanner.maybeForceHashCodeComputation(objectConstant);
-        if (objectConstant instanceof String stringConstant) {
-            handleImageString(stringConstant);
+        if (objectConstant != null) {
+            aUniverse.getHeapScanner().maybeForceHashCodeComputation(uncompressed);
+            if (objectConstant instanceof String stringConstant) {
+                handleImageString(stringConstant);
+            }
         }
 
         final ObjectInfo existing = getConstantInfo(uncompressed);

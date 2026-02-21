@@ -32,7 +32,7 @@ import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
 
-import com.oracle.svm.core.Uninterruptible;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.genscavenge.GCImpl;
 import com.oracle.svm.core.genscavenge.HeapImpl;
 import com.oracle.svm.core.heap.GC;
@@ -42,7 +42,7 @@ import com.oracle.svm.core.heap.ObjectVisitor;
 import com.oracle.svm.core.heap.RuntimeCodeInfoGCSupport;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.option.NotifyGCRuntimeOptionKey;
-import com.oracle.svm.core.util.VMError;
+import com.oracle.svm.shared.util.VMError;
 import org.graalvm.word.impl.Word;
 
 /**
