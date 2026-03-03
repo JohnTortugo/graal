@@ -36,8 +36,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-import jdk.graal.compiler.core.common.LibGraalSupport;
 import jdk.graal.compiler.debug.GraalError;
+import jdk.graal.compiler.options.LibGraalSupport;
 import jdk.graal.compiler.util.CollectionsUtil;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.ResolvedJavaMethod;

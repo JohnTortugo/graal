@@ -60,12 +60,12 @@ import com.oracle.graal.pointsto.ClassInclusionPolicy;
 import com.oracle.graal.pointsto.ClassInclusionPolicy.DefaultAllInclusionPolicy;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.jdk.localization.BundleContentSubstitutedLocalizationSupport;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.LocatableMultiOptionValue;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.NativeImageClassLoaderSupport;
 import com.oracle.svm.hosted.driver.IncludeOptionsSupport;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.LocatableMultiOptionValue;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.OriginalClassProvider;
 

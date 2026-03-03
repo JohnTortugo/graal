@@ -42,7 +42,7 @@ import com.oracle.svm.core.graal.code.AssignedLocation;
 import com.oracle.svm.core.graal.code.SubstrateCallingConventionType;
 import com.oracle.svm.core.graal.snippets.CFunctionSnippets;
 import com.oracle.svm.core.thread.VMThreads;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.hosted.code.NonBytecodeMethod;
 import com.oracle.svm.hosted.code.SubstrateCompilationDirectives;
 import com.oracle.svm.shared.util.ReflectionUtil;

@@ -69,6 +69,7 @@ import com.oracle.truffle.dsl.processor.generator.FlatNodeGenFactory.FrameState;
 import com.oracle.truffle.dsl.processor.generator.FlatNodeGenFactory.LocalVariable;
 import com.oracle.truffle.dsl.processor.generator.FlatNodeGenFactory.NodeExecutionMode;
 import com.oracle.truffle.dsl.processor.generator.NodeGeneratorPlugs;
+import com.oracle.truffle.dsl.processor.java.ElementUtils;
 import com.oracle.truffle.dsl.processor.java.model.CodeExecutableElement;
 import com.oracle.truffle.dsl.processor.java.model.CodeTree;
 import com.oracle.truffle.dsl.processor.java.model.CodeTreeBuilder;
@@ -107,7 +108,7 @@ public class BytecodeDSLNodeGeneratorPlugs implements NodeGeneratorPlugs {
         List<CodeVariableElement> result = new ArrayList<>();
         result.add(new CodeVariableElement(nodeType, "$bytecode"));
         result.add(new CodeVariableElement(context.getType(byte[].class), "$bc"));
-        result.add(new CodeVariableElement(context.getType(int.class), "$bci"));
+        result.add(new CodeVariableElement(rootNode.getBytecodeIndexType(), "$bci"));
         return result;
     }
 
@@ -137,7 +138,7 @@ public class BytecodeDSLNodeGeneratorPlugs implements NodeGeneratorPlugs {
 
         InterpreterTier tier = frameState.getMode() == NodeExecutionMode.UNCACHED ? InterpreterTier.UNCACHED : InterpreterTier.CACHED;
         if (BytecodeRootNodeElement.isStoreBciBeforeSpecialization(model, tier, instruction, specialization)) {
-            BytecodeRootNodeElement.storeBciInFrame(builder, "frameValue", "$bci");
+            rootNode.emitWriteBytecodeIndexToFrame(builder, "frameValue", "$bci");
         }
     }
 
@@ -169,10 +170,15 @@ public class BytecodeDSLNodeGeneratorPlugs implements NodeGeneratorPlugs {
     }
 
     public CodeTree bindExpressionValue(FrameState frameState, Variable variable) {
+        String bci;
+        if (ElementUtils.typeEquals(rootNode.getBytecodeIndexType(), context.getType(int.class))) {
+            bci = "$bci";
+        } else {
+            bci = "(int) $bci";
+        }
         switch (variable.getName()) {
             case NodeParser.SYMBOL_THIS:
             case NodeParser.SYMBOL_NODE:
-
                 if (frameState.getMode().isUncached()) {
                     return CodeTreeBuilder.singleString("$bytecode");
                 } else if (instruction.canUseNodeSingleton()) {
@@ -195,10 +201,10 @@ public class BytecodeDSLNodeGeneratorPlugs implements NodeGeneratorPlugs {
             case BytecodeDSLParser.SYMBOL_ROOT_NODE:
                 return CodeTreeBuilder.singleString("$bytecode.getRoot()");
             case BytecodeDSLParser.SYMBOL_BYTECODE_INDEX:
-                return CodeTreeBuilder.singleString("$bci");
+                return CodeTreeBuilder.singleString(bci);
             case BytecodeDSLParser.SYMBOL_CONTINUATION_ROOT:
                 InstructionImmediate continuationIndex = instruction.getImmediates(ImmediateKind.CONSTANT).getLast();
-                return CodeTreeBuilder.createBuilder().tree(rootNode.readConstantImmediate("$bc", "$bci", "$bytecode", continuationIndex, rootNode.getContinuationRootNodeImpl().asType())).build();
+                return CodeTreeBuilder.createBuilder().tree(rootNode.readConstantImmediate("$bc", bci, "$bytecode", continuationIndex, rootNode.getContinuationRootNodeImpl().asType())).build();
             default:
                 return NodeGeneratorPlugs.super.bindExpressionValue(frameState, variable);
 
@@ -214,7 +220,7 @@ public class BytecodeDSLNodeGeneratorPlugs implements NodeGeneratorPlugs {
         }
 
         method.addParameter(new CodeVariableElement(context.getType(byte[].class), "$bc"));
-        method.addParameter(new CodeVariableElement(context.getType(int.class), "$bci"));
+        method.addParameter(new CodeVariableElement(rootNode.getBytecodeIndexType(), "$bci"));
 
         CodeTreeBuilder b = method.createBuilder();
         b.declaration(context.getType(short.class), "newInstruction");

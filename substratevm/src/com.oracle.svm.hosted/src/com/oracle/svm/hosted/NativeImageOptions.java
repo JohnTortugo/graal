@@ -33,24 +33,24 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.concurrent.ForkJoinPool;
 
-import com.oracle.svm.core.option.OptionOrigin;
 import org.graalvm.collections.EconomicMap;
 
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.svm.core.FutureDefaultsOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.option.APIOption;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.BundleMember;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.InterruptImageBuilding;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationOptions;
 import com.oracle.svm.hosted.image.PreserveOptionsSupport;
 import com.oracle.svm.hosted.util.CPUType;
+import com.oracle.svm.shared.option.APIOption;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.BundleMember;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.OptionOrigin;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.StringUtil;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.options.Option;

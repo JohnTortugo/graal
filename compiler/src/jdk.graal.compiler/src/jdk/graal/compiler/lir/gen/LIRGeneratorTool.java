@@ -568,6 +568,11 @@ public interface LIRGeneratorTool extends CoreProviders, DiagnosticLIRGeneratorT
         throw GraalError.unimplemented("String.indexOf substitution is not implemented on this architecture"); // ExcludeFromJacocoGeneratedReport
     }
 
+    @SuppressWarnings("unused")
+    default Variable emitIndexOfZero(Stride stride, EnumSet<?> runtimeCheckedCPUFeatures, Value arrayPointer) {
+        throw GraalError.unimplemented("ArrayUtils.indexOfZero substitution is not implemented on this architecture"); // ExcludeFromJacocoGeneratedReport
+    }
+
     /*
      * The routines emitStringLatin1Inflate/3 and emitStringUTF16Compress/3 models a simplified
      * version of

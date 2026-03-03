@@ -506,7 +506,7 @@ public final class HostedByteBufferPointer implements Pointer {
     @Override
     public void writeWord(int offset, WordBase val) {
         long value = val.rawValue();
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         if (wordSize == Integer.BYTES) {
             buffer.putInt(baseOffset + offset, NumUtil.safeToUInt(value));
         } else {

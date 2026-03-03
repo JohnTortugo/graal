@@ -28,11 +28,11 @@ package com.oracle.svm.hosted.webimage.wasm;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.HostedOptionValues;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.webimage.options.WebImageOptions.CommentVerbosity;
+import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
 import jdk.graal.compiler.options.EnumOptionKey;
 import jdk.graal.compiler.options.Option;

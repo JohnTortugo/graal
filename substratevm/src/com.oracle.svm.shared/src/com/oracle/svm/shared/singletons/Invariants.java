@@ -27,20 +27,31 @@ package com.oracle.svm.shared.singletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
+import com.oracle.svm.shared.util.VMError;
+
 /**
  * Temporary class to handle guarantees for singletons. Should be removed and replaced with
- * {@code VMError} once it is migrated (GR-73355).
+ * {@code VMError} once it is migrated (GR-73604).
  */
+@Platforms(Platform.HOSTED_ONLY.class)
 public class Invariants {
-    @Platforms(Platform.HOSTED_ONLY.class)
     public static void guarantee(boolean condition, String msg) {
         if (!condition) {
             throw new Error(msg);
         }
     }
 
-    @Platforms(Platform.HOSTED_ONLY.class)
     public static RuntimeException shouldNotReachHere(String msg) {
         throw new Error(msg);
+    }
+
+    public static void guarantee(boolean condition, String format, Object... args) {
+        if (!condition) {
+            throw abort(format, args);
+        }
+    }
+
+    public static Error abort(String format, Object... args) {
+        throw new Error(String.format(format, VMError.formatArguments(args)));
     }
 }

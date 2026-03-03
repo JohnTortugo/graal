@@ -29,12 +29,15 @@ import static com.oracle.svm.shared.util.VMError.shouldNotReachHereUnexpectedInp
 import java.lang.reflect.Array;
 import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -114,6 +117,10 @@ import jdk.vm.ci.meta.ResolvedJavaType;
 public final class NativeImageHeap implements ImageHeap {
     /** A pseudo-partition for base layer objects, see {@link BaseLayerPartition}. */
     private static final ImageHeapPartition BASE_LAYER_PARTITION = new BaseLayerPartition();
+
+    /** Deterministic field order: by declaring class name, then field name. */
+    private static final Comparator<HostedField> DETERMINISTIC_FIELD_COMPARATOR = Comparator.comparing((HostedField field) -> field.getDeclaringClass().toJavaName(true))
+                    .thenComparing(HostedField::getName);
 
     public final AnalysisUniverse aUniverse;
     public final HostedUniverse hUniverse;
@@ -327,7 +334,9 @@ public final class NativeImageHeap implements ImageHeap {
          * We only have empty holder arrays for the static fields, so we need to add static object
          * fields manually.
          */
-        for (HostedField field : hUniverse.getFields()) {
+        List<HostedField> deterministicFieldOrderForConstantLayout = new ArrayList<>(hUniverse.getFields());
+        deterministicFieldOrderForConstantLayout.sort(DETERMINISTIC_FIELD_COMPARATOR);
+        for (HostedField field : deterministicFieldOrderForConstantLayout) {
             if (field.getWrapped().installableInLayer() && Modifier.isStatic(field.getModifiers()) && field.hasLocation() && field.getType().getStorageKind() == JavaKind.Object && field.isRead()) {
                 assert field.isWritten() || !field.isValueAvailable(null) || MaterializedConstantFields.singleton().contains(field.wrapped);
                 /* GR-56699 currently static fields cannot be ImageHeapRelocatableConstants. */
@@ -931,7 +940,7 @@ public final class NativeImageHeap implements ImageHeap {
             this.size = size;
             this.identityHashCode = identityHashCode;
 
-            this.reason = reasonSupport.objectInclusionReason(this, reason, hConstantReflection);
+            this.reason = reasonSupport.objectInclusionReason(this, reason, hMetaAccess, hConstantReflection);
             if (objectReachabilityInfo != null) {
                 objectReachabilityInfo.put(this, new ObjectReachabilityInfo(this, reason));
             }

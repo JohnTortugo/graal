@@ -34,8 +34,6 @@ import org.graalvm.nativeimage.c.function.CFunctionPointer;
 import org.graalvm.nativeimage.impl.RuntimeReflectionSupport;
 import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.common.option.CommonOptionParser;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.deopt.SubstrateInstalledCode;
 import com.oracle.svm.core.deopt.SubstrateSpeculationLog;
 import com.oracle.svm.core.graal.code.SubstrateCompilationIdentifier;
@@ -53,6 +51,7 @@ import com.oracle.svm.graal.meta.SubstrateInstalledCodeImpl;
 import com.oracle.svm.graal.meta.SubstrateMetaAccess;
 import com.oracle.svm.graal.meta.SubstrateMethod;
 import com.oracle.svm.graal.meta.SubstrateType;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.hosted.image.PreserveOptionsSupport;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaField;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod;
@@ -67,6 +66,7 @@ import com.oracle.svm.interpreter.ristretto.meta.RistrettoMetaAccess;
 import com.oracle.svm.interpreter.ristretto.meta.RistrettoMethod;
 import com.oracle.svm.interpreter.ristretto.meta.RistrettoReplacements;
 import com.oracle.svm.interpreter.ristretto.meta.RistrettoType;
+import com.oracle.svm.shared.option.CommonOptionParser;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.code.CompilationResult;

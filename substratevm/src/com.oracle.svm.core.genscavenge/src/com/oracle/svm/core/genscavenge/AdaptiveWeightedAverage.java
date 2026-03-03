@@ -28,7 +28,7 @@ import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRU
 
 import org.graalvm.word.UnsignedWord;
 
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.UnsignedUtils;
 import com.oracle.svm.guest.staging.Uninterruptible;
 

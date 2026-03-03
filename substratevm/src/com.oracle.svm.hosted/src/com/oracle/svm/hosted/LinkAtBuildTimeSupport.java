@@ -31,11 +31,11 @@ import java.util.stream.Collectors;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.svm.core.ClassLoaderSupport;
-import com.oracle.svm.core.option.APIOption;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.OptionClassFilter;
-import com.oracle.svm.core.option.OptionOrigin;
+import com.oracle.svm.shared.option.APIOption;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.OptionClassFilter;
+import com.oracle.svm.shared.option.OptionOrigin;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;

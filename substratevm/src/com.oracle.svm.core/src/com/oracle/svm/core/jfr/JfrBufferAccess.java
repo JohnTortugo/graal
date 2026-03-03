@@ -50,7 +50,7 @@ public final class JfrBufferAccess {
 
     @Fold
     public static UnsignedWord getHeaderSize() {
-        return UnsignedUtils.roundUp(SizeOf.unsigned(JfrBuffer.class), Word.unsigned(ConfigurationValues.getTarget().wordSize));
+        return UnsignedUtils.roundUp(SizeOf.unsigned(JfrBuffer.class), Word.unsigned(ConfigurationValues.getWordSize()));
     }
 
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)

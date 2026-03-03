@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.meta;
 
-import com.oracle.svm.util.ClassUtil;
+import com.oracle.svm.shared.util.ClassUtil;
 
 import jdk.graal.compiler.core.common.type.CompressibleConstant;
 import jdk.vm.ci.meta.Constant;

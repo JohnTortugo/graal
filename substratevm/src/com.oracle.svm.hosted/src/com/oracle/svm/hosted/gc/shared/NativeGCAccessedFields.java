@@ -43,11 +43,11 @@ import com.oracle.svm.core.thread.VMThreads.StatusSupport;
 import com.oracle.svm.core.threadlocal.FastThreadLocalBytes;
 import com.oracle.svm.core.threadlocal.FastThreadLocalObject;
 import com.oracle.svm.core.util.ByteArrayReader;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.FeatureImpl.BeforeAnalysisAccessImpl;
 import com.oracle.svm.hosted.config.DynamicHubLayout;
 import com.oracle.svm.hosted.thread.VMThreadFeature;
-import com.oracle.svm.util.ClassUtil;
+import com.oracle.svm.shared.util.ClassUtil;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.core.common.util.UnsafeArrayTypeWriter;
 

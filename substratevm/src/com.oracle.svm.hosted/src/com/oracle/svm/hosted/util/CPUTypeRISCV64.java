@@ -39,9 +39,9 @@ import java.util.stream.Stream;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.NativeImageOptions;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 import com.oracle.svm.shared.util.StringUtil;
 import com.oracle.svm.util.GuestAccess;
 

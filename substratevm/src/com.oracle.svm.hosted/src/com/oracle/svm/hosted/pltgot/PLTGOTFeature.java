@@ -202,7 +202,7 @@ public class PLTGOTFeature implements InternalFeature {
     }
 
     private void createGOTSection(SharedMethod[] got, ObjectFile objectFile, PLTSectionSupport pltSectionSupport) {
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         int gotSectionSize = got.length * wordSize;
         gotBuffer = new RelocatableBuffer(gotSectionSize, objectFile.getByteOrder());
         gotBufferImpl = new BasicProgbitsSectionImpl(gotBuffer.getBackingArray());

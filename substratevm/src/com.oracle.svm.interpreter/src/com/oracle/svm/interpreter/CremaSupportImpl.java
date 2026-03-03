@@ -66,7 +66,6 @@ import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.c.function.CFunctionPointer;
 import org.graalvm.word.Pointer;
-import org.graalvm.word.WordBase;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.graal.pointsto.constraints.UnsupportedPlatformException;
@@ -75,6 +74,7 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
 import com.oracle.svm.core.BuildPhaseProvider.ReadyForCompilation;
+import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.graal.meta.KnownOffsets;
 import com.oracle.svm.core.heap.UnknownPrimitiveField;
@@ -93,8 +93,7 @@ import com.oracle.svm.core.hub.registry.TypeIDs;
 import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.meta.MethodPointer;
-import com.oracle.svm.core.util.BasedOnJDKFile;
-import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.espresso.classfile.ConstantPool;
 import com.oracle.svm.espresso.classfile.Constants;
 import com.oracle.svm.espresso.classfile.JavaKind;
@@ -135,6 +134,8 @@ import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaType;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedObjectType;
 import com.oracle.svm.interpreter.metadata.InterpreterUnresolvedSignature;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.nodes.extended.MembarNode;
 import jdk.vm.ci.meta.ResolvedJavaField;
@@ -503,7 +504,7 @@ public class CremaSupportImpl implements CremaSupport {
     }
 
     private static void fillVTable(DynamicHub hub, InterpreterResolvedJavaMethod[] vtable) {
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         assert KnownOffsets.singleton().getVTableEntrySize() == wordSize : "only word size is implemented at the moment";
 
         Pointer hubStart = Word.objectToUntrackedPointer(hub);
@@ -512,7 +513,16 @@ public class CremaSupportImpl implements CremaSupport {
         Pointer pos = hubStart.add(KnownOffsets.singleton().getVTableBaseOffset());
         for (int i = 0; i < vtable.length; i++) {
             InterpreterResolvedJavaMethod method = vtable[i];
-            WordBase entry = method.hasNativeEntryPoint() ? method.getNativeEntryPoint() : getCremaStubForVTableIndex(i);
+            Pointer entry = method.hasNativeEntryPoint() ? (Pointer) method.getNativeEntryPoint() : getCremaStubForVTableIndex(i);
+
+            if (SubstrateOptions.useRelativeCodePointers()) {
+                /*
+                 * vtables contain offsets from the code base. It's fine for them to be negative
+                 * (overflow/underflow) when the code is loaded below the code base, which can
+                 * include interpreter stubs that are not part of the text section.
+                 */
+                entry = entry.subtract(KnownIntrinsics.codeBase());
+            }
 
             pos.writeWord(0, entry);
             pos = pos.add(wordSize);

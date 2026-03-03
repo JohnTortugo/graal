@@ -59,6 +59,7 @@ import javax.lang.model.type.TypeMirror;
 
 import com.oracle.truffle.dsl.processor.ProcessorContext;
 import com.oracle.truffle.dsl.processor.TruffleTypes;
+import com.oracle.truffle.dsl.processor.bytecode.generator.BytecodeNodeElement.HandlerLayout;
 import com.oracle.truffle.dsl.processor.bytecode.model.BytecodeDSLModel;
 import com.oracle.truffle.dsl.processor.bytecode.model.BytecodeDSLModel.LoadIllegalLocalStrategy;
 import com.oracle.truffle.dsl.processor.bytecode.model.InstructionModel;
@@ -73,6 +74,7 @@ import com.oracle.truffle.dsl.processor.bytecode.model.Signature.Operand;
 import com.oracle.truffle.dsl.processor.generator.GeneratorUtils;
 import com.oracle.truffle.dsl.processor.java.ElementUtils;
 import com.oracle.truffle.dsl.processor.java.model.CodeAnnotationMirror;
+import com.oracle.truffle.dsl.processor.java.model.CodeAnnotationValue;
 import com.oracle.truffle.dsl.processor.java.model.CodeExecutableElement;
 import com.oracle.truffle.dsl.processor.java.model.CodeTree;
 import com.oracle.truffle.dsl.processor.java.model.CodeTreeBuilder;
@@ -90,6 +92,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
     private final TruffleTypes types;
     private final HandlerKind handlerKind;
     private final CodeTree effectGroup;
+    private final HandlerLayout handlerLayout;
 
     @SuppressWarnings("hiding")
     BytecodeInstructionHandler(BytecodeNodeElement parent, InstructionModel instruction, CodeTree effectGroup) {
@@ -97,6 +100,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         this.context = parent.context;
         this.types = parent.types;
         this.parent = parent;
+        this.handlerLayout = parent.handlerLayout;
         this.effectGroup = effectGroup;
         this.instruction = instruction;
         this.handlerKind = HandlerKind.resolve(instruction, effectGroup != null);
@@ -104,49 +108,56 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         boolean earlyInline = false;
         boolean needsCounter = false;
         TypeMirror returnType;
-        switch (handlerKind) {
-            case NONE:
-            case THROW:
-                returnType = (type(void.class));
-                break;
-            case STACK_POP:
-            case BRANCH:
-            case BRANCH_FALSE:
-                earlyInline = true;
-                returnType = (type(int.class));
-                break;
-            case BRANCH_BACKWARD:
-                earlyInline = true;
-                needsCounter = true;
-                returnType = type(Object.class);
-                break;
-            case NEXT:
-                returnType = type(int.class);
-                break;
-            case SHORT_CIRCUIT_BOOLEAN:
-            case SHORT_CIRCUIT_VALUE:
-                earlyInline = true;
-                returnType = type(boolean.class);
-                break;
-            case YIELD:
-            case RETURN:
-            case INVALIDATE:
-                needsCounter = true;
-                returnType = type(long.class);
-                break;
-            case EFFECT_GROUP:
-                Objects.requireNonNull(effectGroup, "Effect group must be set");
-                returnType = type(int.class);
-                break;
-            default:
-                throw new AssertionError(handlerKind.toString());
+
+        if (handlerLayout.isTailCall()) {
+            // tail call handlers need to all have the same layout
+            returnType = parent.getBytecodeIndexType();
+            earlyInline = true;
+        } else {
+            switch (handlerKind) {
+                case NONE:
+                case THROW:
+                    returnType = (type(void.class));
+                    break;
+                case STACK_POP:
+                case BRANCH:
+                case BRANCH_FALSE:
+                    earlyInline = true;
+                    returnType = parent.getBytecodeIndexType();
+                    break;
+                case BRANCH_BACKWARD:
+                    earlyInline = true;
+                    needsCounter = true;
+                    returnType = type(Object.class);
+                    break;
+                case NEXT:
+                    returnType = parent.getBytecodeIndexType();
+                    break;
+                case SHORT_CIRCUIT_BOOLEAN:
+                case SHORT_CIRCUIT_VALUE:
+                    earlyInline = true;
+                    returnType = type(boolean.class);
+                    break;
+                case YIELD:
+                case RETURN:
+                case INVALIDATE:
+                    needsCounter = true;
+                    returnType = type(long.class);
+                    break;
+                case EFFECT_GROUP:
+                    Objects.requireNonNull(effectGroup, "Effect group must be set");
+                    returnType = type(int.class);
+                    break;
+                default:
+                    throw new AssertionError(handlerKind.toString());
+            }
+
         }
+        parent.initializeInstructionHandler(this, returnType, "handle" + firstLetterUpperCase(instruction.getInternalName()));
 
         if (instruction.isInliningCutoff()) {
             this.addAnnotationMirror(new CodeAnnotationMirror(types.HostCompilerDirectives_InliningCutoff));
         }
-
-        parent.initializeInstructionHandler(this, returnType, "handle" + firstLetterUpperCase(instruction.getInternalName()));
 
         if (earlyInline && getTier().isCached()) {
             this.addAnnotationMirror(new CodeAnnotationMirror(types.CompilerDirectives_EarlyInline));
@@ -154,13 +165,41 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         if (needsCounter && getTier().isCached()) {
             this.getParameters().add(new CodeVariableElement(type(int.class), "counter"));
         }
+
+        if (handlerLayout.isTailCall() && instruction.isDispatched()) {
+            // no handler allowed for return as it has special trailing code
+            if (!handlerKind.isReturn()) {
+                CodeAnnotationMirror handlerConfig = new CodeAnnotationMirror(types.HostCompilerDirectives_BytecodeInterpreterHandler);
+                handlerConfig.setElementValue("value",
+                                new CodeAnnotationValue(collectHandledInstructions().stream().map((i) -> new CodeAnnotationValue(parent.parent.instructionsElement.getConstant(i))).toList()));
+                handlerConfig.setElementValue("safepoint", new CodeAnnotationValue(instruction.kind == InstructionKind.BRANCH_BACKWARD));
+                handlerConfig.setElementValue("threading", new CodeAnnotationValue(Boolean.TRUE));
+
+                addAnnotationMirror(handlerConfig);
+            }
+        }
+
+    }
+
+    private List<InstructionModel> collectHandledInstructions() {
+        if (getTier().isUncached()) {
+            List<InstructionModel> instructions = new ArrayList<>();
+            instructions.add(instruction);
+            instructions.addAll(instruction.getFlattenedQuickenedInstructions());
+            return instructions;
+        } else {
+            return List.of(instruction);
+        }
     }
 
     public CodeExecutableElement emit(CodeTreeBuilder caseBuilder) {
         CodeTreeBuilder b = this.createBuilder();
-        final Signature signature = instruction.signature;
         final boolean hasUnexpectedReturn = hasExecuteUnexpectedReturn();
-        final boolean hasUnexpectedOperand = signature.operands().stream().filter((o) -> isEmitLoadOperand(instruction, o, FAST_PATH)).anyMatch(this::hasUnexpectedValue);
+        final boolean hasUnexpectedOperand = hasUnexpectedValue();
+
+        if (handlerLayout.isTailCall() && instruction.hasStackEffects()) {
+            b.declaration(parent.getStackPointerType(), "sp", VirtualStateElement.LOCAL_NAME + ".sp");
+        }
 
         if (BytecodeRootNodeElement.isStoreBciBeforeExecute(model(), parent.tier, instruction)) {
             parent.storeBciInFrame(b);
@@ -173,6 +212,17 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         if (isQuickeningRootSlowPath() && getTier().isCached() && instruction.isQuickeningRoot()) {
             emitSlowPath(b, name -> name, "null");
         } else {
+            if (isEarlyDeclareUnexpectedOperands()) {
+                Signature customSignature = instruction.signature;
+                for (Operand operand : customSignature.operands()) {
+                    if (!isEmitLoadOperand(instruction, operand, ExecutionMode.FAST_PATH)) {
+                        continue;
+                    }
+                    TypeMirror targetType = operand.staticType();
+                    b.declaration(targetType, operand.localName());
+                }
+            }
+
             // we compute this ahead of time to find out whether we need to wrap in try-catch
             if (hasUnexpectedOperand) {
                 b.startTryBlock();
@@ -206,141 +256,259 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             emitBeforeReturnProfilingHandler(b);
         }
 
-        // emit instruction prolog
-
-        switch (handlerKind) {
-            case NONE:
-            case THROW:
-            case BRANCH:
-            case BRANCH_FALSE:
-            case BRANCH_BACKWARD:
-            case SHORT_CIRCUIT_BOOLEAN:
-            case SHORT_CIRCUIT_VALUE:
-                break;
-            case NEXT:
-                b.statement("return bci + ", String.valueOf(instruction.getInstructionLength()));
-                break;
-            case STACK_POP:
-                b.statement("return stackSize");
-                break;
-            case EFFECT_GROUP:
-                b.startReturn().tree(effectGroup).end();
-                break;
-            case YIELD:
-            case RETURN:
-                String returnSp = (instruction.signature.dynamicOperandCount() == 0) ? "sp" : "sp - " + instruction.signature.dynamicOperandCount();
-                if (model().overridesBytecodeDebugListenerMethod("afterRootExecute")) {
+        if (this.handlerLayout.isTailCall()) {
+            switch (handlerKind) {
+                case NONE:
+                case THROW:
+                case BRANCH:
+                case SHORT_CIRCUIT_BOOLEAN:
+                case SHORT_CIRCUIT_VALUE:
+                case BRANCH_BACKWARD:
+                    break;
+                case BRANCH_FALSE:
+                    emitBranchFalseCondition(b);
+                    break;
+                case STACK_POP:
                     b.startStatement();
-                    b.startCall("getRoot().afterRootExecute");
-                    parent.parent.emitParseInstruction(b, "this", "bci", CodeTreeBuilder.singleString("readValidBytecode(bc, bci)"));
-                    BytecodeRootNodeElement.startGetFrameUnsafe(b, "frame", type(Object.class)).string("(", returnSp, ")");
+                    b.string(VirtualStateElement.LOCAL_NAME, ".sp = sp - stackSize");
+                    if (!instruction.signature.isVoid()) {
+                        b.string(" + 1");
+                    }
                     b.end();
-                    b.string("null");
-                    b.end();
-                    b.end();
-                }
-                b.startReturn().string(BytecodeRootNodeElement.encodeReturnState("(" + returnSp + ")")).end();
-                break;
-            case INVALIDATE:
-                b.startReturn().string(parent.parent.encodeState("bci", "sp")).end();
-                break;
-            default:
-                throw new AssertionError();
+                    b.statement("return bci + ", String.valueOf(instruction.getInstructionLength()));
+                    break;
+                case NEXT:
+                case EFFECT_GROUP:
+                    parent.emitStackEffect(b, instruction.getStackEffect());
+                    b.statement("return bci + ", String.valueOf(instruction.getInstructionLength()));
+                    break;
+                case YIELD:
+                case RETURN:
+                    String returnSp = (instruction.signature.dynamicOperandCount() == 0) ? "sp" : "sp - " + instruction.signature.dynamicOperandCount();
+                    emitAfterRootExecute(b, returnSp);
+                    b.startReturn().string(BytecodeRootNodeElement.RETURN_BCI).end();
+                    break;
+                case INVALIDATE:
+                    b.startReturn().string("bci").end();
+                    break;
+                default:
+                    throw new AssertionError();
+            }
+        } else {
+            switch (handlerKind) {
+                case BRANCH_FALSE:
+                    emitBranchFalseCondition(b);
+                    break;
+                case NONE:
+                case THROW:
+                case BRANCH:
+                case BRANCH_BACKWARD:
+                case SHORT_CIRCUIT_BOOLEAN:
+                case SHORT_CIRCUIT_VALUE:
+                    // custom return
+                    break;
+                case NEXT:
+                    b.statement("return bci + ", String.valueOf(instruction.getInstructionLength()));
+                    break;
+                case STACK_POP:
+                    b.statement("return stackSize");
+                    break;
+                case EFFECT_GROUP:
+                    b.startReturn().tree(effectGroup).end();
+                    break;
+                case YIELD:
+                case RETURN:
+                    String returnSp = (instruction.signature.dynamicOperandCount() == 0) ? "sp" : "sp - " + instruction.signature.dynamicOperandCount();
+                    emitAfterRootExecute(b, returnSp);
+                    b.startReturn().string(BytecodeRootNodeElement.encodeReturnState("(" + returnSp + ")")).end();
+                    break;
+                case INVALIDATE:
+                    b.startReturn().string(parent.parent.encodeState("bci", "sp")).end();
+                    break;
+                default:
+                    throw new AssertionError();
+            }
         }
 
         emitCaseBlock(caseBuilder);
         return this;
     }
 
+    private void emitBranchFalseCondition(CodeTreeBuilder b) {
+        // custom return and stack effect
+        if (getTier().isUncached()) {
+            b.startIf().string("condition_").end().startBlock();
+        } else {
+            b.startIf();
+            b.startCall("profileBranch");
+            b.tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BRANCH_PROFILE)));
+            b.string("condition_");
+            b.end();
+            b.end().startBlock();
+        }
+
+        if (handlerLayout.isTailCall()) {
+            parent.emitStackEffect(b, instruction.getStackEffect());
+        }
+
+        b.statement("return bci + " + instruction.getInstructionLength());
+        b.end().startElseBlock();
+        if (handlerLayout.isTailCall()) {
+            parent.emitStackEffect(b, instruction.getStackEffect());
+        }
+        b.statement("return " + BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate("branch_target")));
+        b.end();
+    }
+
+    private boolean hasUnexpectedValue() {
+        return instruction.signature.operands().stream().filter((o) -> isEmitLoadOperand(instruction, o, FAST_PATH)).anyMatch(this::hasUnexpectedValue);
+    }
+
+    private boolean isEarlyDeclareUnexpectedOperands() {
+        return handlerKind == HandlerKind.BRANCH_FALSE && hasUnexpectedValue();
+    }
+
+    private void emitAfterRootExecute(CodeTreeBuilder b, String returnSp) {
+        if (model().overridesBytecodeDebugListenerMethod("afterRootExecute")) {
+            b.startStatement();
+            b.startCall("getRoot().afterRootExecute");
+            parent.parent.emitParseInstruction(b, "this", "bci", CodeTreeBuilder.singleString("readValidBytecode(bc, bci)"));
+            BytecodeRootNodeElement.startGetFrameUnsafe(b, "frame", type(Object.class)).string("(", returnSp, ")");
+            b.end();
+            b.string("null");
+            b.end();
+            b.end();
+        }
+    }
+
     private void emitCaseBlock(CodeTreeBuilder b) {
-        switch (handlerKind) {
-            case NONE:
-                b.startStatement();
-                emitCallHandler(b);
-                b.end();
-                break;
-            case EFFECT_GROUP:
-                b.startStatement();
-                emitCallHandler(b);
-                b.end();
-                break;
-            case RETURN:
-            case YIELD:
-            case INVALIDATE:
-                b.startReturn();
-                emitCallHandler(b);
-                b.end();
-                break;
-            case BRANCH_BACKWARD:
-                emitBranchBackwardCaseBlock(b);
-                b.statement("break");
-                break;
-            case STACK_POP:
-                b.startStatement();
-                b.string("sp -= ");
-                emitCallHandler(b);
-                if (!instruction.signature.isVoid()) {
-                    b.string(" - 1");
-                }
-                b.end();
-                b.statement("bci += " + instruction.getInstructionLength());
-                b.statement("break");
-                break;
-            case SHORT_CIRCUIT_VALUE:
-                b.startIf();
-                emitCallHandler(b);
-                b.end().startBlock();
-                b.startAssign("bci").tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX))).end();
-                // Stack: [..., value, convertedValue]
-                // pop convertedValue
-                b.statement("sp -= 1");
-                b.end().startElseBlock();
-                b.statement("bci += " + instruction.getInstructionLength());
-                // Stack: [..., value, convertedValue]
-                // clear convertedValue and value
-                b.statement("sp -= 2");
-                b.end();
-                b.statement("break");
-                break;
-            case SHORT_CIRCUIT_BOOLEAN:
-                b.startIf();
-                emitCallHandler(b);
-                b.end().startBlock();
-                b.startAssign("bci").tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX))).end();
-
-                // Stack: [..., convertedValue]
-                // leave convertedValue on the top of stack
-
-                b.end().startElseBlock();
-                b.statement("bci += " + instruction.getInstructionLength());
-                // Stack: [..., convertedValue]
-                // clear convertedValue
-                b.statement("sp -= 1");
-                b.end();
-                b.statement("break");
-                break;
-            case THROW:
-            case NEXT:
-            case BRANCH_FALSE:
-            case BRANCH:
-                boolean bciReturn = ElementUtils.typeEquals(type(int.class), this.getReturnType());
-                if (bciReturn) {
+        if (this.handlerLayout.isTailCall()) {
+            switch (handlerKind) {
+                case EFFECT_GROUP:
+                    b.startReturn();
+                    emitCallHandler(b);
+                    b.end();
+                    break;
+                case NONE:
+                case STACK_POP:
+                case SHORT_CIRCUIT_VALUE:
+                case SHORT_CIRCUIT_BOOLEAN:
+                case THROW:
+                case NEXT:
+                case BRANCH_FALSE:
+                case BRANCH:
+                case BRANCH_BACKWARD:
                     b.startAssign("bci");
                     emitCallHandler(b);
                     b.end();
-                } else {
+                    b.statement("break");
+                    break;
+                case RETURN:
+                case YIELD:
+                    b.startAssign("bci");
+                    emitCallHandler(b);
+                    b.end();
+                    String returnSp = (instruction.signature.dynamicOperandCount() == 0) ? (VirtualStateElement.LOCAL_NAME + ".sp")
+                                    : VirtualStateElement.LOCAL_NAME + ".sp - " + instruction.signature.dynamicOperandCount();
+                    b.startReturn().string(BytecodeRootNodeElement.encodeReturnState("(" + returnSp + ")")).end();
+                    break;
+                case INVALIDATE:
+                    b.startAssign("bci");
+                    emitCallHandler(b);
+                    b.end();
+                    b.startReturn().string(parent.parent.encodeState("bci", VirtualStateElement.LOCAL_NAME + ".sp")).end();
+                    break;
+                default:
+                    throw new AssertionError();
+            }
+        } else {
+            switch (handlerKind) {
+                case NONE:
                     b.startStatement();
                     emitCallHandler(b);
                     b.end();
-                    b.startStatement().string("bci += ").string(instruction.getInstructionLength()).end();
-                }
-                BytecodeNodeElement.emitCustomStackEffect(b, instruction.getStackEffect());
-                b.statement("break");
-                break;
-            default:
-                throw new AssertionError();
-        }
+                    break;
+                case EFFECT_GROUP:
+                    b.startStatement();
+                    emitCallHandler(b);
+                    b.end();
+                    b.startReturn().tree(effectGroup).end();
+                    break;
+                case RETURN:
+                case YIELD:
+                case INVALIDATE:
+                    b.startReturn();
+                    emitCallHandler(b);
+                    b.end();
+                    break;
+                case STACK_POP:
+                    b.startStatement();
+                    b.string("sp -= ");
+                    emitCallHandler(b);
+                    if (!instruction.signature.isVoid()) {
+                        b.string(" - 1");
+                    }
+                    b.end();
+                    b.statement("bci += " + instruction.getInstructionLength());
+                    b.statement("break");
+                    break;
+                case SHORT_CIRCUIT_VALUE:
+                    b.startIf();
+                    emitCallHandler(b);
+                    b.end().startBlock();
+                    b.startAssign("bci").tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX))).end();
+                    // Stack: [..., value, convertedValue]
+                    // pop convertedValue
+                    parent.emitStackEffect(b, -1);
+                    b.end().startElseBlock();
+                    b.statement("bci += " + instruction.getInstructionLength());
+                    parent.emitStackEffect(b, -2);
+                    b.end();
+                    b.statement("break");
+                    break;
+                case SHORT_CIRCUIT_BOOLEAN:
+                    b.startIf();
+                    emitCallHandler(b);
+                    b.end().startBlock();
+                    b.startAssign("bci").tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX))).end();
 
+                    // Stack: [..., convertedValue]
+                    // leave convertedValue on the top of stack
+
+                    b.end().startElseBlock();
+                    b.statement("bci += " + instruction.getInstructionLength());
+                    // Stack: [..., convertedValue]
+                    // clear convertedValue
+                    parent.emitStackEffect(b, -1);
+                    b.end();
+                    b.statement("break");
+                    break;
+                case BRANCH_BACKWARD:
+                    emitBranchBackwardCaseBlock(b);
+                    b.statement("break");
+                    break;
+                case THROW:
+                case NEXT:
+                case BRANCH_FALSE:
+                case BRANCH:
+                    boolean bciReturn = ElementUtils.typeEquals(type(int.class), this.getReturnType());
+                    if (bciReturn) {
+                        b.startAssign("bci");
+                        emitCallHandler(b);
+                        b.end();
+                    } else {
+                        b.startStatement();
+                        emitCallHandler(b);
+                        b.end();
+                        b.startStatement().string("bci += ").string(instruction.getInstructionLength()).end();
+                    }
+                    parent.emitStackEffect(b, instruction.getStackEffect());
+                    b.statement("break");
+                    break;
+                default:
+                    throw new AssertionError();
+            }
+        }
     }
 
     private TypeMirror emitExecute(CodeTreeBuilder b, String resultLocalName, ExecutionMode mode) {
@@ -418,7 +586,11 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
     private void emitSlowPath(CodeTreeBuilder b, Function<String, String> nameFunction, String unexpectedResult) {
         b.tree(GeneratorUtils.createTransferToInterpreterAndInvalidate());
         if (handlerKind.isBranch()) {
-            b.startReturn();
+            if (unexpectedResult.equals("null")) {
+                b.startDeclaration(type(boolean.class), "condition_");
+            } else {
+                b.startAssign("condition_");
+            }
         } else {
             b.startStatement();
         }
@@ -455,6 +627,12 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         if (method == null) {
             String methodName = "handle" + firstLetterUpperCase(rootInstruction.getInternalName()) + "$slow";
             method = parent.add(parent.createInstructionHandler(b.findMethod().getReturnType(), methodName));
+            if (handlerLayout.isTailCall()) {
+                method.addParameter(new CodeVariableElement(parent.getStackPointerType(), "sp"));
+                method.removeParameters(CounterStateElement.LOCAL_NAME);
+                method.removeParameters(VirtualStateElement.LOCAL_NAME);
+            }
+
             String unexpectedResult = null;
             if (findSingleUnexpectedOperand() != null) {
                 method.addParameter(new CodeVariableElement(type(Object.class), "unexpectedResult"));
@@ -466,7 +644,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             if (instruction.isTransparent()) {
                 returnType = type(void.class);
             } else if (handlerKind.isBranch()) {
-                returnType = type(int.class);
+                returnType = type(boolean.class);
             } else {
                 returnType = type(void.class);
             }
@@ -528,40 +706,135 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
     }
 
     private TypeMirror emitBranchBackward(CodeTreeBuilder b) {
-        if (getTier().isCached()) {
-            b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
-            b.string("this");
-            b.string("counter");
-            b.end().end(); // statement
+        if (handlerLayout.isTailCall()) {
 
-            b.startIf().startStaticCall(types.CompilerDirectives, "inInterpreter").end().string("&&").startStaticCall(types.BytecodeOSRNode, "pollOSRBackEdge").string("this").string(
-                            "counter").end().end().startBlock();
-            /**
-             * When a while loop is compiled by OSR, its "false" branch profile may be zero, in
-             * which case the compiler will stop at loop exits. To coerce the compiler to compile
-             * the code after the loop, we encode the branch profile index in the branch.backwards
-             * instruction and use it here to force the false profile to a non-zero value.
-             */
-            InstructionImmediate branchProfile = model().branchBackwardInstruction.findImmediate(ImmediateKind.BRANCH_PROFILE, "loop_header_branch_profile");
-            b.declaration(type(int.class), "branchProfileIndex", BytecodeRootNodeElement.readImmediate("bc", "bci", branchProfile));
-            b.startStatement().startCall("ensureFalseProfile").tree(BytecodeRootNodeElement.uncheckedCast(arrayOf(type(int.class)), "this.branchProfiles_")).string("branchProfileIndex").end(
-                            2);
+            if (getTier().isCached()) {
 
-            b.startReturn();
-            b.startStaticCall(types.BytecodeOSRNode, "tryOSR");
-            b.string("this");
-            String bci = BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX)).toString();
-            b.string(parent.parent.encodeState(bci, "sp", model().hasYieldOperation() ? "frame != " + parent.parent.localFrame() : null));
-            b.string("null"); // interpreterState
-            b.string("null"); // beforeTransfer
-            b.string("frame"); // parentFrame
-            b.end(); // static call
-            b.end(); // return
+                b.declaration(type(int.class), "counter", CounterStateElement.LOCAL_NAME + ".incrementCounter()");
 
-            b.end(); // if pollOSRBackEdge
+                b.startIf();
+                b.startStaticCall(types.CompilerDirectives, "injectBranchProbability");
+                b.staticReference(parent.parent.loopCounter.asType(), "REPORT_LOOP_PROBABILITY");
+                b.startGroup();
+                b.string("counter >= ").staticReference(parent.parent.loopCounter.asType(), "REPORT_LOOP_STRIDE");
+                b.end();
+                b.end(); // static call
+                b.end().startBlock();
+                b.startStatement().startStaticCall(types.TruffleSafepoint, "poll").string("this").end().end();
+
+                b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
+                b.string("this");
+                b.string("counter");
+                b.end().end(); // statement
+
+                b.startIf().startStaticCall(types.CompilerDirectives, "inInterpreter").end().string(" && ").startStaticCall(types.BytecodeOSRNode, "pollOSRBackEdge").string("this").string(
+                                "counter").end().end().startBlock();
+                /**
+                 * When a while loop is compiled by OSR, its "false" branch profile may be zero, in
+                 * which case the compiler will stop at loop exits. To coerce the compiler to
+                 * compile the code after the loop, we encode the branch profile index in the
+                 * branch.backwards instruction and use it here to force the false profile to a
+                 * non-zero value.
+                 */
+                InstructionImmediate branchProfile = model().branchBackwardInstruction.findImmediate(ImmediateKind.BRANCH_PROFILE, "loop_header_branch_profile");
+                b.declaration(type(int.class), "branchProfileIndex", BytecodeRootNodeElement.readImmediate("bc", "bci", branchProfile));
+                b.startStatement().startCall("ensureFalseProfile").tree(BytecodeRootNodeElement.uncheckedCast(arrayOf(type(int.class)), "this.branchProfiles_")).string("branchProfileIndex").end(
+                                2);
+
+                b.startDeclaration(type(Object.class), "osrResult");
+                b.startStaticCall(types.BytecodeOSRNode, "tryOSR");
+                b.string("this");
+                String bci = BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX)).toString();
+                b.string(parent.parent.encodeState(bci, VirtualStateElement.LOCAL_NAME + ".sp", model().hasYieldOperation() ? "frame != " + parent.parent.localFrame() : null));
+                b.string("null"); // interpreterState
+                b.string("null"); // beforeTransfer
+                b.string("frame"); // parentFrame
+                b.end(); // static call
+                b.end(); // declaration
+
+                b.startIf().string("osrResult != null").end().startBlock();
+                /**
+                 * executeOSR invokes BytecodeNode#continueAt, which returns a long encoding the sp
+                 * and bci when it returns/when the bytecode is rewritten. Returning this value is
+                 * correct in either case: If it's a return, we'll read the result out of the frame
+                 * (the OSR code copies the OSR frame contents back into our frame first); if it's a
+                 * rewrite, we'll transition and continue executing.
+                 */
+                b.startThrow().startNew(parent.parent.abstractBytecodeNode.branchBackwardReturnException.asType());
+                b.startGroup();
+                b.cast(type(long.class)).string("osrResult");
+                b.end();
+                b.end().end();
+
+                b.end(); // osrResult != null
+
+                b.end(); // if pollOSRBackEdge
+
+                b.statement(CounterStateElement.LOCAL_NAME, ".resetCounter()");
+
+                b.end(); // if counter >= REPORT_LOOP_STRIDE
+                b.startIf().startStaticCall(types.CompilerDirectives, "inCompiledCode").end().end().startBlock();
+                b.statement(CounterStateElement.LOCAL_NAME, ".counter = 0");
+                b.end();
+
+                b.end();
+            } else {
+                b.startIf().string("uncachedExecuteCount_ <= 1").end().startBlock();
+                /*
+                 * The force uncached check is put in here so that we don't need to check it in the
+                 * common case (the else branch where we just decrement).
+                 */
+                b.startIf().string("uncachedExecuteCount_ != ", BytecodeNodeElement.FORCE_UNCACHED_THRESHOLD).end().startBlock();
+                b.tree(GeneratorUtils.createTransferToInterpreterAndInvalidate());
+                b.statement("getRoot().transitionToCached()");
+                b.startThrow().startNew(parent.parent.abstractBytecodeNode.branchBackwardReturnException.asType());
+                b.string(parent.parent.encodeState("bci", VirtualStateElement.LOCAL_NAME + ".sp"));
+                b.end().end();
+                b.end(2);
+                b.startElseBlock();
+                b.statement("uncachedExecuteCount_--");
+                b.end();
+            }
+            b.statement("return " + BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX)));
+        } else {
+            if (getTier().isCached()) {
+                b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
+                b.string("this");
+                b.string("counter");
+                b.end().end(); // statement
+
+                b.startIf().startStaticCall(types.CompilerDirectives, "inInterpreter").end().string(" && ").startStaticCall(types.BytecodeOSRNode, "pollOSRBackEdge").string("this").string(
+                                "counter").end().end().startBlock();
+                /**
+                 * When a while loop is compiled by OSR, its "false" branch profile may be zero, in
+                 * which case the compiler will stop at loop exits. To coerce the compiler to
+                 * compile the code after the loop, we encode the branch profile index in the
+                 * branch.backwards instruction and use it here to force the false profile to a
+                 * non-zero value.
+                 */
+                InstructionImmediate branchProfile = model().branchBackwardInstruction.findImmediate(ImmediateKind.BRANCH_PROFILE, "loop_header_branch_profile");
+                b.declaration(type(int.class), "branchProfileIndex", BytecodeRootNodeElement.readImmediate("bc", "bci", branchProfile));
+                b.startStatement().startCall("ensureFalseProfile").tree(BytecodeRootNodeElement.uncheckedCast(arrayOf(type(int.class)), "this.branchProfiles_")).string("branchProfileIndex").end(
+                                2);
+
+                b.startReturn();
+                b.startStaticCall(types.BytecodeOSRNode, "tryOSR");
+                b.string("this");
+                String bci = BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX)).toString();
+                b.string(parent.parent.encodeState(bci, "sp", model().hasYieldOperation() ? "frame != " + parent.parent.localFrame() : null));
+                b.string("null"); // interpreterState
+                b.string("null"); // beforeTransfer
+                b.string("frame"); // parentFrame
+                b.end(); // static call
+                b.end(); // return
+
+                b.end(); // if pollOSRBackEdge
+                b.returnNull();
+            } else {
+                b.returnNull();
+            }
         }
 
-        b.returnNull();
         return null;
     }
 
@@ -748,33 +1021,65 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         }
 
         b.end().startBlock();
-        /*
-         * NB: Short circuit operations can evaluate to an operand or to the boolean conversion of
-         * an operand. The stack is different in either case.
-         */
-        if (shortCircuitInstruction.producesBoolean()) {
-            // Stack: [..., convertedValue]
-            // leave convertedValue on the top of stack
+
+        if (this.handlerLayout.isTailCall()) {
+            /*
+             * NB: Short circuit operations can evaluate to an operand or to the boolean conversion
+             * of an operand. The stack is different in either case.
+             */
+            if (shortCircuitInstruction.producesBoolean()) {
+                // Stack: [..., convertedValue]
+                // leave convertedValue on the top of stack
+            } else {
+                // Stack: [..., value, convertedValue]
+                // pop convertedValue
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+                parent.emitStackEffect(b, -1);
+            }
+            b.startReturn().tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BYTECODE_INDEX))).end();
+            b.end().startElseBlock();
+            if (shortCircuitInstruction.producesBoolean()) {
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+                parent.emitStackEffect(b, -1);
+            } else {
+                // Stack: [..., value, convertedValue]
+                // clear convertedValue and value
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+                emitClearStackValue(b, "sp - 2", type(Object.class), FAST_PATH);
+                parent.emitStackEffect(b, -2);
+            }
+            b.statement("return bci + " + instruction.getInstructionLength());
+            b.end(); // else
+            return type(int.class);
         } else {
-            // Stack: [..., value, convertedValue]
-            // pop convertedValue
-            emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
-        }
-        b.statement("return true");
-        b.end().startElseBlock();
-        if (shortCircuitInstruction.producesBoolean()) {
-            emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
-        } else {
-            // Stack: [..., value, convertedValue]
-            // clear convertedValue and value
-            emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
-            emitClearStackValue(b, "sp - 2", type(Object.class), FAST_PATH);
+            /*
+             * NB: Short circuit operations can evaluate to an operand or to the boolean conversion
+             * of an operand. The stack is different in either case.
+             */
+            if (shortCircuitInstruction.producesBoolean()) {
+                // Stack: [..., convertedValue]
+                // leave convertedValue on the top of stack
+            } else {
+                // Stack: [..., value, convertedValue]
+                // pop convertedValue
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+            }
+            b.statement("return true");
+            b.end().startElseBlock();
+            if (shortCircuitInstruction.producesBoolean()) {
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+            } else {
+                // Stack: [..., value, convertedValue]
+                // clear convertedValue and value
+                emitClearStackValue(b, "sp - 1", type(boolean.class), FAST_PATH);
+                emitClearStackValue(b, "sp - 2", type(Object.class), FAST_PATH);
+            }
+
+            b.statement("return false");
+            b.end(); // else
+            return type(boolean.class);
         }
 
-        b.statement("return false");
-        b.end(); // else
-
-        return type(boolean.class);
     }
 
     private TypeMirror emitDup() {
@@ -804,6 +1109,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         b.startDeclaration(type(Object[].class), resultLocalName);
         BytecodeRootNodeElement.emitCallDefault(b, parent.add(createExecuteCreateVariadic(instruction)));
         b.end();
+
         return null;
     }
 
@@ -812,7 +1118,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         method.addParameter(new CodeVariableElement(types.FrameWithoutBoxing, "frame"));
         method.addParameter(new CodeVariableElement(type(int.class), "count"));
         method.addParameter(new CodeVariableElement(type(int.class), "stackSize"));
-        method.addParameter(new CodeVariableElement(type(int.class), "sp"));
+        method.addParameter(new CodeVariableElement(parent.getStackPointerType(), "sp"));
 
         InstructionImmediate offsetImmediate = instr.findImmediate(ImmediateKind.INTEGER, "offset");
         if (offsetImmediate != null) {
@@ -945,7 +1251,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         method.addParameter(new CodeVariableElement(types.FrameWithoutBoxing, "frame"));
         method.addParameter(new CodeVariableElement(type(Object[].class), "array"));
         method.addParameter(new CodeVariableElement(type(int.class), "count"));
-        method.addParameter(new CodeVariableElement(type(int.class), "sp"));
+        method.addParameter(new CodeVariableElement(parent.getStackPointerType(), "sp"));
 
         InstructionImmediate offsetImmediate = instr.findImmediate(ImmediateKind.INTEGER, "offset");
         if (offsetImmediate != null) {
@@ -1053,7 +1359,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         method.addParameter(new CodeVariableElement(types.FrameWithoutBoxing, "frame"));
         method.addParameter(new CodeVariableElement(type(Object[].class), "array"));
         method.addParameter(new CodeVariableElement(type(int.class), "count"));
-        method.addParameter(new CodeVariableElement(type(int.class), "sp"));
+        method.addParameter(new CodeVariableElement(parent.getStackPointerType(), "sp"));
 
         InstructionImmediate offsetImmediate = instruction.findImmediate(ImmediateKind.INTEGER, "offset");
         if (offsetImmediate != null) {
@@ -1286,7 +1592,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             if (ElementUtils.isObject(valueOperand.type())) {
                 emitClearStackValue(b, "sp - 1", valueOperand.type(), mode);
             } else {
-                b.startIf().string("frame.getTag(sp - 1) != ").staticReference(parent.parent.frameTagsElement.get(valueOperand.type())).end().startBlock();
+                b.startIf().string("FRAMES.getTag(frame, sp - 1) != ").staticReference(parent.parent.frameTagsElement.get(valueOperand.type())).end().startBlock();
                 emitSlowPath(b, name -> name, "null");
                 b.end().startElseBlock();
                 emitClearStackValue(b, "sp - 1", valueOperand.type(), mode);
@@ -1396,13 +1702,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             checked = model().loadIllegalLocalStrategy == LoadIllegalLocalStrategy.CUSTOM_EXCEPTION;
         }
 
-        final CodeTree slot;
-        if (materialized || checked || !readLocalIndex) {
-            b.declaration(type(int.class), "slot", BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.FRAME_INDEX)));
-            slot = CodeTreeBuilder.singleString("slot");
-        } else {
-            slot = BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.FRAME_INDEX));
-        }
+        b.declaration(parent.getStackPointerType(), "slot", BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.FRAME_INDEX)));
 
         final CodeTree localIndex;
         if (model().localAccessesNeedLocalIndex()) {
@@ -1413,7 +1713,10 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
                 localIndex = BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.LOCAL_INDEX));
             }
         } else {
-            localIndex = CodeTreeBuilder.createBuilder().tree(slot).string(" - ").string(BytecodeRootNodeElement.USER_LOCALS_START_INDEX).build();
+            CodeTreeBuilder inner = CodeTreeBuilder.createBuilder();
+            parent.parent.emitCastStackPointerToInt(inner);
+            inner.string("slot").string(" - ").string(BytecodeRootNodeElement.USER_LOCALS_START_INDEX);
+            localIndex = inner.build();
         }
 
         final String localsFrame;
@@ -1456,11 +1759,11 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
 
             if (checked) {
                 b.startIf();
-                b.startCall(localsFrame, "getTag").tree(slot).end();
+                b.startCall("FRAMES.getTag").string(localsFrame).string("slot").end();
                 b.string(" == ");
                 b.staticReference(parent.parent.frameTagsElement.getIllegal());
                 b.end().startBlock();
-                BytecodeNodeElement.emitThrowIllegalLocalException(model(), b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, true);
+                parent.parent.emitThrowIllegalLocalException(b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, true);
                 b.end();
             }
             boolean specialized = instruction.quickeningKind.isSpecialized();
@@ -1474,9 +1777,9 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             }
 
             if (instruction.specializedType != null) {
-                BytecodeRootNodeElement.startExpectFrameUnsafe(b, localsFrame, slotType).tree(slot).end();
+                BytecodeRootNodeElement.startExpectFrameUnsafe(b, localsFrame, slotType).string("slot").end();
             } else {
-                BytecodeRootNodeElement.startRequireFrame(b, slotType).string(localsFrame).tree(slot).end();
+                BytecodeRootNodeElement.startRequireFrame(b, slotType).string(localsFrame).string("slot").end();
             }
 
             b.end(); // assignment
@@ -1513,7 +1816,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
 
                 if (model().loadIllegalLocalStrategy == LoadIllegalLocalStrategy.CUSTOM_EXCEPTION) {
                     b.startIf();
-                    b.startCall(localsFrame, "getTag").string("slot").end();
+                    b.startCall("FRAMES.getTag").string(localsFrame).string("slot").end();
                     b.string(" == ");
                     b.staticReference(parent.parent.frameTagsElement.getIllegal());
                     b.end().startBlock();
@@ -1531,7 +1834,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
                     b.end(2);
                     b.end(); // if cached tag != Object
                     parent.parent.emitQuickening(b, "this", "bc", "bci", null, parent.parent.createInstructionConstant(instruction.findQuickening(QuickeningKind.GENERIC, null, true)));
-                    BytecodeNodeElement.emitThrowIllegalLocalException(model(), b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, false);
+                    parent.parent.emitThrowIllegalLocalException(b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, false);
                     b.end(); // if
                 }
 
@@ -1600,13 +1903,13 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
                 }
 
                 b.startIf();
-                b.startCall(localsFrame, "getTag").string("slot").end();
+                b.startCall("FRAMES.getTag").string(localsFrame).string("slot").end();
                 b.string(" == ");
                 b.staticReference(parent.parent.frameTagsElement.getIllegal());
                 b.end().startBlock();
                 // If tag illegal, quicken to checked.
                 parent.parent.emitQuickening(b, "this", "bc", "bci", null, parent.parent.createInstructionConstant(instruction.findQuickening(QuickeningKind.GENERIC, null, true)));
-                BytecodeNodeElement.emitThrowIllegalLocalException(model(), b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, false);
+                parent.parent.emitThrowIllegalLocalException(b, CodeTreeBuilder.singleString("bci"), bytecodeNode, localIndex, false);
                 b.end(); // if
 
                 // If tag not illegal, quicken to unchecked.
@@ -1881,16 +2184,7 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
         String operandValue = conditionOperand.localName();
 
         if (mode.isFastPath()) {
-            if (getTier().isUncached()) {
-                b.startIf().string(operandValue).end().startBlock();
-            } else {
-                b.startIf();
-                b.startCall("profileBranch");
-                b.tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BRANCH_PROFILE)));
-                b.string(operandValue);
-                b.end();
-                b.end().startBlock();
-            }
+            // nothing to do
         } else { // slow-path
             TypeMirror boxingType = type(boolean.class);
 
@@ -1918,23 +2212,14 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             parent.parent.emitQuickeningOperand(b, "this", "bc", "bci", null, 0, "operandIndex", "operand", "newOperand");
             parent.parent.emitQuickening(b, "this", "bc", "bci", null, "newInstruction");
 
-            b.startIf();
-            b.startCall("profileBranch");
-            b.tree(BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate(ImmediateKind.BRANCH_PROFILE)));
-            b.string(operandValue);
-            b.end();
-            b.end().startBlock();
+            b.statement("return ", operandValue);
         }
-        b.statement("return bci + " + instruction.getInstructionLength());
-        b.end().startElseBlock();
-        b.statement("return " + BytecodeRootNodeElement.readImmediate("bc", "bci", instruction.getImmediate("branch_target")));
-        b.end();
 
         return null;
     }
 
     private void emitYieldProlog(CodeTreeBuilder b) {
-        b.statement("int maxLocals = getRoot().maxLocals");
+        b.declaration(parent.getStackPointerType(), "maxLocals", "getRoot().maxLocals");
         /*
          * The yield result will be stored at sp + stackEffect - 1 = sp + (1 - n) - 1 = sp - n (for
          * n dynamic operands). We need to copy operands lower on the stack for resumption.
@@ -2060,11 +2345,13 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             return false;
         }
         if (instr.signature.isVoid()) {
+            // all operands need to be cleared
             return true;
         } else {
-            // no clear if not last
-            return operand.dynamicIndex() != instr.signature.dynamicOperandCount() - 1;
+            // the instruction will overwrite the first operand with its result value
+            return operand.dynamicIndex() != 0;
         }
+
     }
 
     private static String createStackIndex(InstructionModel instruction, Operand operand) {
@@ -2171,12 +2458,23 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
 
     private void emitBeforeReturnProfilingHandler(CodeTreeBuilder b) {
         if (getTier().isCached()) {
-            b.startIf().string("counter > 0").end().startBlock();
-            b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
-            b.string("this");
-            b.string("counter");
-            b.end().end();  // statement
-            b.end();  // if counter > 0
+            if (this.handlerLayout.isTailCall()) {
+                b.declaration(type(int.class), "counter", CounterStateElement.LOCAL_NAME + ".getCounter()");
+                b.startIf().string("counter > 0").end().startBlock();
+                b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
+                b.string("this");
+                b.string("counter");
+                b.end().end();  // statement
+                b.end();  // if counter > 0
+            } else {
+                b.startIf().string("counter > 0").end().startBlock();
+                b.startStatement().startStaticCall(types.LoopNode, "reportLoopCount");
+                b.string("this");
+                b.string("counter");
+                b.end().end();  // statement
+                b.end();  // if counter > 0
+            }
+
         }
     }
 
@@ -2202,7 +2500,11 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
             }
 
             TypeMirror targetType = operand.staticType();
-            b.startDeclaration(targetType, nameFunction.apply(operand.localName()));
+            if (isEarlyDeclareUnexpectedOperands() && mode.isFastPath()) {
+                b.startAssign(nameFunction.apply(operand.localName()));
+            } else {
+                b.startDeclaration(targetType, nameFunction.apply(operand.localName()));
+            }
             /*
              * We only want boxing elimination in the cached interpreter, when the operand type is
              * boxing eliminated and the instruction is a quickening. Without the quickening we
@@ -2319,6 +2621,10 @@ final class BytecodeInstructionHandler extends CodeExecutableElement implements 
              * Load local checked with catch frame FrameSlotTypeException and translate it into a
              * slow-path call. In such a case we cannot eagerly clear.
              */
+            return false;
+        }
+        if (instr.kind == InstructionKind.STORE_LOCAL_MATERIALIZED && instr.isQuickening() && operand.dynamicIndex() == 0) {
+            // We cannot clear the frame operand in case we need to call the slow path.
             return false;
         }
         if (instr.kind == InstructionKind.POP) {

@@ -32,6 +32,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
@@ -51,6 +52,8 @@ import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
 
 import com.oracle.graal.pointsto.AbstractAnalysisEngine;
+import com.oracle.graal.pointsto.heap.ImageHeapConstant;
+import com.oracle.graal.pointsto.infrastructure.UniverseMetaAccess;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.ArenaIntrinsics;
 import com.oracle.svm.core.FrameAccess;
@@ -84,9 +87,7 @@ import com.oracle.svm.core.identityhashcode.SubstrateIdentityHashCodeNode;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.imagelayer.LoadImageSingletonFactory;
 import com.oracle.svm.core.jdk.proxy.DynamicProxyRegistry;
-import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
 import com.oracle.svm.core.nodes.foreign.MemoryArenaValidInScopeNode;
-import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.AbstractAnalysisMetadataTrackingNode;
@@ -100,17 +101,19 @@ import com.oracle.svm.hosted.imagelayer.HostedImageLayerBuildingSupport;
 import com.oracle.svm.hosted.nodes.DeoptProxyNode;
 import com.oracle.svm.hosted.nodes.ReadReservedRegister;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.singletons.LayeredImageSingletonSupport;
 import com.oracle.svm.shared.singletons.traits.LayeredInstallationKindSingletonTrait;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind;
+import com.oracle.svm.shared.util.ReflectionUtil;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
+import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.OriginalClassProvider;
-import com.oracle.svm.shared.util.ReflectionUtil;
 import com.oracle.svm.util.dynamicaccess.JVMCIRuntimeReflection;
 
 import jdk.graal.compiler.core.common.CompressEncoding;
-import jdk.graal.compiler.core.common.LibGraalSupport;
 import jdk.graal.compiler.core.common.NativeImageSupport;
 import jdk.graal.compiler.core.common.type.AbstractObjectStamp;
 import jdk.graal.compiler.core.common.type.IntegerStamp;
@@ -156,6 +159,7 @@ import jdk.graal.compiler.nodes.virtual.AllocatedObjectNode;
 import jdk.graal.compiler.nodes.virtual.CommitAllocationNode;
 import jdk.graal.compiler.nodes.virtual.VirtualArrayNode;
 import jdk.graal.compiler.nodes.virtual.VirtualObjectNode;
+import jdk.graal.compiler.options.LibGraalSupport;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.replacements.StandardGraphBuilderPlugins;
 import jdk.graal.compiler.replacements.StandardGraphBuilderPlugins.AllocateUninitializedArrayPlugin;
@@ -210,6 +214,7 @@ public class SubstrateGraphBuilderPlugins {
         registerSizeOfPlugins(plugins);
         registerReferencePlugins(plugins, parsingReason);
         registerReferenceAccessPlugins(plugins);
+        registerGuestPlugins(plugins);
         if (supportsStubBasedPlugins) {
             registerAESPlugins(plugins);
             registerArraysSupportPlugins(plugins);
@@ -1369,6 +1374,62 @@ public class SubstrateGraphBuilderPlugins {
         InvocationPlugins.Registration r = new InvocationPlugins.Registration(plugins, "jdk.internal.util.ArraysSupport");
         r.register(new StandardGraphBuilderPlugins.VectorizedMismatchInvocationPlugin());
         r.register(new StandardGraphBuilderPlugins.VectorizedHashCodeInvocationPlugin());
+    }
+
+    private static void registerGuestPlugins(InvocationPlugins plugins) {
+        registerGuestConfigurationValuesPlugins(plugins);
+        registerHostedOptionKeyPlugins(plugins);
+    }
+
+    private static void registerGuestConfigurationValuesPlugins(InvocationPlugins plugins) {
+        ResolvedJavaType guestConfigurationValuesType = GuestAccess.get().lookupAppClassLoaderType("com.oracle.svm.guest.staging.config.GuestConfigurationValues");
+        Registration r = new Registration(plugins, new InvocationPlugins.ResolvedJavaSymbol(guestConfigurationValuesType));
+        Arrays.stream(guestConfigurationValuesType.getDeclaredMethods(false))
+                        .filter(ResolvedJavaMethod::isStatic)
+                        .filter(m -> m.getSignature().getParameterCount(false) == 0)
+                        .map(ResolvedJavaMethod::getName)
+                        .forEach(methodName -> {
+                            r.register(new RequiredInlineOnlyInvocationPlugin(methodName) {
+                                private final ResolvedJavaMethod method = JVMCIReflectionUtil.getUniqueDeclaredMethod(guestConfigurationValuesType, methodName);
+
+                                @Override
+                                public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver) {
+                                    JavaConstant result = GuestAccess.get().invoke(method, null);
+                                    ConstantNode node = ConstantNode.forConstant(result, b.getMetaAccess(), b.getGraph());
+                                    b.push(result.getJavaKind(), node);
+                                    return true;
+                                }
+                            });
+                        });
+    }
+
+    private static void registerHostedOptionKeyPlugins(InvocationPlugins plugins) {
+        ResolvedJavaType hostedOptionKeyType = GuestAccess.get().getProviders().getMetaAccess().lookupJavaType(HostedOptionKey.class);
+        Registration r = new Registration(plugins, new InvocationPlugins.ResolvedJavaSymbol(hostedOptionKeyType));
+        for (String methodName : List.of("getValue", "hasBeenSet")) {
+            r.register(new RequiredInvocationPlugin(methodName, Receiver.class) {
+                private final ResolvedJavaMethod method = JVMCIReflectionUtil.getUniqueDeclaredMethod(hostedOptionKeyType, methodName);
+
+                @Override
+                public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver) {
+                    ValueNode receiverNode = receiver.get(true);
+                    if (!receiverNode.isJavaConstant()) {
+                        throw VMError.shouldNotReachHere("Must be constant %s", receiverNode);
+                    }
+                    JavaConstant receiverConstant = receiverNode.asJavaConstant();
+                    if (receiverConstant instanceof ImageHeapConstant imageHeapConstant) {
+                        receiverConstant = imageHeapConstant.getHostedObject();
+                    }
+                    JavaConstant result = GuestAccess.get().invoke(method, receiverConstant);
+                    if (b.getMetaAccess() instanceof UniverseMetaAccess uMetaAccess) {
+                        result = uMetaAccess.getUniverse().lookup(result);
+                    }
+                    ConstantNode node = ConstantNode.forConstant(result, b.getMetaAccess(), b.getGraph());
+                    b.push(method.getSignature().getReturnKind(), node);
+                    return true;
+                }
+            });
+        }
     }
 
     public static class SubstrateCipherBlockChainingCryptPlugin extends StandardGraphBuilderPlugins.CipherBlockChainingCryptPlugin {

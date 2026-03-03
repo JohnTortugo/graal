@@ -96,15 +96,10 @@ import com.oracle.svm.core.jni.access.JNIAccessibleMethod;
 import com.oracle.svm.core.meta.MethodOffset;
 import com.oracle.svm.core.meta.MethodPointer;
 import com.oracle.svm.core.meta.MethodRef;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.os.ImageHeapProvider;
 import com.oracle.svm.core.reflect.SubstrateAccessor;
-import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
-import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
-import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.core.util.ByteFormattingUtil;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.DeadlockWatchdog;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.NativeImageOptions;
@@ -124,9 +119,14 @@ import com.oracle.svm.hosted.meta.HostedMetaAccess;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
-import com.oracle.svm.util.AnnotationUtil;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.ReflectionUtil;
 import com.oracle.svm.shared.util.ReflectionUtil.ReflectionUtilError;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.util.AnnotationUtil;
 
 import jdk.graal.compiler.asm.aarch64.AArch64Assembler;
 import jdk.graal.compiler.code.CompilationResult;
@@ -167,7 +167,7 @@ public abstract class NativeImage extends AbstractImage {
 
         int pageSize = SubstrateOptions.getPageSize();
         objectFile = ObjectFileFactory.singleton().newObjectFile(pageSize, ImageSingletons.lookup(TemporaryBuildDirectoryProvider.class).getTemporaryBuildDirectory(), universe.getBigBang());
-        objectFile.setByteOrder(ConfigurationValues.getTarget().arch.getByteOrder());
+        objectFile.setByteOrder(ConfigurationValues.getByteOrder());
         wordSize = FrameAccess.wordSize();
         assert objectFile.getWordSizeInBytes() == wordSize;
         assert objectFile.getPageSize() == heapLayout.getPageSize();
@@ -603,7 +603,7 @@ public abstract class NativeImage extends AbstractImage {
     }
 
     private static boolean checkCodeRelocationKind(Info info) {
-        int wordSize = ConfigurationValues.getTarget().arch.getWordSize();
+        int wordSize = ConfigurationValues.getWordSize();
         int relocationSize = info.getRelocationSize();
         RelocationKind relocationKind = info.getRelocationKind();
 

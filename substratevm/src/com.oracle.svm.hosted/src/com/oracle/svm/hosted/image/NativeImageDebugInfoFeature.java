@@ -66,15 +66,15 @@ import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.fieldvaluetransformer.JVMCIFieldValueTransformerWithAvailability;
 import com.oracle.svm.core.heap.Heap;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.ProgressReporter;
 import com.oracle.svm.hosted.c.CGlobalDataFeature;
 import com.oracle.svm.hosted.c.NativeLibraries;
 import com.oracle.svm.hosted.util.DiagnosticUtils;
+import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.util.ReflectionUtil;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIReflectionUtil;
-import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.core.common.CompressEncoding;
 import jdk.graal.compiler.debug.DebugContext;

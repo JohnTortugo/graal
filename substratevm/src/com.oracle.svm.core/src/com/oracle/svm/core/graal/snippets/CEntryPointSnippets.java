@@ -291,7 +291,8 @@ public final class CEntryPointSnippets extends SubstrateTemplates implements Sni
 
         UnsignedWord runtimePageSize = VirtualMemoryProvider.get().getGranularity();
         UnsignedWord imagePageSize = Word.unsigned(SubstrateOptions.getPageSize());
-        boolean validPageSize = UnsignedUtils.isAMultiple(imagePageSize, runtimePageSize);
+        UnsignedWord minimumPageSize = Word.unsigned(SubstrateOptions.MINIMUM_PAGE_SIZE);
+        boolean validPageSize = UnsignedUtils.isAMultiple(imagePageSize, runtimePageSize) && UnsignedUtils.isAMultiple(runtimePageSize, minimumPageSize);
         if (!validPageSize) {
             return CEntryPointErrors.PAGE_SIZE_CHECK_FAILED;
         }

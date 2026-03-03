@@ -49,7 +49,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import jdk.graal.compiler.util.EconomicHashMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Pair;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -67,7 +66,6 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.CompletionExecutor;
 import com.oracle.objectfile.ObjectFile;
-import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.code.CodeInfo;
@@ -89,16 +87,14 @@ import com.oracle.svm.core.interpreter.InterpreterSupport;
 import com.oracle.svm.core.meta.CompressedNullConstant;
 import com.oracle.svm.core.meta.MethodPointer;
 import com.oracle.svm.core.meta.SubstrateMethodPointerConstant;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.sampler.CallStackFrameMethodInfo;
 import com.oracle.svm.core.util.Counter;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.DeadlockWatchdog;
 import com.oracle.svm.hosted.NativeImageOptions;
 import com.oracle.svm.hosted.code.CodeSectionLayouter;
 import com.oracle.svm.hosted.code.DeoptimizationUtils;
 import com.oracle.svm.hosted.code.HostedImageHeapConstantPatch;
+import com.oracle.svm.hosted.code.SortByMethodNameCodeSectionLayouter;
 import com.oracle.svm.hosted.code.SubstrateCompilationDirectives;
 import com.oracle.svm.hosted.code.SubstrateCompilationDirectives.DeoptSourceFrameInfo;
 import com.oracle.svm.hosted.image.NativeImage.NativeTextSectionImpl;
@@ -108,7 +104,11 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.reflect.ReflectionHostedSupport;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.code.CompilationResult;
@@ -116,6 +116,7 @@ import jdk.graal.compiler.code.DataSection;
 import jdk.graal.compiler.core.common.type.CompressibleConstant;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.options.Option;
+import jdk.graal.compiler.util.EconomicHashMap;
 import jdk.vm.ci.code.BytecodeFrame;
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.code.site.Call;
@@ -142,9 +143,21 @@ public abstract class NativeImageCodeCache {
     protected final NativeImageHeap imageHeap;
 
     /** The entirety of compilations in this code cache. */
-    private final Map<HostedMethod, CompilationResult> compilations;
+    private Map<HostedMethod, CompilationResult> compilations;
 
-    private final List<Pair<HostedMethod, CompilationResult>> orderedCompilations;
+    private List<Pair<HostedMethod, CompilationResult>> orderedCompilations;
+
+    /**
+     * Order in which compilation units should be traversed when adding constants to the
+     * native-image heap. This traversal order affects the discovery order of non-root image-heap
+     * objects.
+     * <p>
+     * To maximize determinism between builds in the order in which constants are added to the
+     * native-image heap, although full determinism cannot be guaranteed, this list is sorted by
+     * {@link HostedMethod} name. The name is expected to be stable across builds for semantically
+     * equivalent compilation units.
+     */
+    private List<Pair<HostedMethod, CompilationResult>> deterministicCompilationUnitOrderForConstantLayout;
 
     protected final Platform targetPlatform;
 
@@ -157,8 +170,10 @@ public abstract class NativeImageCodeCache {
     }
 
     public void purge() {
-        compilations.clear();
-        orderedCompilations.clear();
+        assert compilations != null && orderedCompilations != null && deterministicCompilationUnitOrderForConstantLayout != null : "Code cache already purged";
+        compilations = null;
+        orderedCompilations = null;
+        deterministicCompilationUnitOrderForConstantLayout = null;
     }
 
     @SuppressWarnings("this-escape")//
@@ -168,6 +183,7 @@ public abstract class NativeImageCodeCache {
         this.dataSection = new DataSection();
         this.targetPlatform = targetPlatform;
         this.orderedCompilations = layoutCompilations();
+        this.deterministicCompilationUnitOrderForConstantLayout = doLayoutWithLayouter(compilations, new SortByMethodNameCodeSectionLayouter());
     }
 
     public abstract int getCodeCacheSize();
@@ -210,7 +226,13 @@ public abstract class NativeImageCodeCache {
     }
 
     protected List<Pair<HostedMethod, CompilationResult>> doLayout(Map<HostedMethod, CompilationResult> compilationMap, CodeSectionLayouter layouter) {
-        return layouter.layout(compilationMap).stream().map(hm -> Pair.create(hm, compilationMap.get(hm))).toList();
+        return doLayoutWithLayouter(compilationMap, layouter);
+    }
+
+    private static List<Pair<HostedMethod, CompilationResult>> doLayoutWithLayouter(Map<HostedMethod, CompilationResult> compilationMap, CodeSectionLayouter layouter) {
+        return layouter.layout(compilationMap).stream()
+                        .map(hm -> Pair.create(hm, compilationMap.get(hm)))
+                        .collect(Collectors.toCollection(() -> new ArrayList<>(compilationMap.size())));
     }
 
     private static HostedMethod getInvalidCodeAddressHandler(HostedMetaAccess metaAccess) {
@@ -240,7 +262,7 @@ public abstract class NativeImageCodeCache {
     public void layoutConstants() {
         ImageHeapReasonSupport reasonSupport = imageHeap.reasonSupport;
         DeadlockWatchdog watchdog = ImageSingletons.lookup(DeadlockWatchdog.class);
-        for (Pair<HostedMethod, CompilationResult> pair : getOrderedCompilations()) {
+        for (Pair<HostedMethod, CompilationResult> pair : deterministicCompilationUnitOrderForConstantLayout) {
             CompilationResult compilation = pair.getRight();
             for (DataSection.Data data : compilation.getDataSection()) {
                 if (data instanceof SubstrateDataBuilder.ObjectData) {
@@ -273,7 +295,7 @@ public abstract class NativeImageCodeCache {
                 embeddedConstants.put(objectData.getConstant(), reasonSupport.dataSection());
             }
         }
-        for (Pair<HostedMethod, CompilationResult> pair : getOrderedCompilations()) {
+        for (Pair<HostedMethod, CompilationResult> pair : deterministicCompilationUnitOrderForConstantLayout) {
             BytecodePosition position = AbstractAnalysisEngine.syntheticSourcePosition(pair.getLeft().getWrapped());
             CompilationResult compilationResult = pair.getRight();
             for (DataPatch patch : compilationResult.getDataPatches()) {

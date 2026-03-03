@@ -68,7 +68,6 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.NativeImageClassLoaderOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.encoder.SymbolEncoder;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
@@ -89,11 +88,12 @@ import com.oracle.svm.hosted.reflect.proxy.ProxyRenamingSubstitutionProcessor;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.ModuleSupport;
+import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.StringUtil;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.HostedModuleSupport;
-import com.oracle.svm.util.LogUtils;
-import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.internal.module.DefaultRoots;
 import jdk.internal.module.ModuleBootstrap;
@@ -806,7 +806,7 @@ public class ModuleLayerFeature implements InternalFeature {
             runtimeModules = new HashMap<>();
             imageClassLoader = cl;
             nativeAccessEnabled = NativeImageClassLoaderOptions.EnableNativeAccess.getValue().values().stream()
-                            .flatMap(m -> Arrays.stream(SubstrateUtil.split(m, ",")))
+                            .flatMap(m -> Arrays.stream(StringUtil.split(m, ",")))
                             .collect(Collectors.toSet());
 
             Method classGetDeclaredFields0Method = ReflectionUtil.lookupMethod(Class.class, "getDeclaredFields0", boolean.class);

@@ -483,7 +483,7 @@ public class AMD64InterpreterStubs {
         @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
         private static int spAdjustOnCall(int offset) {
             // offset is relative caller sp, undo side-effect of call instruction
-            int spAdjustmentOnCall = ConfigurationValues.getTarget().wordSize;
+            int spAdjustmentOnCall = ConfigurationValues.getWordSize();
             return offset + spAdjustmentOnCall;
         }
 

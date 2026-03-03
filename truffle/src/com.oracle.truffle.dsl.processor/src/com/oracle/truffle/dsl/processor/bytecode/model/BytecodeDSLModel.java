@@ -134,7 +134,7 @@ public class BytecodeDSLModel extends Template implements PrettyPrintable {
     public boolean enableRootBodyTagging;
     public boolean enableBlockScoping;
     public boolean enableThreadedSwitch;
-    public boolean enableStackPointerBoxing = false;
+    public boolean enableTailCallHandlers;
 
     public enum LoadIllegalLocalStrategy {
         FRAME_SLOT_TYPE_EXCEPTION,

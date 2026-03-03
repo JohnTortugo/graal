@@ -29,9 +29,9 @@ import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRU
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.svm.guest.staging.Uninterruptible;
-import com.oracle.svm.core.collections.EnumBitmask;
 import com.oracle.svm.core.thread.JavaThreads;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.collections.EnumBitmask;
 
 /**
  * This file contains the VM-level events that Native Image supports on all JDK versions. The event

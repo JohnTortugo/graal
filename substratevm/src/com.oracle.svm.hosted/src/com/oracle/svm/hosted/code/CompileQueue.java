@@ -48,7 +48,6 @@ import com.oracle.graal.pointsto.meta.HostedProviders;
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.CompletionExecutor;
 import com.oracle.graal.pointsto.util.CompletionExecutor.DebugContextRunnable;
-import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.UninterruptibleAnnotationUtils;
 import com.oracle.svm.core.config.ConfigurationValues;
@@ -68,9 +67,7 @@ import com.oracle.svm.core.imagelayer.LayeredImageOptions;
 import com.oracle.svm.core.meta.MethodRef;
 import com.oracle.svm.core.meta.SubstrateMethodOffsetConstant;
 import com.oracle.svm.core.meta.SubstrateMethodPointerConstant;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.InterruptImageBuilding;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.FeatureHandler;
 import com.oracle.svm.hosted.NativeImageGenerator;
 import com.oracle.svm.hosted.NativeImageOptions;
@@ -83,10 +80,13 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.phases.ImageBuildStatisticsCounterPhase;
 import com.oracle.svm.hosted.phases.ImplicitAssertionsPhase;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.ImageBuildStatistics;
-import com.oracle.svm.util.LogUtils;
 import com.oracle.svm.util.OriginalClassProvider;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -1061,12 +1061,13 @@ public class CompileQueue {
             return;
         }
 
-        if (!allowFoldMethods && AnnotationUtil.getAnnotation(method, Fold.class) != null && !isFoldInvocationPluginMethod(callerMethod)) {
+        if (!allowFoldMethods && AnnotationUtil.isAnnotationPresent(method, Fold.class) && !isFoldInvocationPluginMethod(callerMethod)) {
             throw VMError.shouldNotReachHere("Parsing method annotated with @%s: %s. " +
                             "This could happen if either: the Graal annotation processor was not executed on the parent-project of the method's declaring class, " +
                             "the arguments passed to the method were not compile-time constants, or the plugin was disabled by the corresponding %s.",
                             Fold.class.getSimpleName(), method.format("%H.%n(%p)"), GraphBuilderContext.class.getSimpleName());
         }
+        method.wrapped.checkGuaranteeFolded();
         if (!method.compilationInfo.inParseQueue.getAndSet(true)) {
             executor.execute(new ParseTask(method, reason));
         }

@@ -44,11 +44,11 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 
 import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.c.info.NativeCodeInfo;
 import com.oracle.svm.hosted.c.query.QueryResultParser;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionKey;

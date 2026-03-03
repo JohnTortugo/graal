@@ -27,13 +27,13 @@ package com.oracle.graal.reachability;
 import java.lang.reflect.Modifier;
 import java.util.Optional;
 
-import com.oracle.svm.common.meta.MethodVariant;
 import org.graalvm.collections.EconomicSet;
 
 import com.oracle.graal.pointsto.AbstractAnalysisEngine;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.svm.shared.meta.MethodVariant;
 import com.oracle.svm.util.AnnotationUtil;
 
 import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;

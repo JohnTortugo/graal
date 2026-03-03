@@ -183,11 +183,15 @@ public class TStringTestBase {
             return getBufferAddress(buffer);
         }
 
+        public ByteBuffer getBuffer() {
+            return buffer;
+        }
+
         public void writeByte(int offset, byte value) {
             UNSAFE.putByte(getBufferAddress(buffer) + offset, value);
         }
 
-        private static long getBufferAddress(ByteBuffer buffer) {
+        public static long getBufferAddress(ByteBuffer buffer) {
             return UNSAFE.getLong(buffer, byteBufferAddressOffset);
         }
 

@@ -77,7 +77,6 @@ import com.oracle.svm.core.fieldvaluetransformer.FieldOffsetFieldValueTransforme
 import com.oracle.svm.core.fieldvaluetransformer.NewInstanceOfFixedClassFieldValueTransformer;
 import com.oracle.svm.core.fieldvaluetransformer.StaticFieldBaseFieldValueTransformer;
 import com.oracle.svm.core.hub.DynamicHub;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.ImageClassLoader;
 import com.oracle.svm.hosted.NativeImageGenerator;
@@ -88,14 +87,15 @@ import com.oracle.svm.hosted.ameta.FieldValueInterceptionSupport;
 import com.oracle.svm.hosted.ameta.FieldValueInterceptionSupport.WrappedFieldValueTransformer;
 import com.oracle.svm.hosted.classinitialization.ClassInitializationSupport;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.ReflectionUtil.ReflectionUtilError;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIFieldValueTransformer;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.OriginalClassProvider;
-import com.oracle.svm.shared.util.ReflectionUtil;
-import com.oracle.svm.shared.util.ReflectionUtil.ReflectionUtilError;
 
 import jdk.internal.reflect.Reflection;
 import jdk.vm.ci.meta.MetaAccessProvider;

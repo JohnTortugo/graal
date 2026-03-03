@@ -62,7 +62,6 @@ public final class ModuleExtension {
                                                     "jdk.graal.compiler.nodes.loop",
                                                     "jdk.graal.compiler.nodes.memory",
                                                     "jdk.graal.compiler.nodes.spi",
-                                                    "jdk.graal.compiler.options",
                                                     "jdk.graal.compiler.phases.tiers",
                                                     "jdk.graal.compiler.phases.util",
                                                     "jdk.graal.compiler.runtime",

@@ -34,8 +34,8 @@ import java.util.Set;
 
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.word.Pointer;
-import org.graalvm.word.impl.Word;
 import org.graalvm.word.WordBase;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.code.FrameInfoQueryResult;
 import com.oracle.svm.core.code.FrameSourceInfo;
@@ -46,7 +46,6 @@ import com.oracle.svm.core.interpreter.InterpreterFrameSourceInfo;
 import com.oracle.svm.core.locks.VMMutex;
 import com.oracle.svm.core.meta.SubstrateObjectConstant;
 import com.oracle.svm.core.thread.VMThreads;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.interpreter.DebuggerSupport;
 import com.oracle.svm.interpreter.EspressoFrame;
 import com.oracle.svm.interpreter.InterpreterFrame;
@@ -73,6 +72,7 @@ import com.oracle.svm.jdwp.resident.ClassUtils;
 import com.oracle.svm.jdwp.resident.JDWPBridgeImpl;
 import com.oracle.svm.jdwp.resident.ThreadStartDeathSupport;
 import com.oracle.svm.jdwp.resident.api.StackframeDescriptor;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
@@ -362,6 +362,7 @@ public final class ResidentJDWP implements JDWP {
         return reply;
     }
 
+    /* This code is broken at the moment and may cause deadlocks, see GR-73513. */
     private static VMMutex lockThreads() {
         VMMutex mutex;
         try {

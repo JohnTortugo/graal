@@ -247,14 +247,38 @@ final class HostVMAccess implements VMAccess {
         Class<?> componentClass = snippetReflection.originalClass(componentType);
         Object array = Array.newInstance(componentClass, elements.length);
         for (int i = 0; i < elements.length; i++) {
-            JavaConstant argument = elements[i];
-            if (argument.getJavaKind().isObject()) {
-                Array.set(array, i, snippetReflection.asObject(Object.class, argument));
-            } else {
-                Array.set(array, i, argument.asBoxedPrimitive());
-            }
+            doWriteArrayElement(array, componentType, i, elements[i]);
         }
         return snippetReflection.forObject(array);
+    }
+
+    private void doWriteArrayElement(Object array, ResolvedJavaType componentType, int index, JavaConstant element) {
+        Object unwrappedValue;
+        if (componentType.isPrimitive()) {
+            if (componentType.getJavaKind() != element.getJavaKind()) {
+                throw new IllegalArgumentException("Element " + element + " should be a " + componentType.getJavaKind() + ", got " + element.getJavaKind());
+            }
+            unwrappedValue = element.asBoxedPrimitive();
+        } else {
+            if (!element.getJavaKind().isObject()) {
+                throw new IllegalArgumentException("Element " + element + " should be an object, got " + componentType);
+            }
+            unwrappedValue = providers.getSnippetReflection().asObject(Object.class, element);
+        }
+        Array.set(array, index, unwrappedValue);
+    }
+
+    @Override
+    public void writeArrayElement(JavaConstant array, int index, JavaConstant element) {
+        ResolvedJavaType arrayType = getProviders().getMetaAccess().lookupJavaType(array);
+        if (arrayType == null || !arrayType.isArray()) {
+            throw new IllegalArgumentException("Expected an array constant, got " + array);
+        }
+        Object asObject = providers.getSnippetReflection().asObject(Object.class, array);
+        if (asObject == null) {
+            throw new IllegalArgumentException("Could not unwrap array: " + array);
+        }
+        doWriteArrayElement(asObject, arrayType.getComponentType(), index, element);
     }
 
     @Override

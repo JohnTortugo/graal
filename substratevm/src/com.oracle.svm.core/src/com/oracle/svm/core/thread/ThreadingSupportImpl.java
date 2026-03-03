@@ -30,7 +30,7 @@ import org.graalvm.nativeimage.Threading;
 import org.graalvm.nativeimage.impl.ThreadingSupport;
 
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
 @AutomaticallyRegisteredImageSingleton(ThreadingSupport.class)
 public class ThreadingSupportImpl implements ThreadingSupport {

@@ -24,12 +24,12 @@
  */
 package com.oracle.svm.hosted.classinitialization;
 
-import com.oracle.svm.common.meta.MethodVariant;
 import org.graalvm.collections.EconomicMap;
 
 import com.oracle.graal.pointsto.BigBang;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.meta.HostedProviders;
+import com.oracle.svm.shared.meta.MethodVariant;
 
 /**
  * See {@link SimulateClassInitializerSupport} for an overview of class initializer simulation.

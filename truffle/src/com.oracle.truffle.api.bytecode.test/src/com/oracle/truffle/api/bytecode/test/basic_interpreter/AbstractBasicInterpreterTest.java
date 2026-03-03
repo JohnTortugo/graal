@@ -111,14 +111,16 @@ public abstract class AbstractBasicInterpreterTest {
             return interpreterClass() == BasicInterpreterWithBE.class ||
                             interpreterClass() == BasicInterpreterWithStoreBytecodeIndexInFrame.class ||
                             interpreterClass() == BasicInterpreterProductionBlockScoping.class ||
-                            interpreterClass() == BasicInterpreterProductionRootScoping.class;
+                            interpreterClass() == BasicInterpreterProductionRootScoping.class ||
+                            interpreterClass() == BasicInterpreterProductionRootScopingTailCall.class;
         }
 
         public boolean hasUncachedInterpreter() {
             return interpreterClass() == BasicInterpreterWithUncached.class ||
                             interpreterClass() == BasicInterpreterWithStoreBytecodeIndexInFrame.class ||
                             interpreterClass() == BasicInterpreterProductionBlockScoping.class ||
-                            interpreterClass() == BasicInterpreterProductionRootScoping.class;
+                            interpreterClass() == BasicInterpreterProductionRootScoping.class ||
+                            interpreterClass() == BasicInterpreterProductionRootScopingTailCall.class;
         }
 
         @SuppressWarnings("static-method")
@@ -128,7 +130,8 @@ public abstract class AbstractBasicInterpreterTest {
 
         public boolean hasRootScoping() {
             return interpreterClass() == BasicInterpreterWithRootScoping.class ||
-                            interpreterClass() == BasicInterpreterProductionRootScoping.class;
+                            interpreterClass() == BasicInterpreterProductionRootScoping.class ||
+                            interpreterClass() == BasicInterpreterProductionRootScopingTailCall.class;
         }
 
         public boolean hasBlockScoping() {
@@ -171,7 +174,8 @@ public abstract class AbstractBasicInterpreterTest {
                 return 8;
             } else if (interpreterClass() == BasicInterpreterWithUncached.class //
                             || interpreterClass() == BasicInterpreterWithRootScoping.class //
-                            || interpreterClass() == BasicInterpreterProductionRootScoping.class) {
+                            || interpreterClass() == BasicInterpreterProductionRootScoping.class //
+                            || interpreterClass() == BasicInterpreterProductionRootScopingTailCall.class) {
                 return 16;
             }
 
@@ -705,11 +709,12 @@ public abstract class AbstractBasicInterpreterTest {
 
     public static boolean hasRootScoping(Class<? extends BasicInterpreter> interpreterClass) {
         return interpreterClass == BasicInterpreterWithRootScoping.class ||
-                        interpreterClass == BasicInterpreterProductionRootScoping.class;
+                        interpreterClass == BasicInterpreterProductionRootScoping.class || interpreterClass == BasicInterpreterProductionRootScopingTailCall.class;
     }
 
     public static Object getDefaultLocalValue(Class<? extends BasicInterpreter> interpreterClass) {
-        if (interpreterClass == BasicInterpreterWithOptimizations.class || interpreterClass == BasicInterpreterWithRootScoping.class) {
+        if (interpreterClass == BasicInterpreterWithOptimizations.class || interpreterClass == BasicInterpreterWithRootScoping.class ||
+                        interpreterClass == BasicInterpreterProductionRootScopingTailCall.class) {
             return BasicInterpreter.LOCAL_DEFAULT_VALUE;
         }
         return null;

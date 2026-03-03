@@ -33,7 +33,6 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.MapCursor;
 
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.webimage.JSCodeBuffer;
 import com.oracle.svm.hosted.webimage.LowerableFile;
@@ -41,6 +40,7 @@ import com.oracle.svm.hosted.webimage.WebImageHostedConfiguration;
 import com.oracle.svm.hosted.webimage.js.JSBody;
 import com.oracle.svm.hosted.webimage.js.JSKeyword;
 import com.oracle.svm.hosted.webimage.options.WebImageOptions;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.webimage.annotation.WebImage;
 import com.oracle.svm.webimage.hightiercodegen.CodeGenTool;

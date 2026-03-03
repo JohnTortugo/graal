@@ -30,7 +30,7 @@ import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.RecomputeFieldValue;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.heap.Target_jdk_internal_ref_Cleaner;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.shared.util.VMError;
 
 @TargetClass(className = "java.nio.DirectByteBuffer")

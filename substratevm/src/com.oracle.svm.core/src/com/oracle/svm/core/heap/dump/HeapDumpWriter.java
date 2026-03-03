@@ -1163,7 +1163,7 @@ public class HeapDumpWriter {
 
     @Fold
     static int wordSize() {
-        return ConfigurationValues.getTarget().wordSize;
+        return ConfigurationValues.getWordSize();
     }
 
     /**

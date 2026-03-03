@@ -29,8 +29,8 @@ import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.shared.singletons.ImageSingletonLoader;
 import com.oracle.svm.shared.singletons.ImageSingletonWriter;
-import com.oracle.svm.shared.singletons.Invariants;
 import com.oracle.svm.shared.singletons.LayeredPersistFlags;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * This class contains actions which can be called on singletons during a layered image build.
@@ -70,7 +70,7 @@ public abstract class SingletonLayeredCallbacks<T> {
      * to determine how to instantiate the singleton in the next layer.
      */
     public Class<? extends LayeredSingletonInstantiator<?>> getSingletonInstantiator() {
-        throw Invariants.shouldNotReachHere("getSingletonInstantiator is not implemented. This method must be implemented if doPersist returns PersistFlag.CREATE");
+        throw VMError.shouldNotReachHere("getSingletonInstantiator is not implemented. This method must be implemented if doPersist returns PersistFlag.CREATE");
     }
 
     /**
@@ -79,7 +79,7 @@ public abstract class SingletonLayeredCallbacks<T> {
      */
     @SuppressWarnings("unused")
     public void onSingletonRegistration(ImageSingletonLoader loader, T singleton) {
-        throw Invariants.shouldNotReachHere("onSingletonRegistration is not implemented. This method must be implemented if doPersist returns PersistFlag.CALLBACK_ON_REGISTRATION");
+        throw VMError.shouldNotReachHere("onSingletonRegistration is not implemented. This method must be implemented if doPersist returns PersistFlag.CALLBACK_ON_REGISTRATION");
     }
 
 }

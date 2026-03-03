@@ -65,10 +65,10 @@ import com.oracle.svm.core.jdk.SystemPropertiesSupport;
 import com.oracle.svm.core.jvmstat.PerfDataFeature;
 import com.oracle.svm.core.jvmstat.PerfDataHolder;
 import com.oracle.svm.core.jvmstat.PerfManager;
-import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
 import com.oracle.svm.core.metaspace.Metaspace;
 import com.oracle.svm.core.os.CommittedMemoryProvider;
 import com.oracle.svm.core.os.OSCommittedMemoryProvider;
+import com.oracle.svm.shared.singletons.LayeredImageSingletonSupport;
 
 import jdk.graal.compiler.core.common.NumUtil;
 import jdk.graal.compiler.graph.Node;

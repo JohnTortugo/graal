@@ -46,6 +46,7 @@ import com.oracle.truffle.espresso.graal.EspressoConstantFieldProvider;
 import com.oracle.truffle.espresso.graal.EspressoMetaAccessExtensionProvider;
 import com.oracle.truffle.espresso.jvmci.DummyCodeCacheProvider;
 import com.oracle.truffle.espresso.jvmci.meta.EspressoResolvedJavaType;
+import com.oracle.truffle.espresso.jvmci.meta.EspressoResolvedObjectType;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.core.common.spi.ConstantFieldProvider;
@@ -517,6 +518,46 @@ final class EspressoExternalVMAccess implements VMAccess {
             }
         }
         return new EspressoExternalObjectConstant(this, array);
+    }
+
+    @Override
+    public void writeArrayElement(JavaConstant array, int index, JavaConstant element) {
+        if (!(array instanceof EspressoExternalObjectConstant espressoArray)) {
+            throw new IllegalArgumentException("Expected an EspressoExternalObjectConstant, got " + safeGetClass(array));
+        }
+        EspressoResolvedObjectType arrayType = espressoArray.getType();
+        if (!arrayType.isArray()) {
+            throw new IllegalArgumentException("Expected an array type, got " + arrayType);
+        }
+        ResolvedJavaType componentType = arrayType.getComponentType();
+        Object unwrappedValue;
+        if (componentType.isPrimitive()) {
+            if (componentType.getJavaKind() != element.getJavaKind()) {
+                throw new IllegalArgumentException("Element " + element + " should be a " + componentType.getJavaKind() + ", got " + element.getJavaKind());
+            }
+            unwrappedValue = element.asBoxedPrimitive();
+        } else if (element.isNull()) {
+            unwrappedValue = null;
+        } else {
+            if (!(element instanceof EspressoExternalObjectConstant objectElement)) {
+                throw new IllegalArgumentException("Element " + element + " should be an espresso object constant, got " + safeGetClass(element));
+            }
+            unwrappedValue = objectElement.getValue();
+        }
+        try {
+            espressoArray.getValue().setArrayElement(index, unwrappedValue);
+        } catch (ClassCastException e) {
+            /*
+             * This exception suggests that the element is not assignable to the component type of
+             * the array, but let's double-check to make sure we do not re-interpret an unrelated
+             * exception.
+             */
+            if (element instanceof EspressoExternalObjectConstant objectConstant && !componentType.isAssignableFrom(objectConstant.getType())) {
+                throw new IllegalArgumentException("Element " + element + " of type " + objectConstant.getType() + " is not assignable to " + componentType, e);
+            }
+            // Unrelated exception, just rethrow it.
+            throw e;
+        }
     }
 
     @Override

@@ -76,9 +76,7 @@ import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.meta.MethodPointer;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.graal.hosted.DeoptimizationFeature;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.NativeImageGenerator;
@@ -108,6 +106,8 @@ import com.oracle.svm.interpreter.metadata.MetadataUtil;
 import com.oracle.svm.interpreter.metadata.ReferenceConstant;
 import com.oracle.svm.interpreter.metadata.serialization.SerializationContext;
 import com.oracle.svm.interpreter.metadata.serialization.Serializers;
+import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;

@@ -78,7 +78,7 @@ import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.AnalysisError;
-import com.oracle.svm.util.ClassUtil;
+import com.oracle.svm.shared.util.ClassUtil;
 import com.oracle.svm.util.GuestAccess;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;

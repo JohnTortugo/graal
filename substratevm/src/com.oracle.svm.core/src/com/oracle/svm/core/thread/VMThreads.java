@@ -67,14 +67,14 @@ import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalInt;
 import com.oracle.svm.core.threadlocal.FastThreadLocalWord;
 import com.oracle.svm.core.threadlocal.VMThreadLocalSupport;
+import com.oracle.svm.core.util.UnsignedUtils;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
-import com.oracle.svm.core.util.UnsignedUtils;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.directives.GraalDirectives;
@@ -96,32 +96,41 @@ public abstract class VMThreads {
     }
 
     /**
-     * Only use this mutex if it is absolutely necessary to operate on the linked list of
-     * {@link IsolateThread}s. This mutex is especially dangerous because it is used by the
-     * application, the GC, and the safepoint mechanism. To avoid potential deadlocks, all places
-     * that acquire this mutex must do one of the following:
+     * This mutex is used when requesting a {@link Safepoint}. The VM operation thread (either
+     * temporary or dedicated) may acquire this mutex at any time. All other threads may only hold
+     * this mutex temporarily, while they are in fully {@link Uninterruptible} code.
+     */
+    protected static final VMMutex SAFEPOINT_MUTEX = new VMMutex("safepoint");
+
+    /**
+     * Only use this mutex if it is necessary to operate on the linked list of
+     * {@link IsolateThread}s. This mutex is dangerous because it is used by both the application
+     * but also VM operations. To avoid deadlocks, all places that acquire this mutex must do one of
+     * the following:
      *
      * <ol type="a">
-     * <li>Acquire the mutex within a VM operation: this is safe because it fixes the order in which
-     * the mutexes are acquired (VMOperation queue mutex first, {@link #THREAD_MUTEX} second). If
-     * the VM operation causes a safepoint, then it is possible that the {@link #THREAD_MUTEX} was
-     * already acquired for safepoint reasons.</li>
+     * <li>Enqueue a VM operation that needs a safepoint, which implicitly acquires the
+     * {@link #THREAD_MUTEX}.</li>
+     * <li>Explicitly acquire the mutex within a VM operation that does not need a safepoint: this
+     * is safe because it fixes the order in which the mutexes are acquired (VMOperation queue mutex
+     * first, {@link #THREAD_MUTEX} second}).</li>
      * <li>Acquire the mutex from a thread that is not yet attached
-     * ({@link StatusSupport#STATUS_CREATED}).</li>
+     * ({@link StatusSupport#STATUS_CREATED}). Note that only fully uninterruptible code may be
+     * executed while holding the mutex.</li>
      * <li>Acquire the mutex from a thread that is in native code
      * ({@link StatusSupport#STATUS_IN_NATIVE}). This is also possible from a thread that is in Java
-     * state by doing an explicit transition to native, see
-     * {@link #lockThreadMutexInNativeCode}.</li>
+     * state by doing an explicit transition to native, see {@link #lockThreadMutexInNativeCode}.
+     * Note that only fully uninterruptible code may be executed while holding the mutex.</li>
      * </ol>
      *
      * Deadlock example 1:
      * <ul>
      * <li>Thread A acquires the {@link #THREAD_MUTEX}.</li>
-     * <li>Thread B queues a VM operation and therefore holds the corresponding VM operation queue
-     * mutex.</li>
+     * <li>Thread B queues a VM operation that needs a safepoint and therefore acquires the
+     * corresponding VM operation queue mutex.
      * <li>Thread A allocates an object and the allocation wants to trigger a GC. So, a VM operation
-     * needs to be queued, and thread A tries to acquire the VM operation queue mutex. Thread A is
-     * blocked because thread B holds that mutex.</li>
+     * needs to be queued, and thread A tries to acquire the VM operation queue mutex. However,
+     * thread A is blocked because thread B holds that mutex.</li>
      * <li>Thread B needs to initiate a safepoint before executing the VM operation. So, it tries to
      * acquire the {@link #THREAD_MUTEX} and is blocked because thread A holds that mutex.</li>
      * </ul>
@@ -302,11 +311,11 @@ public abstract class VMThreads {
     public abstract void failFatally(int code, CCharPointer message);
 
     /**
-     * Iteration of all {@link IsolateThread}s that are currently running. {@link #THREAD_MUTEX}
-     * must be held when iterating the list.
+     * Typically called when starting an iteration over all currently attached
+     * {@link IsolateThread}s. {@link #THREAD_MUTEX} must be held while iterating the thread list.
      *
-     * Use the following pattern to iterate all running threads. It is allocation free and can
-     * therefore be used during GC:
+     * Use the following pattern to iterate all attached threads. It is allocation free and can
+     * therefore also be used during a GC:
      *
      * <pre>
      * for (VMThread thread = VMThreads.firstThread(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
@@ -321,7 +330,8 @@ public abstract class VMThreads {
     /**
      * Like {@link #firstThread()} but without the check that {@link #THREAD_MUTEX} is locked by the
      * current thread. Only use this method if absolutely necessary (e.g., for printing diagnostics
-     * on a fatal error).
+     * on a fatal error) as there is a risk that the returned {@link IsolateThread} was already
+     * freed.
      */
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public static IsolateThread firstThreadUnsafe() {
@@ -347,9 +357,8 @@ public abstract class VMThreads {
         return attachThread(thread);
     }
 
-    /* Needs to be protected due to legacy code. */
     @Uninterruptible(reason = "Thread is not attached yet.")
-    protected int attachThread(IsolateThread thread) {
+    private int attachThread(IsolateThread thread) {
         assert StatusSupport.isStatusCreated(thread) : "Status should be initialized on creation.";
         OSThreadIdTL.set(thread, getCurrentOSThreadId());
         OSThreadHandleTL.set(thread, getCurrentOSThreadHandle());

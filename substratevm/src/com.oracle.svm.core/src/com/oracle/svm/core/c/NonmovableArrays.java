@@ -386,7 +386,7 @@ public final class NonmovableArrays {
             hosted[index] = value;
             return;
         }
-        assert matches(array, true, ConfigurationValues.getTarget().wordSize);
+        assert matches(array, true, ConfigurationValues.getWordSize());
         ((Pointer) addressOf(array, index)).writeWord(0, value);
     }
 
@@ -397,7 +397,7 @@ public final class NonmovableArrays {
             T[] hosted = getHostedArray(array);
             return hosted[index];
         }
-        assert matches(array, true, ConfigurationValues.getTarget().wordSize);
+        assert matches(array, true, ConfigurationValues.getWordSize());
         return ((Pointer) addressOf(array, index)).readWord(0);
     }
 

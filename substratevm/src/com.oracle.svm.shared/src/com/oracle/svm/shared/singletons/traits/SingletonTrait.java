@@ -26,7 +26,7 @@ package com.oracle.svm.shared.singletons.traits;
 
 import java.util.Objects;
 
-import com.oracle.svm.shared.singletons.Invariants;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * Describes a facet of a singleton's behavior. See {@link SingletonTraits} and
@@ -41,7 +41,7 @@ public abstract sealed class SingletonTrait<T> permits AccessSingletonTrait, Dis
 
     public SingletonTrait(SingletonTraitKind kind, T metadata) {
         /* Guarantee that the trait class matches that of the kind. */
-        Invariants.guarantee(kind.traitClass() == this.getClass(), "Unexpected trait class.");
+        VMError.guarantee(kind.traitClass() == this.getClass(), "Unexpected trait class.");
         this.kind = kind;
         this.metadata = metadata;
     }
@@ -59,7 +59,7 @@ public abstract sealed class SingletonTrait<T> permits AccessSingletonTrait, Dis
         } else if (traitClass == DisallowedSingletonTrait.class) {
             traitKind = SingletonTraitKind.DISALLOWED;
         }
-        Invariants.guarantee(Objects.requireNonNull(traitKind).traitClass() == traitClass, "Trait kind doesn't match.");
+        VMError.guarantee(Objects.requireNonNull(traitKind).traitClass() == traitClass, "Trait kind doesn't match.");
         return traitKind;
     }
 

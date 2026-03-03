@@ -498,7 +498,7 @@ public class SubstrateDiagnostics {
             stackBase = originalSp.add(32);
         }
 
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         Pointer pos = originalSp;
         while (pos.belowThan(stackBase)) {
             CodePointer possibleIp = pos.readWord(0);
@@ -628,7 +628,7 @@ public class SubstrateDiagnostics {
                 hexDump(log, ip, bytesToPrint, bytesToPrint);
             } else if (invocationCount == 4) {
                 /* Just print one word starting at the ip. */
-                hexDump(log, ip, 0, ConfigurationValues.getTarget().wordSize);
+                hexDump(log, ip, 0, ConfigurationValues.getWordSize());
             }
             log.indent(false).newline();
         }
@@ -657,7 +657,7 @@ public class SubstrateDiagnostics {
             Pointer sp = context.getStackPointer();
             UnsignedWord stackEnd = VMThreads.StackEnd.get(); // low
             UnsignedWord stackBase = VMThreads.StackBase.get(); // high
-            int wordSize = ConfigurationValues.getTarget().wordSize;
+            int wordSize = ConfigurationValues.getWordSize();
 
             log.string("Top of stack (sp=").zhex(sp).string("):").indent(true);
             int bytesToPrintBelowSp = 32;
@@ -1071,7 +1071,7 @@ public class SubstrateDiagnostics {
                  * of a call (i.e., only the arguments and the return address are on the stack).
                  */
                 int expectedStackAlignment = ConfigurationValues.getTarget().stackAlignment;
-                if (sp.unsignedRemainder(expectedStackAlignment).notEqual(0) && sp.unsignedRemainder(ConfigurationValues.getTarget().wordSize).equal(0)) {
+                if (sp.unsignedRemainder(expectedStackAlignment).notEqual(0) && sp.unsignedRemainder(ConfigurationValues.getWordSize()).equal(0)) {
                     log.newline();
                     // Checkstyle: Allow raw info or warning printing - begin
                     log.string("Warning: stack pointer is not aligned to ").signed(expectedStackAlignment).string(" bytes.").newline();

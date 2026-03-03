@@ -286,7 +286,7 @@ public abstract class PlatformThreads {
 
     /**
      * Returns the isolate thread associated with a Java thread. The caller must own the
-     * {@linkplain VMThreads#THREAD_MUTEX threads mutex} and release it only after it has finished
+     * {@linkplain VMThreads#THREAD_MUTEX thread mutex} and release it only after it has finished
      * using the returned {@link IsolateThread} pointer.
      *
      * This method can return {@code NULL} if the thread is not alive or if it has been recently
@@ -318,9 +318,9 @@ public abstract class PlatformThreads {
 
     /**
      * We must not lock the {@link VMThreads#THREAD_MUTEX} while in Java mode, otherwise we can
-     * deadlock when a safepoint is requested concurrently. Therefore, we transition the thread
-     * manually from Java into native mode. This makes the lock / block / unlock atomic with respect
-     * to safepoints.
+     * deadlock when the thread mutex is used in a VM operation that needs a safepoint. Therefore,
+     * we transition the thread manually from Java into native mode. This makes the lock / block /
+     * unlock atomic with respect to safepoints.
      *
      * The garbage collector will not see (or update) any object references in the stack called by
      * this method while the thread is in native mode. Therefore, the uninterruptible code must only

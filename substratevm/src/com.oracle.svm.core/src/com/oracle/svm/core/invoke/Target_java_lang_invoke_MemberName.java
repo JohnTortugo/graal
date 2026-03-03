@@ -37,7 +37,7 @@ import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.annotate.TargetElement;
 import com.oracle.svm.core.hub.RuntimeClassLoading.WithRuntimeClassLoading;
 import com.oracle.svm.core.methodhandles.Target_java_lang_invoke_MethodHandleNatives;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.shared.util.VMError;
 
 @TargetClass(className = "java.lang.invoke.MemberName")

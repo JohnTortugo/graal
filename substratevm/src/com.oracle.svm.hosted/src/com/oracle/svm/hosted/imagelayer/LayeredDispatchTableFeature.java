@@ -150,7 +150,7 @@ public class LayeredDispatchTableFeature implements InternalFeature {
 
     @Override
     public void beforeAnalysis(Feature.BeforeAnalysisAccess access) {
-        wordSize = ConfigurationValues.getTarget().wordSize;
+        wordSize = ConfigurationValues.getWordSize();
         if (ImageLayerBuildingSupport.buildingExtensionLayer()) {
             var config = (FeatureImpl.BeforeAnalysisAccessImpl) access;
             getPriorVirtualCallTargets().forEach(aMethod -> {

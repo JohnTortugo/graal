@@ -68,6 +68,7 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
+import javax.lang.model.util.Types;
 
 import com.oracle.truffle.dsl.processor.ProcessorContext;
 import com.oracle.truffle.dsl.processor.TruffleProcessorOptions;
@@ -103,6 +104,7 @@ import com.oracle.truffle.dsl.processor.model.SpecializationData;
 import com.oracle.truffle.dsl.processor.model.TypeSystemData;
 import com.oracle.truffle.dsl.processor.parser.AbstractParser;
 import com.oracle.truffle.dsl.processor.parser.TypeSystemParser;
+import com.oracle.truffle.dsl.processor.util.TypeMirrorKey;
 
 public class BytecodeDSLParser extends AbstractParser<BytecodeDSLModels> {
 
@@ -262,6 +264,7 @@ public class BytecodeDSLParser extends AbstractParser<BytecodeDSLModels> {
         model.enableThreadedSwitch = ElementUtils.getAnnotationValue(Boolean.class, generateBytecodeMirror, "enableThreadedSwitch");
         model.enableInstructionTracing = ElementUtils.getAnnotationValue(Boolean.class, generateBytecodeMirror, "enableInstructionTracing");
         model.enableInstructionRewriting = ElementUtils.getAnnotationValue(Boolean.class, generateBytecodeMirror, "enableInstructionRewriting");
+        model.enableTailCallHandlers = ElementUtils.getAnnotationValue(Boolean.class, generateBytecodeMirror, "enableTailCallHandlers");
 
         // Check basic declaration properties.
         Set<Modifier> modifiers = typeElement.getModifiers();
@@ -1295,18 +1298,19 @@ public class BytecodeDSLParser extends AbstractParser<BytecodeDSLModels> {
         List<IllegalLocalExceptionFactory.ParameterKind> params = new ArrayList<>();
 
         TruffleTypes types = model.getContext().getTypes();
-        LinkedHashMap<TypeMirror, IllegalLocalExceptionFactory.ParameterKind> supportedParams = new LinkedHashMap<>();
-        supportedParams.put(types.Node, ParameterKind.NODE);
-        supportedParams.put(types.BytecodeNode, ParameterKind.BYTECODE_NODE);
-        supportedParams.put(types.BytecodeLocation, ParameterKind.BYTECODE_LOCATION);
-        supportedParams.put(types.LocalVariable, ParameterKind.LOCAL_VARIABLE);
+        LinkedHashMap<TypeMirrorKey, IllegalLocalExceptionFactory.ParameterKind> supportedParams = new LinkedHashMap<>();
+        Types typeUtils = model.getContext().getEnvironment().getTypeUtils();
+        supportedParams.put(new TypeMirrorKey(types.Node, typeUtils), ParameterKind.NODE);
+        supportedParams.put(new TypeMirrorKey(types.BytecodeNode, typeUtils), ParameterKind.BYTECODE_NODE);
+        supportedParams.put(new TypeMirrorKey(types.BytecodeLocation, typeUtils), ParameterKind.BYTECODE_LOCATION);
+        supportedParams.put(new TypeMirrorKey(types.LocalVariable, typeUtils), ParameterKind.LOCAL_VARIABLE);
         for (VariableElement param : createMethod.getParameters()) {
             TypeMirror paramType = param.asType();
-            IllegalLocalExceptionFactory.ParameterKind resolvedParam = supportedParams.get(paramType);
+            IllegalLocalExceptionFactory.ParameterKind resolvedParam = supportedParams.get(new TypeMirrorKey(paramType, typeUtils));
             if (resolvedParam == null) {
                 model.addError(generateBytecodeMirror, illegalLocalExceptionFactory, "%s's static '%s' method declares an unsupported %s parameter. Supported parameter types: %s",
                                 getSimpleName(model.illegalLocalException), factoryName, getSimpleName(paramType),
-                                supportedParams.keySet().stream().map(ElementUtils::getSimpleName).collect(Collectors.joining(", ")));
+                                supportedParams.keySet().stream().map(TypeMirrorKey::type).map(ElementUtils::getSimpleName).collect(Collectors.joining(", ")));
                 return null;
             }
 

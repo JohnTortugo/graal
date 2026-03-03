@@ -26,7 +26,6 @@ package com.oracle.svm.core;
 
 import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 
-import com.oracle.svm.guest.staging.Uninterruptible;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.IsolateThread;
@@ -42,6 +41,7 @@ import com.oracle.svm.core.stack.JavaFrameAnchor;
 import com.oracle.svm.core.stack.JavaFrameAnchors;
 import com.oracle.svm.core.thread.VMOperation;
 import com.oracle.svm.core.thread.VMThreads;
+import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -139,7 +139,7 @@ public abstract class FrameAccess {
 
     @Fold
     public static int wordSize() {
-        return ConfigurationValues.getTarget().arch.getWordSize();
+        return ConfigurationValues.getWordSize();
     }
 
     @Fold
@@ -148,7 +148,7 @@ public abstract class FrameAccess {
     }
 
     public static Stamp getWordStamp() {
-        return StampFactory.forKind(ConfigurationValues.getTarget().wordJavaKind);
+        return StampFactory.forKind(ConfigurationValues.getWordKind());
     }
 
     /**

@@ -33,7 +33,6 @@ import org.graalvm.nativeimage.c.function.CodePointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.code.CodeInfo;
 import com.oracle.svm.core.code.CodeInfoAccess;
 import com.oracle.svm.core.code.CodeInfoQueryResult;
@@ -46,6 +45,7 @@ import com.oracle.svm.core.graal.stackvalue.UnsafeStackValue;
 import com.oracle.svm.core.log.StringBuilderLog;
 import com.oracle.svm.core.meta.SubstrateObjectConstant;
 import com.oracle.svm.core.monitor.MonitorSupport;
+import com.oracle.svm.guest.staging.Uninterruptible;
 
 import jdk.graal.compiler.nodes.FrameState;
 import jdk.vm.ci.code.InstalledCode;
@@ -269,7 +269,7 @@ public final class DeoptimizedFrame {
 
     protected static DeoptimizedFrame factory(int targetContentSize, long sourceEncodedFrameSize, SubstrateInstalledCode sourceInstalledCode, VirtualFrame topFrame,
                     RelockObjectData[] relockedObjects, CodePointer sourcePC, boolean rethrowException, boolean isEagerDeopt) {
-        final TargetContent targetContentBuffer = new TargetContent(targetContentSize, ConfigurationValues.getTarget().arch.getByteOrder());
+        final TargetContent targetContentBuffer = new TargetContent(targetContentSize, ConfigurationValues.getByteOrder());
         return new DeoptimizedFrame(sourceEncodedFrameSize, sourceInstalledCode, topFrame, targetContentBuffer, relockedObjects, sourcePC, rethrowException, isEagerDeopt);
     }
 

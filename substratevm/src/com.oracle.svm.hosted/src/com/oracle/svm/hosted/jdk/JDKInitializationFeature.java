@@ -79,6 +79,10 @@ public class JDKInitializationFeature implements InternalFeature {
         rci.initializeAtBuildTime("java.net", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("java.nio", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("java.text", JDK_CLASS_REASON);
+        if (FutureDefaultsOptions.resourceBundlesInitializedAtRunTime()) {
+            rci.initializeAtRunTime("java.text.BreakIterator", FutureDefaultsOptions.RUN_TIME_INITIALIZE_RESOURCE_BUNDLES_REASON);
+            rci.initializeAtRunTime("java.text.BreakIterator$BreakIteratorCache", FutureDefaultsOptions.RUN_TIME_INITIALIZE_RESOURCE_BUNDLES_REASON);
+        }
         rci.initializeAtBuildTime("java.time", JDK_CLASS_REASON);
         // see HijrahChronologyFeature for more details
         rci.initializeAtBuildTime("java.time.chrono.HijrahChronology", "Needs to be fully initialized at build time");
@@ -147,6 +151,11 @@ public class JDKInitializationFeature implements InternalFeature {
         rci.initializeAtBuildTime("sun.security.mscapi", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("sun.text", JDK_CLASS_REASON);
         rci.initializeAtBuildTime("sun.util", JDK_CLASS_REASON);
+        if (FutureDefaultsOptions.resourceBundlesInitializedAtRunTime()) {
+            rci.initializeAtRunTime("sun.util.locale.provider.LocaleProviderAdapter", FutureDefaultsOptions.RUN_TIME_INITIALIZE_RESOURCE_BUNDLES_REASON);
+            rci.initializeAtRunTime("sun.util.locale.provider.LocaleServiceProviderPool", FutureDefaultsOptions.RUN_TIME_INITIALIZE_RESOURCE_BUNDLES_REASON);
+            rci.initializeAtRunTime("sun.util.locale.provider.LocaleServiceProviderPool$AllAvailableLocales", FutureDefaultsOptions.RUN_TIME_INITIALIZE_RESOURCE_BUNDLES_REASON);
+        }
 
         /* Minor fixes to make the list work */
         rci.initializeAtRunTime("com.sun.naming.internal.ResourceManager$AppletParameter", "Initializes AWT");

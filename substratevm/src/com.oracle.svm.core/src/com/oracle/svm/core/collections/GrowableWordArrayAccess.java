@@ -101,6 +101,6 @@ public class GrowableWordArrayAccess {
 
     @Fold
     static int wordSize() {
-        return ConfigurationValues.getTarget().wordSize;
+        return ConfigurationValues.getWordSize();
     }
 }

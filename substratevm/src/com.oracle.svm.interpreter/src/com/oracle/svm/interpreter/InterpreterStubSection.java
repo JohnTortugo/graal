@@ -126,7 +126,7 @@ public abstract class InterpreterStubSection {
 
         for (InterpreterResolvedJavaMethod method : enterTrampolineOffsets.keySet()) {
             int offset = enterTrampolineOffsets.get(method);
-            objectFile.createDefinedSymbol(nameForInterpMethod(method), stubsSection, offset, ConfigurationValues.getTarget().wordSize, true, internalSymbolsAreGlobal);
+            objectFile.createDefinedSymbol(nameForInterpMethod(method), stubsSection, offset, ConfigurationValues.getWordSize(), true, internalSymbolsAreGlobal);
         }
     }
 
@@ -164,7 +164,7 @@ public abstract class InterpreterStubSection {
         for (int vTableIndex = 0; vTableIndex < MAX_VTABLE_STUBS; vTableIndex++) {
             int codeOffset = vTableStubBaseOffset + vTableIndex * getVTableStubSize();
             String symbolName = nameForVTableIndex(vTableIndex);
-            objectFile.createDefinedSymbol(symbolName, stubsSection, codeOffset, ConfigurationValues.getTarget().wordSize, true, internalSymbolsAreGlobal);
+            objectFile.createDefinedSymbol(symbolName, stubsSection, codeOffset, ConfigurationValues.getWordSize(), true, internalSymbolsAreGlobal);
         }
     }
 

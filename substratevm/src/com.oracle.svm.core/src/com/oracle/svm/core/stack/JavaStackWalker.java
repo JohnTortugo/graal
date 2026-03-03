@@ -110,7 +110,7 @@ public final class JavaStackWalker {
 
     @Fold
     static int getJavaFrameOffset() {
-        return NumUtil.roundUp(SizeOf.get(JavaStackWalkImpl.class), ConfigurationValues.getTarget().wordSize);
+        return NumUtil.roundUp(SizeOf.get(JavaStackWalkImpl.class), ConfigurationValues.getWordSize());
     }
 
     @Fold

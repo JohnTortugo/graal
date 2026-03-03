@@ -44,7 +44,7 @@ import com.oracle.svm.core.thread.PlatformThreads;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.threadlocal.FastThreadLocalFactory;
 import com.oracle.svm.core.threadlocal.FastThreadLocalLong;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 
 public class JfrAllocationEvents {
     private static final FastThreadLocalLong lastThreadAllocatedBytes = FastThreadLocalFactory.createLong("JfrAllocationEvents.lastThreadAllocatedBytes");

@@ -36,7 +36,7 @@ import org.graalvm.nativeimage.hosted.Feature.FeatureAccess;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
 import com.oracle.svm.core.feature.InternalFeature.InternalFeatureAccess;
-import com.oracle.svm.core.util.ConcurrentIdentityHashMap;
+import com.oracle.svm.shared.collections.ConcurrentIdentityHashMap;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.JVMCIRuntimeClassInitializationSupport;

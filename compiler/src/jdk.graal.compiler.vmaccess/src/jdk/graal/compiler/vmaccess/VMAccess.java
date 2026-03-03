@@ -133,6 +133,20 @@ public interface VMAccess {
     JavaConstant asArrayConstant(ResolvedJavaType componentType, JavaConstant... elements);
 
     /**
+     * Writes {@code element} into {@code array} at {@code index}.
+     *
+     * @param array the array in which the element will be written
+     * @param index the position in the array where the element will be written
+     * @param element the element to write into the array. Primitive values must exactly match the
+     *            type of the {@code array}. For example, an {@code int} value cannot be written to
+     *            a field of type {@code long}). Implementations must not perform widening primitive
+     *            conversion (JLS 5.1.2). This is in contrast to {@link #invoke}.
+     * @throws IllegalArgumentException if {@code array} does not represent an array or if the
+     *             element cannot be assigned to the type of the array
+     */
+    void writeArrayElement(JavaConstant array, int index, JavaConstant element);
+
+    /**
      * Gets a {@link ResolvedJavaMethod} for an {@link Executable} object encapsulated in
      * {@code constant}. Returns {@code null} if {@code constant} does not encapsulate an
      * {@link Executable}.

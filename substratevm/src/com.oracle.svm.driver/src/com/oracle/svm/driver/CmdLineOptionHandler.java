@@ -29,10 +29,10 @@ import java.nio.file.Paths;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-import com.oracle.svm.core.option.OptionOrigin;
 import com.oracle.svm.core.util.ExitStatus;
 import com.oracle.svm.driver.NativeImage.ArgumentQueue;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.option.OptionOrigin;
+import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.options.OptionType;
 

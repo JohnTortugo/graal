@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import com.oracle.graal.pointsto.phases.NoClassInitializationPlugin;
-import com.oracle.svm.util.ClassUtil;
+import com.oracle.svm.shared.util.ClassUtil;
 import com.oracle.svm.util.GuestAccess;
 
 import jdk.graal.compiler.debug.DebugContext;

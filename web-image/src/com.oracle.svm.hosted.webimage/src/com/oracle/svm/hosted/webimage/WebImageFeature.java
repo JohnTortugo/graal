@@ -71,7 +71,6 @@ import com.oracle.svm.core.jdk.buildtimeinit.FileSystemProviderBuildTimeInitSupp
 import com.oracle.svm.core.log.Log;
 import com.oracle.svm.core.log.Loggers;
 import com.oracle.svm.core.log.NoopLog;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.HostedConfiguration;
 import com.oracle.svm.hosted.ImageClassLoader;
@@ -87,6 +86,7 @@ import com.oracle.svm.hosted.webimage.name.WebImageNamingConvention;
 import com.oracle.svm.hosted.webimage.options.WebImageOptions;
 import com.oracle.svm.hosted.webimage.snippets.WebImageNonSnippetLowerings;
 import com.oracle.svm.hosted.webimage.wasm.WasmLogHandler;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.Disallowed;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;

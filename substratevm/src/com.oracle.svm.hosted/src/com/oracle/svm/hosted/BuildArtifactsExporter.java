@@ -39,12 +39,12 @@ import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.svm.core.BuildArtifacts;
 import com.oracle.svm.core.BuildArtifacts.ArtifactType;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.option.HostedOptionValues;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.util.json.JsonWriter;
 

@@ -58,7 +58,6 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.annotate.TargetElement;
 import com.oracle.svm.core.c.struct.PinnedObjectField;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.c.BuiltinDirectives;
 import com.oracle.svm.hosted.c.NativeCodeContext;
 import com.oracle.svm.hosted.c.NativeLibraries;
@@ -66,8 +65,9 @@ import com.oracle.svm.hosted.c.info.AccessorInfo.AccessorKind;
 import com.oracle.svm.hosted.c.info.SizableInfo.ElementKind;
 import com.oracle.svm.hosted.cenum.CEnumCallWrapperMethod;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
+import com.oracle.svm.shared.util.ClassUtil;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.ClassUtil;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.OriginalMethodProvider;
 

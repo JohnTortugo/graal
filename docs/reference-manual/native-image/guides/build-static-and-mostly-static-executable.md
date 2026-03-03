@@ -15,6 +15,7 @@ However, you can create a statically linked or mostly-statically linked native e
 **A static native executable** is a statically linked binary that you can use without any additional library dependencies.
 A static native executable is easy to distribute and deploy on a slim or distroless container (a scratch container).
 You can create a static native executable by statically linking it against [musl-libc](https://musl.libc.org/), a lightweight, fast and simple `libc` implementation.
+Statically linking against `glibc` is not supported and will trigger an error at build time.
 
 **A mostly-static native executable** is a binary that links all the shared libraries on which the native executable relies (`zlib`, JDK-shared static libraries) except the standard C library, `libc`. This is an alternative option to statically linking everything. Also, depending on the user's code, it may link `libstdc+` and `libgcc`.
 This approach is useful for deployment on a distroless container image.

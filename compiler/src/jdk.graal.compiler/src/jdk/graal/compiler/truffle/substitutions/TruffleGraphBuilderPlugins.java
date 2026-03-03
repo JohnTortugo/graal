@@ -611,7 +611,8 @@ public class TruffleGraphBuilderPlugins {
         registerFrameAccessors(r, types, JavaKind.Byte);
 
         int accessTag = types.FrameSlotKind_javaKindToTagIndex.get(JavaKind.Object);
-        registerGet(r, JavaKind.Object, accessTag, "unsafeUncheckedGet" + JavaKind.Object.name(), true);
+        registerGet(r, JavaKind.Object, accessTag, "unsafeUncheckedGet" + JavaKind.Object.name(), int.class, true);
+        registerGet(r, JavaKind.Object, accessTag, "unsafeUncheckedGet" + JavaKind.Object.name(), long.class, true);
 
         registerOSRFrameTransferMethods(r);
 
@@ -642,10 +643,13 @@ public class TruffleGraphBuilderPlugins {
         int accessTag = types.FrameSlotKind_javaKindToTagIndex.get(accessKind);
         String nameSuffix = accessKind.name();
         boolean isPrimitiveAccess = accessKind.isPrimitive();
-        registerGet(r, accessKind, accessTag, "get" + nameSuffix, false);
-        for (String prefix : new String[]{"unsafeGet", "expect", "unsafeExpect"}) {
-            registerGet(r, accessKind, accessTag, prefix + nameSuffix, true);
-        }
+        registerGet(r, accessKind, accessTag, "get" + nameSuffix, int.class, false);
+        registerGet(r, accessKind, accessTag, "expect" + nameSuffix, int.class, true);
+        registerGet(r, accessKind, accessTag, "unsafeGet" + nameSuffix, int.class, true);
+        registerGet(r, accessKind, accessTag, "unsafeExpect" + nameSuffix, int.class, true);
+        registerGet(r, accessKind, accessTag, "unsafeGet" + nameSuffix, long.class, true);
+        registerGet(r, accessKind, accessTag, "unsafeExpect" + nameSuffix, long.class, true);
+
         r.register(new RequiredInvocationPlugin("get" + nameSuffix + "Static", Receiver.class, int.class) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver frameNode, ValueNode frameSlotNode) {
@@ -659,8 +663,9 @@ public class TruffleGraphBuilderPlugins {
             }
         });
 
-        registerSet(r, accessKind, accessTag, "set" + nameSuffix, false);
-        registerSet(r, accessKind, accessTag, "unsafeSet" + nameSuffix, true);
+        registerSet(r, accessKind, accessTag, "set" + nameSuffix, int.class, false);
+        registerSet(r, accessKind, accessTag, "unsafeSet" + nameSuffix, int.class, true);
+        registerSet(r, accessKind, accessTag, "unsafeSet" + nameSuffix, long.class, true);
         r.register(new RequiredInvocationPlugin("set" + nameSuffix + "Static", Receiver.class, int.class, getJavaClass(accessKind)) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver frameNode, ValueNode frameSlotNode, ValueNode value) {
@@ -686,8 +691,8 @@ public class TruffleGraphBuilderPlugins {
         });
     }
 
-    private static void registerGet(Registration r, JavaKind accessKind, int accessTag, String name, boolean optional) {
-        r.register(new InvocationPlugin(name, Receiver.class, int.class) {
+    private static void registerGet(Registration r, JavaKind accessKind, int accessTag, String name, Class<?> indexType, boolean optional) {
+        r.register(new InvocationPlugin(name, Receiver.class, indexType) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver frameNode, ValueNode frameSlotNode) {
                 int frameSlotIndex = maybeGetConstantNumberedFrameSlotIndex(frameNode, frameSlotNode);
@@ -705,8 +710,8 @@ public class TruffleGraphBuilderPlugins {
         });
     }
 
-    private static void registerSet(Registration r, JavaKind accessKind, int accessTag, String name, boolean optional) {
-        r.register(new InvocationPlugin(name, Receiver.class, int.class, getJavaClass(accessKind)) {
+    private static void registerSet(Registration r, JavaKind accessKind, int accessTag, String name, Class<?> indexType, boolean optional) {
+        r.register(new InvocationPlugin(name, Receiver.class, indexType, getJavaClass(accessKind)) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver frameNode, ValueNode frameSlotNode, ValueNode value) {
                 int frameSlotIndex = maybeGetConstantNumberedFrameSlotIndex(frameNode, frameSlotNode);
@@ -724,8 +729,8 @@ public class TruffleGraphBuilderPlugins {
         });
     }
 
-    private static void registerCopy(Registration r, String name, boolean optional) {
-        r.register(new InvocationPlugin(name, Receiver.class, int.class, int.class) {
+    private static void registerCopy(Registration r, String name, Class<?> indexType, boolean optional) {
+        r.register(new InvocationPlugin(name, Receiver.class, indexType, indexType) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode frameSlot1, ValueNode frameSlot2) {
                 int frameSlot1Index = maybeGetConstantNumberedFrameSlotIndex(receiver, frameSlot1);
@@ -744,8 +749,8 @@ public class TruffleGraphBuilderPlugins {
         });
     }
 
-    private static void registerClear(Registration r, String name, int illegalTag, boolean optional) {
-        r.register(new InvocationPlugin(name, Receiver.class, int.class) {
+    private static void registerClear(Registration r, String name, int illegalTag, Class<?> indexType, boolean optional) {
+        r.register(new InvocationPlugin(name, Receiver.class, indexType) {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode frameSlot) {
                 int frameSlotIndex = maybeGetConstantNumberedFrameSlotIndex(receiver, frameSlot);
@@ -810,7 +815,7 @@ public class TruffleGraphBuilderPlugins {
         if (frameSlotNode.isJavaConstant()) {
             if (frameNode.get(false) instanceof NewFrameNode newFrameNode) {
                 if (newFrameNode.getIntrinsifyAccessors()) {
-                    int index = frameSlotNode.asJavaConstant().asInt();
+                    int index = castToInt(frameSlotNode.asJavaConstant());
                     if (newFrameNode.isValidIndexedSlotIndex(index)) {
                         return index;
                     }
@@ -818,6 +823,15 @@ public class TruffleGraphBuilderPlugins {
             }
         }
         return -1;
+    }
+
+    private static int castToInt(JavaConstant constant) {
+        if (constant.getJavaKind() == JavaKind.Long) {
+            long v = constant.asLong();
+            GraalError.guarantee(v == (int) v, "Invalid cast to int.");
+            return (int) v;
+        }
+        return constant.asInt();
     }
 
     private static void registerOSRFrameTransferMethods(Registration r) {
@@ -886,10 +900,12 @@ public class TruffleGraphBuilderPlugins {
             }
         });
 
-        registerCopy(r, "copy", false);
-        registerCopy(r, "unsafeCopy", true);
-        registerClear(r, "clear", illegalTag, false);
-        registerClear(r, "unsafeClear", illegalTag, true);
+        registerCopy(r, "copy", int.class, false);
+        registerCopy(r, "unsafeCopy", int.class, true);
+        registerCopy(r, "unsafeCopy", long.class, true);
+        registerClear(r, "clear", illegalTag, int.class, false);
+        registerClear(r, "unsafeClear", illegalTag, int.class, true);
+        registerClear(r, "unsafeClear", illegalTag, long.class, true);
 
         r.register(new RequiredInvocationPlugin("clearPrimitiveStatic", Receiver.class, int.class) {
             @Override

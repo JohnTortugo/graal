@@ -1933,15 +1933,53 @@ libsvmjdwp = mx_sdk_vm.GraalVmJreComponent(
 
 mx_sdk_vm.register_graalvm_component(libsvmjdwp)
 
+# At the moment this list is mostly driven by tests and use-cases.
+# Packages get added as needed based on errors such as
+# "Trying to dispatch to compiled code for AOT method ..."
+# or "Cannot load undefined field: ..."
 lib_jvm_preserved_packages = [
-    'java.util',
-    'java.util.stream',
-    'java.util.concurrent.locks',
-    'java.lang',
-    'java.lang.invoke',
-    'java.lang.constant',
     'java.io',
-    'jdk.internal.misc'
+    'java.lang',
+    'java.lang.annotation',
+    'java.lang.classfile',
+    'java.lang.classfile.attribute',
+    'java.lang.classfile.constantpool',
+    'java.lang.classfile.instruction',
+    'java.lang.constant',
+    'java.lang.invoke',
+    'java.lang.module',
+    'java.lang.ref',
+    'java.lang.reflect',
+    'java.math',
+    'java.net',
+    'java.net.spi',
+    'java.nio',
+    'java.nio.charset',
+    'java.nio.channels',
+    'java.nio.channels.spi',
+    'java.nio.file',
+    'java.security',
+    'java.security.cert',
+    'java.security.spec',
+    'java.time',
+    'java.time.chrono',
+    'java.time.format',
+    'java.time.temporal',
+    'java.util',
+    'java.util.concurrent',
+    'java.util.concurrent.atomic',
+    'java.util.concurrent.locks',
+    'java.util.function',
+    'java.util.jar',
+    'java.util.regex',
+    'java.util.stream',
+    'java.util.zip',
+    'javax.net',
+    'jdk.internal.access',
+    'jdk.internal.classfile.impl',
+    'jdk.internal.constant',
+    'jdk.internal.misc',
+    'sun.invoke.util',
 ]
 
 mx_sdk_vm.register_graalvm_component(mx_sdk_vm.GraalVmJreComponent(

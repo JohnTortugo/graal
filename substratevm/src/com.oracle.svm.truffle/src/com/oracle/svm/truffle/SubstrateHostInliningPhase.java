@@ -49,6 +49,7 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
 @Platforms(Platform.HOSTED_ONLY.class)
 public final class SubstrateHostInliningPhase extends HostInliningPhase {
 
+    private final TruffleBaseFeature truffleBaseFeature = ImageSingletons.lookup(TruffleBaseFeature.class);
     private final TruffleFeature truffleFeature = ImageSingletons.lookup(TruffleFeature.class);
 
     SubstrateHostInliningPhase(CanonicalizerPhase canonicalizer) {
@@ -59,6 +60,11 @@ public final class SubstrateHostInliningPhase extends HostInliningPhase {
     @Override
     protected StructuredGraph parseGraph(HighTierContext context, StructuredGraph graph, ResolvedJavaMethod method) {
         return ((HostedMethod) method).compilationInfo.createGraph(graph.getDebug(), graph.getOptions(), CompilationIdentifier.INVALID_COMPILATION_ID, true);
+    }
+
+    @Override
+    protected boolean isBytecodeInterpreterHandler(TruffleHostEnvironment env, ResolvedJavaMethod targetMethod) {
+        return truffleBaseFeature.isBytecodeHandler(translateMethod(targetMethod));
     }
 
     /**

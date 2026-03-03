@@ -31,11 +31,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
-import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.code.FrameInfoEncoder;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.meta.HostedMethod;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.debug.Assertions;
 import jdk.graal.compiler.nodes.FrameState;

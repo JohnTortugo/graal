@@ -75,7 +75,7 @@ final class InterpreterDirectivesSupportImpl implements InterpreterDirectivesSup
             traceInterpreter("[forceInterpreterExecution] ").string(interpreterMethod.toString()).newline();
         }
 
-        int estOffset = ConfigurationValues.getTarget().wordSize * interpreterMethod.getEnterStubOffset();
+        int estOffset = ConfigurationValues.getWordSize() * interpreterMethod.getEnterStubOffset();
         Pointer estBase = InterpreterStubTable.getBaseForEnterStubTable();
         UnsignedWord estEntry = estBase.add(estOffset).readWord(0);
 

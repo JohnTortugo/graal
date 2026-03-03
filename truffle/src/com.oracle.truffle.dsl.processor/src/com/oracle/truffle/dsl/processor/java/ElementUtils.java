@@ -1104,6 +1104,9 @@ public class ElementUtils {
 
     public static String getEnclosedQualifiedName(DeclaredType mirror) {
         Element e = ((TypeElement) mirror.asElement()).getEnclosingElement();
+        if (e == null) {
+            throw new IllegalAccessError("Mirror does not contain an element " + mirror);
+        }
         if (e.getKind() == ElementKind.PACKAGE) {
             return ((PackageElement) e).getQualifiedName().toString();
         } else if (e.getKind().isInterface() || e.getKind().isClass()) {

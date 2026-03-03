@@ -38,15 +38,15 @@ import org.graalvm.nativeimage.impl.InternalPlatform.WINDOWS_BASE;
 
 import com.oracle.svm.core.heap.dump.HeapDumping;
 import com.oracle.svm.core.jdk.management.ManagementAgentModule;
-import com.oracle.svm.core.option.APIOption;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.LayerVerifiedOption;
 import com.oracle.svm.core.option.RuntimeOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.sdk.staging.layeredimage.LayeredCompilationBehavior;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.option.APIOption;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.LayerVerifiedOption;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.options.Option;

@@ -57,7 +57,7 @@ import com.oracle.graal.pointsto.util.AnalysisFuture;
 import com.oracle.graal.pointsto.util.AtomicUtils;
 import com.oracle.graal.pointsto.util.ConcurrentLightHashMap;
 import com.oracle.graal.pointsto.util.ConcurrentLightHashSet;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.util.OriginalClassProvider;
 import com.oracle.svm.util.OriginalMethodProvider;
 

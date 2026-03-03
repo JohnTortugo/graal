@@ -47,7 +47,7 @@ import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.webimage.codegen.WebImageTypeControl;
 import com.oracle.svm.hosted.webimage.metrickeys.MethodMetricKeys;
 import com.oracle.svm.hosted.webimage.util.metrics.MethodMetricsCollector;
-import com.oracle.svm.util.ClassUtil;
+import com.oracle.svm.shared.util.ClassUtil;
 import com.oracle.svm.webimage.object.ConstantIdentityMapping.IdentityNode;
 import com.oracle.svm.webimage.object.ObjectInspector.ObjectDefinition;
 

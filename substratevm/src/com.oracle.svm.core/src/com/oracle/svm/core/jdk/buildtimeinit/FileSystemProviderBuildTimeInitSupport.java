@@ -52,8 +52,8 @@ import com.oracle.svm.core.jdk.JRTSupport;
 import com.oracle.svm.core.jdk.SystemPropertiesSupport;
 import com.oracle.svm.core.jdk.UserSystemProperty;
 import com.oracle.svm.core.jdk.runtimeinit.FileSystemProviderRunTimeInitSupport;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.options.Option;

@@ -158,6 +158,8 @@ public class MethodTypeFlow extends TypeFlow<AnalysisMethod> {
             AnalysisError.guarantee(reason == null || reason.getSource() == null ||
                             !reason.getSource().getMethod().equals(method), "Parsing reason cannot be in the target method itself: %s", method);
 
+            method.checkGuaranteeFolded();
+
             parsingReason = reason;
             method.setParsingReason(PointsToAnalysisMethod.unwrapInvokeReason(reason));
             try {

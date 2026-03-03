@@ -39,6 +39,7 @@ import org.graalvm.nativeimage.c.type.CCharPointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.BuildPhaseProvider.AfterCompilation;
 import com.oracle.svm.core.SubstrateUtil;
@@ -50,11 +51,15 @@ import com.oracle.svm.core.heap.UnknownObjectField;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.registry.TypeIDs;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
-import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
-import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.core.memory.NullableNativeMemory;
 import com.oracle.svm.core.metaspace.Metaspace;
 import com.oracle.svm.core.nmt.NmtCategory;
+import com.oracle.svm.core.util.coder.ByteStream;
+import com.oracle.svm.core.util.coder.ByteStreamAccess;
+import com.oracle.svm.core.util.coder.NativeCoder;
+import com.oracle.svm.core.util.coder.Pack200Coder;
+import com.oracle.svm.shared.singletons.LayeredImageSingletonSupport;
+import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
@@ -63,11 +68,6 @@ import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.MultiLayer;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
-import com.oracle.svm.core.util.coder.ByteStream;
-import com.oracle.svm.core.util.coder.ByteStreamAccess;
-import com.oracle.svm.core.util.coder.NativeCoder;
-import com.oracle.svm.core.util.coder.Pack200Coder;
-import org.graalvm.word.impl.Word;
 
 /**
  * Provides access to the encoded heap dump metadata that was prepared at image build-time.

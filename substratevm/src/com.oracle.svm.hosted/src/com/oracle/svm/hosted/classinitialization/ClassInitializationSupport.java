@@ -55,15 +55,15 @@ import com.oracle.graal.pointsto.meta.BaseLayerType;
 import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.ImageClassLoader;
 import com.oracle.svm.hosted.LinkAtBuildTimeSupport;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.HostedModuleSupport;
 import com.oracle.svm.util.JVMCIRuntimeClassInitializationSupport;
-import com.oracle.svm.util.LogUtils;
 import com.oracle.svm.util.OriginalClassProvider;
 
 import jdk.graal.compiler.core.common.ContextClassLoaderScope;

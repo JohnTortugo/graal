@@ -375,7 +375,7 @@ public class CGlobalDataFeature implements InternalFeature {
         CGlobalDataImpl<?> data = entry.getKey();
         CGlobalDataInfo info = entry.getValue();
 
-        if (data.bytesSupplier != null) {
+        if (data.bytesSupplier != null && !data.deferred) {
             byte[] bytes = data.bytesSupplier.get();
             info.assignSize(bytes.length);
             info.assignBytes(bytes);
@@ -397,7 +397,7 @@ public class CGlobalDataFeature implements InternalFeature {
 
     private void layout() {
         assert !isLaidOut() : "Already laid out";
-        final int wordSize = ConfigurationValues.getTarget().wordSize;
+        final int wordSize = ConfigurationValues.getWordSize();
         /*
          * Put larger blobs at the end so that offsets are reasonable (<24bit imm) for smaller
          * entries
@@ -428,12 +428,16 @@ public class CGlobalDataFeature implements InternalFeature {
         int start = bufferBytes.position();
         assert IntStream.range(start, start + totalSize).allMatch(i -> bufferBytes.get(i) == 0) : "Buffer must be zero-initialized";
         for (CGlobalDataInfo info : map.values()) {
+            CGlobalDataImpl<?> data = info.getData();
+            if (data.deferred) {
+                byte[] bytes = data.bytesSupplier.get();
+                info.assignBytes(bytes);
+            }
             byte[] bytes = info.getBytes();
             if (bytes != null) {
                 bufferBytes.position(start + info.getOffset());
                 bufferBytes.put(bytes, 0, bytes.length);
             }
-            CGlobalDataImpl<?> data = info.getData();
             if (data.symbolName != null && !info.isSymbolReference()) {
                 createSymbol.apply(info.getOffset(), data.symbolName, info.isGlobalSymbol());
             }

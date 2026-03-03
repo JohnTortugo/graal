@@ -62,7 +62,6 @@ import com.oracle.svm.core.c.struct.CInterfaceLocationIdentity;
 import com.oracle.svm.core.graal.code.CGlobalDataInfo;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.DynamicHubCompanion;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.reflect.serialize.SerializationSupport;
 import com.oracle.svm.core.threadlocal.FastThreadLocal;
 import com.oracle.svm.core.threadlocal.VMThreadLocalInfo;
@@ -80,12 +79,13 @@ import com.oracle.svm.hosted.meta.HostedSnippetReflectionProvider;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.thread.VMThreadLocalCollector;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.util.ModuleSupport;
+import com.oracle.svm.shared.util.ReflectionUtil;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 import com.oracle.svm.util.OriginalMethodProvider;
-import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.debug.CounterKey;
@@ -340,7 +340,7 @@ public class SVMImageLayerSnapshotUtil {
     }
 
     private static String generatedSerializationClassName(SerializationSupport.SerializationLookupKey serializationLookupKey) {
-        return GENERATED_SERIALIZATION + ":" + serializationLookupKey.getDeclaringClass() + "," + serializationLookupKey.getTargetConstructorClass();
+        return GENERATED_SERIALIZATION + ":" + serializationLookupKey.declaringClassId() + "," + serializationLookupKey.targetConstructorClassId();
     }
 
     private static String addModuleName(String elementName, String moduleName) {

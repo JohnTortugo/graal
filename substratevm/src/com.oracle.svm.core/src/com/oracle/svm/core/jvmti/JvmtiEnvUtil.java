@@ -181,17 +181,17 @@ public final class JvmtiEnvUtil {
 
     @Fold
     static int capabilitiesOffset() {
-        return NumUtil.roundUp(SizeOf.get(JvmtiEnv.class), ConfigurationValues.getTarget().wordSize);
+        return NumUtil.roundUp(SizeOf.get(JvmtiEnv.class), ConfigurationValues.getWordSize());
     }
 
     @Fold
     static int eventCallbacksOffset() {
-        return NumUtil.roundUp(capabilitiesOffset() + SizeOf.get(JvmtiCapabilities.class), ConfigurationValues.getTarget().wordSize);
+        return NumUtil.roundUp(capabilitiesOffset() + SizeOf.get(JvmtiCapabilities.class), ConfigurationValues.getWordSize());
     }
 
     @Fold
     static int externalEnvOffset() {
-        return NumUtil.roundUp(eventCallbacksOffset() + SizeOf.get(JvmtiEventCallbacks.class), ConfigurationValues.getTarget().wordSize);
+        return NumUtil.roundUp(eventCallbacksOffset() + SizeOf.get(JvmtiEventCallbacks.class), ConfigurationValues.getWordSize());
     }
 
     @Fold

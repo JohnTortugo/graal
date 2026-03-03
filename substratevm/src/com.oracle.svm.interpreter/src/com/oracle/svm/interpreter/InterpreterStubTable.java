@@ -55,7 +55,7 @@ public class InterpreterStubTable {
     protected void installAdditionalInfoIntoImageObjectFile(AbstractImage image, Collection<InterpreterResolvedJavaMethod> methods) {
         ObjectFile objectFile = image.getObjectFile();
 
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         int hashSize = 4 /* size */ + 6 /* "crc32:" */ + 8 /* actual hash */;
         assert hashSize == 18;
         int size = methods.size() * wordSize + hashSize;

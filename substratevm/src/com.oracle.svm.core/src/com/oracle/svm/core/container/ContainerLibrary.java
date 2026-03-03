@@ -32,7 +32,7 @@ import org.graalvm.nativeimage.c.function.CFunction.Transition;
 import org.graalvm.nativeimage.c.function.CLibrary;
 import org.graalvm.word.UnsignedWord;
 
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 
 /**
  * Provides Java-level access to the native {@code libsvm_container} implementation.

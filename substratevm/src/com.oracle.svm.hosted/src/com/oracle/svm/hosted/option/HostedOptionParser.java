@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.hosted.option;
 
-import static com.oracle.svm.common.option.CommonOptionParser.BooleanOptionFormat.PLUS_MINUS;
+import static com.oracle.svm.shared.option.CommonOptionParser.BooleanOptionFormat.PLUS_MINUS;
 import static com.oracle.svm.shared.util.VMError.shouldNotReachHere;
 
 import java.util.ArrayList;
@@ -36,14 +36,16 @@ import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.nativeimage.Platforms;
 
-import com.oracle.svm.common.option.CommonOptionParser.OptionParseResult;
-import com.oracle.svm.common.option.IntentionallyUnsupportedOptions;
-import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.RuntimeOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.InterruptImageBuilding;
 import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.shared.option.CommonOptionParser.OptionParseResult;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.IntentionallyUnsupportedOptions;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
+import jdk.graal.compiler.core.common.util.CompilationAlarm;
+import jdk.graal.compiler.hotspot.CompilerConfigurationFactory;
 import jdk.graal.compiler.options.OptionDescriptor;
 import jdk.graal.compiler.options.OptionDescriptors;
 import jdk.graal.compiler.options.OptionKey;
@@ -72,6 +74,11 @@ public class HostedOptionParser implements HostedOptionProvider {
 
     public static void collectOptions(Iterable<OptionDescriptors> optionDescriptors, EconomicMap<String, OptionDescriptor> allHostedOptions,
                     EconomicMap<String, OptionDescriptor> allRuntimeOptions) {
+
+        // setup IntentionallyUnsupportedOptions
+        IntentionallyUnsupportedOptions.add(CompilerConfigurationFactory.Options.CompilerConfiguration);
+        IntentionallyUnsupportedOptions.add(CompilationAlarm.Options.CompilationNoProgressPeriod);
+
         SubstrateOptionsParser.collectOptions(optionDescriptors, descriptor -> {
             String name = descriptor.getName();
 

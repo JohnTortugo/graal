@@ -43,7 +43,7 @@ import com.oracle.svm.core.heap.Heap;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.locks.VMCondition;
 import com.oracle.svm.core.locks.VMMutex;
-import com.oracle.svm.core.option.HostedOptionKey;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.core.option.RuntimeOptionKey;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;

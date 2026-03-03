@@ -77,8 +77,8 @@ import com.oracle.svm.core.monitor.MonitorSupport;
 import com.oracle.svm.core.snippets.ImplicitExceptions;
 import com.oracle.svm.core.stack.JavaFrameAnchors;
 import com.oracle.svm.core.thread.PlatformThreads;
-import com.oracle.svm.core.util.Utf8;
 import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.util.Utf8;
 
 /**
  * Implementation of the JNI invocation API for interacting with a Java VM without having an

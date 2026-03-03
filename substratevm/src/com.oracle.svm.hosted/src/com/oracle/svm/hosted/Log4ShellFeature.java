@@ -44,12 +44,12 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.hosted.FeatureImpl.AfterAnalysisAccessImpl;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
-import com.oracle.svm.hosted.FeatureImpl.AfterAnalysisAccessImpl;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.util.JVMCIReflectionUtil;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.vmaccess.ResolvedJavaPackage;
 import jdk.vm.ci.meta.ResolvedJavaType;

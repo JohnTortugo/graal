@@ -50,7 +50,7 @@ import com.oracle.svm.core.hub.InteriorObjRefWalker;
 import com.oracle.svm.core.hub.LayoutEncoding;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.core.thread.ContinuationSupport;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.HostedByteBufferPointer;
 import com.oracle.svm.core.util.UnsignedUtils;
 import com.oracle.svm.shared.util.VMError;
@@ -413,7 +413,7 @@ final class UnalignedChunkRememberedSet {
 
     @Fold
     static int wordSize() {
-        return ConfigurationValues.getTarget().wordSize;
+        return ConfigurationValues.getWordSize();
     }
 
     @Fold

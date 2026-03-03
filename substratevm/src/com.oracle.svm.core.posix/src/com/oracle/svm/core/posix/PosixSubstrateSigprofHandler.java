@@ -36,15 +36,15 @@ import org.graalvm.word.Pointer;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.RegisterDumper;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.function.CEntryPointOptions;
 import com.oracle.svm.core.headers.LibC;
 import com.oracle.svm.core.heap.RestrictHeapAccess;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.core.posix.headers.Signal;
 import com.oracle.svm.core.sampler.SubstrateSigprofHandler;
 import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
 import jdk.graal.compiler.options.Option;
 

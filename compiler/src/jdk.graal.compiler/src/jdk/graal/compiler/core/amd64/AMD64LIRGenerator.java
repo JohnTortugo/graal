@@ -115,6 +115,7 @@ import jdk.graal.compiler.lir.amd64.AMD64CounterModeAESCryptOp;
 import jdk.graal.compiler.lir.amd64.AMD64EncodeArrayOp;
 import jdk.graal.compiler.lir.amd64.AMD64GHASHProcessBlocksOp;
 import jdk.graal.compiler.lir.amd64.AMD64HaltOp;
+import jdk.graal.compiler.lir.amd64.AMD64IndexOfZeroOp;
 import jdk.graal.compiler.lir.amd64.AMD64LFenceOp;
 import jdk.graal.compiler.lir.amd64.AMD64MD5Op;
 import jdk.graal.compiler.lir.amd64.AMD64Move;
@@ -1113,6 +1114,14 @@ public abstract class AMD64LIRGenerator extends LIRGenerator {
         Variable result = newVariable(LIRKind.value(AMD64Kind.DWORD));
         append(AMD64ArrayIndexOfOp.movParamsAndCreate(stride, variant, this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures,
                         result, arrayPointer, arrayOffset, arrayLength, fromIndex, searchValues));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Variable emitIndexOfZero(Stride stride, EnumSet<?> runtimeCheckedCPUFeatures, Value arrayPointer) {
+        Variable result = newVariable(LIRKind.value(AMD64Kind.QWORD));
+        append(AMD64IndexOfZeroOp.movParamsAndCreate(stride, this, (EnumSet<CPUFeature>) runtimeCheckedCPUFeatures, result, arrayPointer));
         return result;
     }
 

@@ -101,14 +101,12 @@ import com.oracle.svm.core.classinitialization.ClassInitializationInfo;
 import com.oracle.svm.core.graal.code.CGlobalDataBasePointer;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.imagelayer.LayeredImageOptions;
-import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
 import com.oracle.svm.core.meta.MethodOffset;
 import com.oracle.svm.core.meta.MethodPointer;
 import com.oracle.svm.core.meta.MethodRef;
 import com.oracle.svm.core.reflect.serialize.SerializationSupport;
 import com.oracle.svm.core.threadlocal.FastThreadLocal;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.hosted.ImageSingletonsSupportImpl.SingletonInfo;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.ameta.FieldValueInterceptionSupport;
 import com.oracle.svm.hosted.annotation.CustomSubstitutionType;
@@ -166,15 +164,17 @@ import com.oracle.svm.shaded.org.capnproto.Text;
 import com.oracle.svm.shaded.org.capnproto.TextList;
 import com.oracle.svm.shaded.org.capnproto.Void;
 import com.oracle.svm.shared.singletons.ImageSingletonWriter;
+import com.oracle.svm.shared.singletons.ImageSingletonsSupportImpl.SingletonInfo;
+import com.oracle.svm.shared.singletons.LayeredImageSingletonSupport;
 import com.oracle.svm.shared.singletons.LayeredPersistFlags;
 import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.shared.singletons.traits.LayeredCallbacksSingletonTrait;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.util.GuestAccess;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.annotation.AnnotationValue;
 import jdk.graal.compiler.annotation.AnnotationValueSupport;
@@ -535,8 +535,8 @@ public class SVMImageLayerWriter extends ImageLayerWriter {
         if (type.toJavaName(true).contains(GENERATED_SERIALIZATION)) {
             WrappedType.SerializationGenerated.Builder b = builder.getWrappedType().initSerializationGenerated();
             var key = SerializationSupport.currentLayer().getKeyFromConstructorAccessorClass(type.getJavaClass());
-            b.setRawDeclaringClass(key.getDeclaringClass().getName());
-            b.setRawTargetConstructor(key.getTargetConstructorClass().getName());
+            b.setRawDeclaringClassId(key.declaringClassId());
+            b.setRawTargetConstructorId(key.targetConstructorClassId());
         } else if (LambdaUtils.isLambdaType(type)) {
             WrappedType.Lambda.Builder b = builder.getWrappedType().initLambda();
             b.setCapturingClass(LambdaUtils.capturingClass(type.toJavaName()));

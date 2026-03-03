@@ -24,8 +24,8 @@
  */
 package com.oracle.svm.graal.hosted.runtimecompilation;
 
-import static com.oracle.svm.common.meta.MethodVariant.ORIGINAL_METHOD;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
+import static com.oracle.svm.shared.meta.MethodVariant.ORIGINAL_METHOD;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -39,15 +39,16 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.graalvm.collections.EconomicSet;
+
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
 import com.oracle.graal.pointsto.meta.InvokeInfo;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.code.SubstrateCompilationDirectives;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.vm.ci.code.BytecodeFrame;
 import jdk.vm.ci.code.BytecodePosition;
-import org.graalvm.collections.EconomicSet;
 
 public final class CallTreeInfo {
     private final Map<AnalysisMethod, RuntimeCompiledMethod> runtimeCompilations;

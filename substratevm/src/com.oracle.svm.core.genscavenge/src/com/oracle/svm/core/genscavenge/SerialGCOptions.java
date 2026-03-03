@@ -29,10 +29,10 @@ import org.graalvm.collections.UnmodifiableEconomicMap;
 
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.genscavenge.compacting.ObjectMoveInfo;
-import com.oracle.svm.core.option.HostedOptionKey;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.core.option.RuntimeOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.options.Option;

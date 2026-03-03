@@ -28,7 +28,7 @@ import org.graalvm.nativeimage.c.CContext;
 import org.graalvm.nativeimage.c.constant.CConstant;
 
 import com.oracle.svm.guest.staging.Uninterruptible;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 
 @CContext(JNIHeaderDirectives.class)
 public final class JNIVersion {

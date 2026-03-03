@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.hosted.meta;
 
-import static com.oracle.svm.common.meta.MethodVariant.ORIGINAL_METHOD;
+import static com.oracle.svm.shared.meta.MethodVariant.ORIGINAL_METHOD;
 
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
@@ -39,16 +39,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import com.oracle.svm.common.meta.MethodVariant;
 import org.graalvm.nativeimage.hosted.Feature;
 
 import com.oracle.graal.pointsto.BigBang;
 import com.oracle.graal.pointsto.PointsToAnalysis;
 import com.oracle.graal.pointsto.constraints.UnsupportedFeatureException;
 import com.oracle.graal.pointsto.heap.ImageHeapConstant;
-import com.oracle.svm.util.OriginalClassProvider;
-import com.oracle.svm.util.OriginalFieldProvider;
-import com.oracle.svm.util.OriginalMethodProvider;
 import com.oracle.graal.pointsto.infrastructure.ResolvedSignature;
 import com.oracle.graal.pointsto.infrastructure.SubstitutionProcessor;
 import com.oracle.graal.pointsto.infrastructure.Universe;
@@ -67,7 +63,6 @@ import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.LayoutEncoding;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.FeatureImpl.DuringSetupAccessImpl;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.analysis.Inflation;
@@ -77,6 +72,11 @@ import com.oracle.svm.hosted.lambda.LambdaSubstitutionType;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.hosted.substitute.SubstitutionMethod;
 import com.oracle.svm.hosted.substitute.SubstitutionType;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.util.OriginalClassProvider;
+import com.oracle.svm.util.OriginalFieldProvider;
+import com.oracle.svm.util.OriginalMethodProvider;
 
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.graal.compiler.nodes.StructuredGraph;

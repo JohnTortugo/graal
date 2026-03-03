@@ -88,7 +88,7 @@ public class AMD64InterpreterStubSection extends InterpreterStubSection {
 
     @Override
     public int getVTableStubSize() {
-        int branchTargetAlignment = ConfigurationValues.getTarget().wordSize * 2;
+        int branchTargetAlignment = ConfigurationValues.getWordSize() * 2;
         int stubSize = 10;
 
         return NumUtil.roundUp(stubSize, branchTargetAlignment);

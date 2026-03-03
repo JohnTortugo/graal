@@ -62,7 +62,7 @@ import com.oracle.svm.core.posix.headers.Time;
 import com.oracle.svm.core.posix.headers.linux.LinuxTime;
 import com.oracle.svm.core.util.TimeUtils;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.core.common.NumUtil;
 import jdk.graal.compiler.options.Option;

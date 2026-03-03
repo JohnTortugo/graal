@@ -58,6 +58,7 @@ import com.oracle.truffle.api.bytecode.BytecodeFrame;
 import com.oracle.truffle.api.bytecode.BytecodeLocation;
 import com.oracle.truffle.api.bytecode.BytecodeNode;
 import com.oracle.truffle.api.bytecode.BytecodeRootNode;
+import com.oracle.truffle.api.bytecode.BytecodeTier;
 import com.oracle.truffle.api.bytecode.ConstantOperand;
 import com.oracle.truffle.api.bytecode.ContinuationResult;
 import com.oracle.truffle.api.bytecode.ContinuationRootNode;
@@ -197,7 +198,19 @@ import com.oracle.truffle.api.source.SourceSection;
                                 defaultUncachedThreshold = "defaultUncachedThreshold", //
                                 enableSpecializationIntrospection = true, //
                                 boxingEliminationTypes = {boolean.class, long.class}, //
-                                variadicStackLimit = "16"))
+                                variadicStackLimit = "16")),
+                @Variant(suffix = "ProductionRootScopingTailCall", configuration = @GenerateBytecode(languageClass = BytecodeDSLTestLanguage.class, //
+                                additionalAssertions = true, //
+                                enableYield = true, //
+                                enableMaterializedLocalAccesses = true, //
+                                enableSerialization = true, //
+                                enableBlockScoping = false, //
+                                enableTagInstrumentation = true, //
+                                enableUncachedInterpreter = true, //
+                                defaultUncachedThreshold = "defaultUncachedThreshold", //
+                                enableSpecializationIntrospection = true, //
+                                boxingEliminationTypes = {boolean.class, long.class}, //
+                                enableTailCallHandlers = true, variadicStackLimit = "16"))
 })
 @ShortCircuitOperation(booleanConverter = BasicInterpreter.ToBoolean.class, name = "ScAnd", operator = Operator.AND_RETURN_VALUE)
 @ShortCircuitOperation(booleanConverter = BasicInterpreter.ToBoolean.class, name = "ScOr", operator = Operator.OR_RETURN_VALUE, javadoc = "ScOr returns the first truthy operand value.")
@@ -218,6 +231,11 @@ public abstract class BasicInterpreter extends DebugBytecodeRootNode implements 
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public Throwable interceptInternalException(Throwable t, VirtualFrame frame, BytecodeNode bytecodeNode, int bytecodeIndex) {
+        t.addSuppressed(new AssertionError("Attached Bytecode dump: " + bytecodeNode.dump(bytecodeIndex)));
+        return t;
     }
 
     @Override
@@ -957,6 +975,14 @@ public abstract class BasicInterpreter extends DebugBytecodeRootNode implements 
             return configBuilder.build();
         }
 
+    }
+
+    @Operation(storeBytecodeIndex = false)
+    public static final class IsUncached {
+        @Specialization
+        public static boolean perform(@Bind BytecodeTier tier) {
+            return tier == BytecodeTier.UNCACHED;
+        }
     }
 
     record Bindings(

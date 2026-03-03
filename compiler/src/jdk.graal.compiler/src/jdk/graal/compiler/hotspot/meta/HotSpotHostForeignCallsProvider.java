@@ -170,6 +170,7 @@ import jdk.graal.compiler.replacements.nodes.CountPositivesNode;
 import jdk.graal.compiler.replacements.nodes.CounterModeAESNode;
 import jdk.graal.compiler.replacements.nodes.EncodeArrayNode;
 import jdk.graal.compiler.replacements.nodes.GHASHProcessBlocksNode;
+import jdk.graal.compiler.replacements.nodes.IndexOfZeroForeignCalls;
 import jdk.graal.compiler.replacements.nodes.MessageDigestNode;
 import jdk.graal.compiler.replacements.nodes.VectorizedHashCodeNode;
 import jdk.graal.compiler.replacements.nodes.VectorizedMismatchNode;
@@ -751,6 +752,7 @@ public abstract class HotSpotHostForeignCallsProvider extends HotSpotForeignCall
 
     private void registerSnippetStubs(HotSpotProviders providers, OptionValues options) {
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayIndexOfForeignCalls.STUBS);
+        linkSnippetStubs(providers, options, IntrinsicStubsGen::new, IndexOfZeroForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayFillNode.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayEqualsForeignCalls.STUBS);
         linkSnippetStubs(providers, options, IntrinsicStubsGen::new, ArrayEqualsWithMaskForeignCalls.STUBS);

@@ -27,15 +27,6 @@ package com.oracle.svm.hosted.code;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.oracle.svm.common.meta.MethodVariant;
-import jdk.graal.compiler.core.common.CompilationIdentifier;
-import jdk.graal.compiler.debug.DebugContext;
-import jdk.graal.compiler.nodes.ConstantNode;
-import jdk.graal.compiler.nodes.FrameState;
-import jdk.graal.compiler.nodes.GraphDecoder;
-import jdk.graal.compiler.nodes.StructuredGraph;
-import jdk.graal.compiler.options.OptionValues;
-
 import com.oracle.graal.pointsto.flow.AnalysisParsedGraph;
 import com.oracle.svm.core.deopt.DeoptTest;
 import com.oracle.svm.core.deopt.Specialize;
@@ -43,6 +34,15 @@ import com.oracle.svm.hosted.code.CompileQueue.CompileFunction;
 import com.oracle.svm.hosted.code.CompileQueue.ParseFunction;
 import com.oracle.svm.hosted.code.CompileQueue.ParseHooks;
 import com.oracle.svm.hosted.meta.HostedMethod;
+import com.oracle.svm.shared.meta.MethodVariant;
+
+import jdk.graal.compiler.core.common.CompilationIdentifier;
+import jdk.graal.compiler.debug.DebugContext;
+import jdk.graal.compiler.nodes.ConstantNode;
+import jdk.graal.compiler.nodes.FrameState;
+import jdk.graal.compiler.nodes.GraphDecoder;
+import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.options.OptionValues;
 
 public class CompilationInfo {
 

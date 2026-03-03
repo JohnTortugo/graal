@@ -24,6 +24,7 @@
  */
 package com.oracle.svm.core.util;
 
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;

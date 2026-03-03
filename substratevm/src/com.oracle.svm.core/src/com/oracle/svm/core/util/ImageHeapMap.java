@@ -29,7 +29,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiFunction;
 
-import com.oracle.svm.shared.util.VMError;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.EconomicMapWrap;
 import org.graalvm.collections.Equivalence;
@@ -38,6 +37,8 @@ import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
+import com.oracle.svm.shared.collections.ConcurrentIdentityHashMap;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * A thread-safe map implementation that optimizes its run time representation for space efficiency.

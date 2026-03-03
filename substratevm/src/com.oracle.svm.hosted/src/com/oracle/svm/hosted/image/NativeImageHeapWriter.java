@@ -328,7 +328,7 @@ public final class NativeImageHeapWriter {
     private void addWordConstantRelocation(RelocatableBuffer buffer, int index, WordBase word) {
         mustBeReferenceAligned(index);
         assert word instanceof MethodRef || word instanceof CGlobalDataBasePointer : "unknown relocatable " + word;
-        int pointerSize = ConfigurationValues.getTarget().wordSize;
+        int pointerSize = ConfigurationValues.getWordSize();
         addDirectRelocationWithoutAddend(buffer, index, pointerSize, word);
     }
 

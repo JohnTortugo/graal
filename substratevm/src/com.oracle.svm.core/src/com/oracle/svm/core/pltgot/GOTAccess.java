@@ -35,7 +35,7 @@ public class GOTAccess {
 
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public static int getGotEntryOffsetFromHeapRegister(int gotEntry) {
-        return -(gotEntry + 1) * ConfigurationValues.getTarget().wordSize;
+        return -(gotEntry + 1) * ConfigurationValues.getWordSize();
     }
 
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)

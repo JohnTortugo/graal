@@ -253,7 +253,7 @@ public class LinuxImageHeapProvider extends AbstractImageHeapProvider {
 
     @Uninterruptible(reason = "Thread state not yet set up.")
     private static int applyLayerCodePointerPatches(Pointer data, int startOffset, Pointer layerHeapRelocs, Word addend) {
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
 
         int offset = startOffset;
         long bitmapWordCountAsLong = data.readLong(offset);
@@ -752,7 +752,7 @@ public class LinuxImageHeapProvider extends AbstractImageHeapProvider {
 
         // Find the offset of the magic word in the image file. We cannot reliably compute it
         // from the image heap offset below because it might be in a different file segment.
-        int wordSize = ConfigurationValues.getTarget().wordSize;
+        int wordSize = ConfigurationValues.getWordSize();
         WordPointer magicMappingStart = StackValue.get(WordPointer.class);
         WordPointer magicMappingFileOffset = StackValue.get(WordPointer.class);
         boolean found = findMapping(mapfd, buffer, bufferSize, magicAddress, magicAddress.add(wordSize), magicMappingStart, magicMappingFileOffset, false);

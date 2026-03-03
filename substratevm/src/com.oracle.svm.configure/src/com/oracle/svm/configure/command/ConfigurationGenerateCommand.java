@@ -47,7 +47,7 @@ import com.oracle.svm.configure.filters.FilterConfigurationParser;
 import com.oracle.svm.configure.filters.HierarchyFilterNode;
 import com.oracle.svm.configure.trace.AccessAdvisor;
 import com.oracle.svm.configure.trace.TraceProcessor;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.phases.common.LazyValue;
 

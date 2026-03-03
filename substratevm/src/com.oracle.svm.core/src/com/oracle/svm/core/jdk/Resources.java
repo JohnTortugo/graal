@@ -73,11 +73,11 @@ import com.oracle.svm.core.jdk.resources.ResourceStorageEntryBase;
 import com.oracle.svm.core.jdk.resources.ResourceURLConnection;
 import com.oracle.svm.core.jdk.resources.CompressedGlobTrie.CompressedGlobTrie;
 import com.oracle.svm.core.jdk.resources.CompressedGlobTrie.GlobTrieNode;
-import com.oracle.svm.core.layeredimagesingleton.LayeredImageSingletonSupport;
 import com.oracle.svm.core.metadata.MetadataTracer;
 import com.oracle.svm.core.util.ImageHeapMap;
 import com.oracle.svm.shared.singletons.ImageSingletonLoader;
 import com.oracle.svm.shared.singletons.ImageSingletonWriter;
+import com.oracle.svm.shared.singletons.LayeredImageSingletonSupport;
 import com.oracle.svm.shared.singletons.LayeredPersistFlags;
 import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
@@ -86,9 +86,9 @@ import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacksSupplier;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.MultiLayer;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.GlobUtils;
-import com.oracle.svm.util.LogUtils;
 import com.oracle.svm.util.NativeImageResourcePathRepresentation;
 
 /**

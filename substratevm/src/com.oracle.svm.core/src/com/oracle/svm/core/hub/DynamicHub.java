@@ -139,7 +139,7 @@ import com.oracle.svm.core.reflect.RuntimeMetadataDecoder;
 import com.oracle.svm.core.reflect.fieldaccessor.UnsafeFieldAccessorFactory;
 import com.oracle.svm.core.reflect.serialize.SerializationSupport;
 import com.oracle.svm.core.reflect.target.Target_jdk_internal_reflect_ConstantPool;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.LazyFinalReference;
 import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
@@ -2563,7 +2563,7 @@ final class Target_jdk_internal_reflect_ReflectionFactory {
 
     @Substitute
     private Constructor<?> generateConstructor(Class<?> cl, Constructor<?> constructorToCall) {
-        ConstructorAccessor acc = (ConstructorAccessor) SerializationSupport.getSerializationConstructorAccessor(cl, constructorToCall.getDeclaringClass());
+        ConstructorAccessor acc = (ConstructorAccessor) SerializationSupport.getRuntimeSerializationConstructorAccessor(cl, constructorToCall.getDeclaringClass());
         /*
          * Unlike other root constructors, this constructor is not copied for mutation but directly
          * mutated, as it is not cached. To cache this constructor, setAccessible call must be done

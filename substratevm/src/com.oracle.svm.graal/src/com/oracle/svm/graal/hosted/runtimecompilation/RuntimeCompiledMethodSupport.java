@@ -24,9 +24,9 @@
  */
 package com.oracle.svm.graal.hosted.runtimecompilation;
 
-import static com.oracle.svm.common.meta.MethodVariant.ORIGINAL_METHOD;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.DEOPT_TARGET_METHOD;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
+import static com.oracle.svm.shared.meta.MethodVariant.ORIGINAL_METHOD;
 
 import java.util.Arrays;
 import java.util.List;
@@ -55,8 +55,7 @@ import com.oracle.svm.core.graal.nodes.DeoptEntryNode;
 import com.oracle.svm.core.graal.nodes.DeoptEntrySupport;
 import com.oracle.svm.core.graal.nodes.DeoptProxyAnchorNode;
 import com.oracle.svm.core.graal.nodes.ThrowBytecodeExceptionNode;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.graal.RuntimeCompilationSupport;
 import com.oracle.svm.graal.SubstrateGraalUtils;
 import com.oracle.svm.hosted.HeapBreakdownProvider;
@@ -74,6 +73,7 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.nodes.DeoptProxyNode;
 import com.oracle.svm.hosted.phases.AnalysisGraphBuilderPhase;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.core.common.spi.ConstantFieldProvider;

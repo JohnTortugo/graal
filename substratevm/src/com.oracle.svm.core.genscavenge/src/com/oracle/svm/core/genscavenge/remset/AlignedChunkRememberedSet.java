@@ -63,7 +63,7 @@ public final class AlignedChunkRememberedSet {
 
     @Fold
     public static int wordSize() {
-        return ConfigurationValues.getTarget().wordSize;
+        return ConfigurationValues.getWordSize();
     }
 
     @Fold

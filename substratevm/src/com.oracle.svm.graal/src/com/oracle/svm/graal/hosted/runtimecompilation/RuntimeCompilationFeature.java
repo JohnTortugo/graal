@@ -24,10 +24,10 @@
  */
 package com.oracle.svm.graal.hosted.runtimecompilation;
 
-import static com.oracle.svm.common.meta.MethodVariant.ORIGINAL_METHOD;
-import static com.oracle.svm.shared.util.VMError.guarantee;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.DEOPT_TARGET_METHOD;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.RUNTIME_COMPILED_METHOD;
+import static com.oracle.svm.shared.meta.MethodVariant.ORIGINAL_METHOD;
+import static com.oracle.svm.shared.util.VMError.guarantee;
 import static jdk.graal.compiler.java.BytecodeParserOptions.InlineDuringParsingMaxDepth;
 
 import java.lang.reflect.Executable;
@@ -63,7 +63,6 @@ import com.oracle.graal.pointsto.meta.PointsToAnalysisMethod;
 import com.oracle.graal.pointsto.phases.InlineBeforeAnalysisPolicy;
 import com.oracle.graal.pointsto.util.AnalysisError;
 import com.oracle.graal.pointsto.util.ParallelExecutionException;
-import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.core.ParsingReason;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.config.ConfigurationValues;
@@ -79,12 +78,8 @@ import com.oracle.svm.core.graal.word.SubstrateWordTypes;
 import com.oracle.svm.core.heap.BarrierSetProvider;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.meta.SharedType;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.core.option.RuntimeOptionValues;
 import com.oracle.svm.core.util.UserError;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.graal.GraalSupport;
 import com.oracle.svm.graal.RuntimeCompilationSupport;
 import com.oracle.svm.graal.SubstrateGraalRuntime;
@@ -119,6 +114,11 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.phases.ConstantFoldLoadFieldPlugin;
 import com.oracle.svm.hosted.phases.InlineBeforeAnalysisPolicyUtils;
 import com.oracle.svm.hosted.phases.SubstrateClassInitializationPlugin;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.runtime.GraalRuntime;
 import jdk.graal.compiler.core.common.GraalOptions;

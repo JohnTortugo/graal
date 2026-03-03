@@ -47,7 +47,7 @@ import com.oracle.svm.core.jfr.JfrArgumentParser.FlightRecorderOptionsArgument;
 import com.oracle.svm.core.jfr.JfrArgumentParser.JfrArgument;
 import com.oracle.svm.core.jfr.events.EndChunkNativePeriodicEvents;
 import com.oracle.svm.core.jfr.events.EveryChunkNativePeriodicEvents;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.jfr.FlightRecorder;

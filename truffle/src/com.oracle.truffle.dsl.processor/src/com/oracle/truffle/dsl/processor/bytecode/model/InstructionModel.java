@@ -928,4 +928,18 @@ public final class InstructionModel implements PrettyPrintable {
         return false;
     }
 
+    public boolean hasStackEffects() {
+        if (!signature.isVoid()) {
+            return true;
+        }
+        if (signature.dynamicOperands().size() != 0) {
+            return true;
+        }
+        return false;
+    }
+
+    public boolean isDispatched() {
+        return !isEpilogExceptional();
+    }
+
 }

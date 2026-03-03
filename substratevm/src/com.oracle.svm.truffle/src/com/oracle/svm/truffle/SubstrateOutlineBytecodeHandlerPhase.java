@@ -29,7 +29,6 @@ import static com.oracle.svm.truffle.SubstrateTruffleBytecodeHandlerStub.unwrap;
 
 import java.util.function.Function;
 
-import com.oracle.svm.common.meta.MethodVariant;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
@@ -38,6 +37,7 @@ import com.oracle.svm.core.nodes.SubstrateMethodCallTargetNode;
 import com.oracle.svm.hosted.meta.HostedMetaAccess;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.shared.meta.MethodVariant;
 
 import jdk.graal.compiler.core.common.type.StampFactory;
 import jdk.graal.compiler.nodes.CallTargetNode;

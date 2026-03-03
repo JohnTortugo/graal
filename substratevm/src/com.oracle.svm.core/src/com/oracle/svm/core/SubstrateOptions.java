@@ -57,30 +57,30 @@ import com.oracle.svm.core.heap.ReferenceHandler;
 import com.oracle.svm.core.hub.RuntimeClassLoading;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.jdk.VectorAPIEnabled;
-import com.oracle.svm.core.option.APIOption;
-import com.oracle.svm.core.option.APIOptionGroup;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.BundleMember;
 import com.oracle.svm.core.option.GCOptionValue;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.HostedOptionValues;
-import com.oracle.svm.core.option.LayerVerifiedOption;
-import com.oracle.svm.core.option.LayerVerifiedOption.Kind;
-import com.oracle.svm.core.option.LayerVerifiedOption.Severity;
-import com.oracle.svm.core.option.OptionMigrationMessage;
-import com.oracle.svm.core.option.ReplacingLocatableMultiOptionValue;
 import com.oracle.svm.core.option.RuntimeOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.pltgot.PLTGOTConfiguration;
 import com.oracle.svm.core.thread.VMOperationControl;
+import com.oracle.svm.core.util.TimeUtils;
+import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.shared.option.APIOption;
+import com.oracle.svm.shared.option.APIOptionGroup;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.BundleMember;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.option.LayerVerifiedOption;
+import com.oracle.svm.shared.option.LayerVerifiedOption.Kind;
+import com.oracle.svm.shared.option.LayerVerifiedOption.Severity;
+import com.oracle.svm.shared.option.OptionMigrationMessage;
+import com.oracle.svm.shared.option.ReplacingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
-import com.oracle.svm.core.util.TimeUtils;
-import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.asm.amd64.AMD64Assembler;
@@ -94,6 +94,7 @@ import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.phases.common.DeadCodeEliminationPhase;
 import jdk.internal.misc.Unsafe;
 import jdk.vm.ci.amd64.AMD64;
+import jdk.vm.ci.code.CodeUtil;
 
 public class SubstrateOptions {
 
@@ -1226,7 +1227,7 @@ public class SubstrateOptions {
         /** Use {@link SubstrateOptions#getPageSize()} instead. */
         @LayerVerifiedOption(kind = Kind.Changed, severity = Severity.Error)//
         @Option(help = "The largest page size of machines that can run the image. The default of 0 automatically selects a typically suitable value.")//
-        protected static final HostedOptionKey<Integer> PageSize = new HostedOptionKey<>(0);
+        protected static final HostedOptionKey<Integer> PageSize = new HostedOptionKey<>(0, SubstrateOptions::validatePageSize);
 
         @Option(help = "Physical memory size (in bytes). By default, the value is queried from the OS/container during VM startup.", type = OptionType.Expert)//
         public static final RuntimeOptionKey<Long> MaxRAM = new RuntimeOptionKey<>(0L, RegisterForIsolateArgumentParser);
@@ -1350,6 +1351,12 @@ public class SubstrateOptions {
         }
     }
 
+    /**
+     * Minimum runtime page size for AMD64IndexOfZeroOp and AArch64IndexOfZeroOp. If we ever target
+     * a system with a smaller page size, this would need to be configurable.
+     */
+    public static final int MINIMUM_PAGE_SIZE = 4096;
+
     @Fold
     public static int getPageSize() {
         int value = ConcealedOptions.PageSize.getValue();
@@ -1360,8 +1367,18 @@ public class SubstrateOptions {
              */
             return Math.max(64 * 1024, Unsafe.getUnsafe().pageSize());
         }
-        assert value > 0 : value;
+        VMError.guarantee(value >= MINIMUM_PAGE_SIZE && CodeUtil.isPowerOf2(value), "page size must be greater or equal to 4KB and a power of 2");
         return value;
+    }
+
+    private static void validatePageSize(HostedOptionKey<Integer> optionKey) {
+        int value = optionKey.getValue();
+        if (value == 0) {
+            return;
+        }
+        if (value < MINIMUM_PAGE_SIZE || !CodeUtil.isPowerOf2(value)) {
+            throw UserError.invalidOptionValue(ConcealedOptions.PageSize, value, "page size must be greater or equal to 4KB and a power of 2");
+        }
     }
 
     @Option(help = "Specifies how many details are printed for certain diagnostic thunks, e.g.: 'DumpThreads:1,DumpRegisters:2'. " +

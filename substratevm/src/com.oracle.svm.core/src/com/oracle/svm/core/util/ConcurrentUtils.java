@@ -27,6 +27,7 @@ package com.oracle.svm.core.util;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import com.oracle.svm.shared.collections.ConcurrentIdentityHashMap;
 import com.oracle.svm.shared.util.VMError;
 
 public class ConcurrentUtils {

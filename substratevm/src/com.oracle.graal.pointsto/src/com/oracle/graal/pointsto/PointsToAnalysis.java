@@ -70,9 +70,9 @@ import com.oracle.graal.pointsto.util.CompletionExecutor.DebugContextRunnable;
 import com.oracle.graal.pointsto.util.Timer;
 import com.oracle.graal.pointsto.util.Timer.StopTimer;
 import com.oracle.graal.pointsto.util.TimerCollection;
-import com.oracle.svm.common.meta.MethodVariant;
+import com.oracle.svm.shared.meta.MethodVariant;
+import com.oracle.svm.shared.util.ClassUtil;
 import com.oracle.svm.util.AnnotationUtil;
-import com.oracle.svm.util.ClassUtil;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 
 import jdk.graal.compiler.api.replacements.Fold;

@@ -95,7 +95,7 @@ public final class CGlobalDataInfo {
     @SuppressWarnings("hiding")
     public void assignBytes(byte[] bytes) {
         assert this.bytes == null : "already initialized";
-        assert size == -1 || size == bytes.length;
+        VMError.guarantee(size == -1 || size == bytes.length);
         this.bytes = bytes;
     }
 

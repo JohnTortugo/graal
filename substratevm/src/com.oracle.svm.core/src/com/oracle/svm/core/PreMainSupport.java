@@ -46,6 +46,7 @@ import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.heap.Heap;
 import com.oracle.svm.core.jdk.ModuleNative;
+import com.oracle.svm.shared.util.StringUtil;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.HostedModuleSupport;
 
@@ -124,7 +125,7 @@ public class PreMainSupport {
         for (String arg : args) {
             if (arg.startsWith(PREMAIN_OPTION_PREFIX)) {
                 String premainOptionKeyValue = arg.substring(PREMAIN_OPTION_PREFIX.length());
-                String[] pair = SubstrateUtil.split(premainOptionKeyValue, ":");
+                String[] pair = StringUtil.split(premainOptionKeyValue, ":");
                 if (pair.length == 2) {
                     premainOptions.put(pair[0], pair[1]);
                 }

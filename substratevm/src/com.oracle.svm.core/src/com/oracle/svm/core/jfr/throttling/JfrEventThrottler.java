@@ -30,7 +30,7 @@ import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRU
 import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.jfr.JfrTicks;
 import com.oracle.svm.core.thread.JavaSpinLockUtils;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 import com.oracle.svm.core.util.TimeUtils;
 
 /**

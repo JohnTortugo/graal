@@ -104,7 +104,7 @@ public abstract class ChunkBasedCommittedMemoryProvider extends AbstractCommitte
      */
     @Fold
     protected static UnsignedWord getAlignmentForUnalignedChunks() {
-        int alignment = Math.max(ConfigurationValues.getTarget().wordSize, ConfigurationValues.getObjectLayout().getAlignment());
+        int alignment = Math.max(ConfigurationValues.getWordSize(), ConfigurationValues.getObjectLayout().getAlignment());
         return Word.unsigned(alignment);
     }
 

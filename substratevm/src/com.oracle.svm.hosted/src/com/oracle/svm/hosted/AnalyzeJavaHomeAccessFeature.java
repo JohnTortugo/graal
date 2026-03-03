@@ -41,7 +41,7 @@ import com.oracle.svm.shared.singletons.traits.LayeredCallbacksSingletonTrait;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonLayeredCallbacksSupplier;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 
 /**
  * This feature collects <code>System.getProperty("java.home")</code> usage information from the

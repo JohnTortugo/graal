@@ -74,7 +74,7 @@ import jdk.vm.ci.meta.ResolvedJavaType;
 @InternalVMMethod
 public final class InterpreterToVM {
 
-    private static final JavaKind WORD_KIND = ConfigurationValues.getTarget().wordJavaKind;
+    private static final JavaKind WORD_KIND = ConfigurationValues.getWordKind();
 
     static {
         VMError.guarantee(WORD_KIND == JavaKind.Int || WORD_KIND == JavaKind.Long);
@@ -921,7 +921,9 @@ public final class InterpreterToVM {
 
         if (!callCompiledTarget && (targetMethod.isNative() && targetMethod.getSignaturePolymorphicIntrinsic() == null)) {
             /* no way to execute target in interpreter, fall back to compiled code */
-            VMError.guarantee(targetMethod.hasNativeEntryPoint());
+            if (!targetMethod.hasNativeEntryPoint()) {
+                throw VMError.shouldNotReachHere("No native entry point for native method: " + targetMethod);
+            }
             calleeFtnPtr = targetMethod.getNativeEntryPoint();
             VMError.guarantee(calleeFtnPtr.isNonNull());
             callCompiledTarget = true;

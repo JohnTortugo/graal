@@ -2195,11 +2195,12 @@ public abstract class InteropLibrary extends Library {
 
     /**
      * Returns the internal cause of the receiver. Throws {@code UnsupportedMessageException} when
-     * the receiver is not an {@link #isException(Object) exception} or has no internal cause. The
-     * return value of this message is guaranteed to return <code>true</code> for
-     * {@link #isException(Object)}.
-     *
-     *
+     * the receiver is not an {@link #isException(Object) exception} or if the exception does not
+     * support an exception cause. The returned value of this message is guaranteed to represent
+     * either an {@link #isException(Object) exception} or an {@link #isNull(Object) null} object.
+     * An null object is returned if the exception supports a cause but the cause itself is
+     * {@code null}.
+     * 
      * @see #isException(Object)
      * @see #hasExceptionCause(Object)
      * @since 20.3
@@ -4991,7 +4992,7 @@ public abstract class InteropLibrary extends Library {
             try {
                 Object result = delegate.getExceptionCause(receiver);
                 assert wasHasExceptionCause : violationInvariant(receiver);
-                assert assertException(receiver, result);
+                assert assertExceptionOrNull(receiver, result);
                 assert validInteropReturn(receiver, result);
                 return result;
             } catch (InteropException e) {
@@ -5001,9 +5002,9 @@ public abstract class InteropLibrary extends Library {
             }
         }
 
-        private static boolean assertException(Object receiver, Object exception) {
+        private static boolean assertExceptionOrNull(Object receiver, Object exception) {
             InteropLibrary uncached = InteropLibrary.getUncached(exception);
-            assert uncached.isException(exception) : violationPost(receiver, exception);
+            assert uncached.isException(exception) || uncached.isNull(exception) : violationPost(receiver, exception);
             return true;
         }
 

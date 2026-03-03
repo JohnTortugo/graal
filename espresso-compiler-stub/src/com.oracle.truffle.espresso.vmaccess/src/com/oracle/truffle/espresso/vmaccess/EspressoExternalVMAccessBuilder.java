@@ -309,7 +309,6 @@ public final class EspressoExternalVMAccessBuilder implements VMAccess.Builder {
                             "jdk.graal.compiler.nodes.memory",
                             "jdk.graal.compiler.nodes.memory.address",
                             "jdk.graal.compiler.nodes.spi",
-                            "jdk.graal.compiler.options",
                             "jdk.graal.compiler.phases.tiers",
                             "jdk.graal.compiler.phases.util",
                             "jdk.graal.compiler.replacements",

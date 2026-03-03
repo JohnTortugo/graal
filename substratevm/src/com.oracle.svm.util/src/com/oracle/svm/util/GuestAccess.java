@@ -495,6 +495,11 @@ public final class GuestAccess implements VMAccess {
     }
 
     @Override
+    public void writeArrayElement(JavaConstant array, int index, JavaConstant element) {
+        delegate.writeArrayElement(array, index, element);
+    }
+
+    @Override
     public ResolvedJavaMethod asResolvedJavaMethod(Constant constant) {
         return delegate.asResolvedJavaMethod(constant);
     }

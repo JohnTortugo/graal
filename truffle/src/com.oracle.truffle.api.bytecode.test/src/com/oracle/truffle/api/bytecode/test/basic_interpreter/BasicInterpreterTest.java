@@ -2509,8 +2509,10 @@ public class BasicInterpreterTest extends AbstractBasicInterpreterTest {
             assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
             assertEquals(42L, node.getCallTarget().call());
         }
-        assertEquals(BytecodeTier.CACHED, node.getBytecodeNode().getTier());
+        // The bytecode node will transition to cached at the start of the next call.
+        assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
         assertEquals(42L, node.getCallTarget().call());
+        assertEquals(BytecodeTier.CACHED, node.getBytecodeNode().getTier());
     }
 
     @Test
@@ -2556,11 +2558,7 @@ public class BasicInterpreterTest extends AbstractBasicInterpreterTest {
             b.endStoreLocal();
 
             b.beginWhile();
-            b.beginLess();
-            b.emitLoadLocal(i);
-            b.emitLoadArgument(0);
-            b.endLess();
-
+            b.emitIsUncached();
             b.beginStoreLocal(i);
             b.beginAddConstantOperation(1L);
             b.emitLoadLocal(i);
@@ -2575,36 +2573,27 @@ public class BasicInterpreterTest extends AbstractBasicInterpreterTest {
             b.endRoot();
         });
 
-        node.getBytecodeNode().setUncachedThreshold(50);
+        node.getBytecodeNode().setUncachedThreshold(10);
         assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
-        assertEquals(24L, node.getCallTarget().call(24L)); // 24 back edges + 1 return
-        assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
-        assertEquals(24L, node.getCallTarget().call(24L)); // 24 back edges + 1 return
+        // 1 call + 9 backedges causes on-stack transition to cached.
+        assertEquals(9L, node.getCallTarget().call());
         assertEquals(BytecodeTier.CACHED, node.getBytecodeNode().getTier());
-        assertEquals(24L, node.getCallTarget().call(24L));
     }
 
     @Test
     public void testTransitionToCachedRecursive() {
         assumeTrue(run.hasUncachedInterpreter());
         BasicInterpreter node = parseNode("transitionToCachedRecursive", b -> {
-            // function f(x) { return 0 < x ? x + f(x-1) : 0 }
+            // function f() { return uncached ? 1 + f() : 0 }
             b.beginRoot();
             b.beginIfThenElse();
-            b.beginLess();
-            b.emitLoadConstant(0L);
-            b.emitLoadArgument(0);
-            b.endLess();
+            b.emitIsUncached();
 
             b.beginReturn();
-            b.beginAdd();
-            b.emitLoadArgument(0);
+            b.beginAddConstantOperation(1L);
             b.beginInvokeRecursive();
-            b.beginAddConstantOperation(-1L);
-            b.emitLoadArgument(0);
-            b.endAddConstantOperation();
             b.endInvokeRecursive();
-            b.endAdd();
+            b.endAddConstantOperation();
             b.endReturn();
 
             b.beginReturn();
@@ -2615,12 +2604,10 @@ public class BasicInterpreterTest extends AbstractBasicInterpreterTest {
             b.endRoot();
         });
 
-        node.getBytecodeNode().setUncachedThreshold(22);
+        node.getBytecodeNode().setUncachedThreshold(20);
         assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
-        assertEquals(20 * 21 / 2L, node.getCallTarget().call(20L)); // 21 calls
-        assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
-        node.getBytecodeNode().setUncachedThreshold(21);
-        assertEquals(20 * 21 / 2L, node.getCallTarget().call(20L)); // 21 calls
+        // 20 uncached calls before transitioning to cached.
+        assertEquals(20L, node.getCallTarget().call(20L));
         assertEquals(BytecodeTier.CACHED, node.getBytecodeNode().getTier());
     }
 
@@ -2640,10 +2627,13 @@ public class BasicInterpreterTest extends AbstractBasicInterpreterTest {
         node.getBytecodeNode().setUncachedThreshold(16);
         assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
         ContinuationResult cont = (ContinuationResult) node.getCallTarget().call();
-        for (int i = 1; i < 16; i++) {
+        for (int i = 0; i < 15; i++) {
             assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
             cont = (ContinuationResult) cont.continueWith(null);
         }
+        // The bytecode node transitions to cached at the start of the next resume.
+        assertEquals(BytecodeTier.UNCACHED, node.getBytecodeNode().getTier());
+        cont = (ContinuationResult) cont.continueWith(null);
         assertEquals(BytecodeTier.CACHED, node.getBytecodeNode().getTier());
     }
 

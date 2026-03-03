@@ -32,6 +32,7 @@ import static jdk.vm.ci.amd64.AMD64.CPUFeature.SSE2;
 
 import java.util.EnumSet;
 
+import jdk.graal.compiler.replacements.nodes.IndexOfZeroNode;
 import org.graalvm.nativeimage.Platform.AMD64;
 import org.graalvm.nativeimage.Platforms;
 
@@ -59,6 +60,7 @@ import jdk.graal.compiler.replacements.nodes.CountPositivesNode;
 import jdk.graal.compiler.replacements.nodes.CounterModeAESNode;
 import jdk.graal.compiler.replacements.nodes.EncodeArrayNode;
 import jdk.graal.compiler.replacements.nodes.GHASHProcessBlocksNode;
+import jdk.graal.compiler.replacements.nodes.IndexOfZeroForeignCalls;
 import jdk.graal.compiler.replacements.nodes.MessageDigestNode.MD5Node;
 import jdk.graal.compiler.replacements.nodes.MessageDigestNode.SHA1Node;
 import jdk.graal.compiler.replacements.nodes.MessageDigestNode.SHA256Node;
@@ -86,6 +88,7 @@ public class AMD64StubForeignCallsFeature extends StubForeignCallsFeatureBase {
                         new StubDescriptor(ArrayEqualsForeignCalls.STUBS, BASELINE, RUNTIME_CHECKED_CPU_FEATURES_AMD64),
                         new StubDescriptor(ArrayEqualsForeignCalls.STUBS_AMD64, BASELINE, RUNTIME_CHECKED_CPU_FEATURES_AMD64),
                         new StubDescriptor(ArrayIndexOfForeignCalls.STUBS, ArrayIndexOfForeignCalls::getMinimumFeaturesAMD64, RUNTIME_CHECKED_CPU_FEATURES_AMD64),
+                        new StubDescriptor(IndexOfZeroForeignCalls.STUBS, IndexOfZeroNode.minFeaturesAMD64(), RUNTIME_CHECKED_CPU_FEATURES_AMD64),
                         new StubDescriptor(ArrayRegionCompareToForeignCalls.STUBS, BASELINE, RUNTIME_CHECKED_CPU_FEATURES_AMD64),
                         new StubDescriptor(StringLatin1InflateNode.STUB, BASELINE, RUNTIME_CHECKED_CPU_FEATURES_AMD64),
                         new StubDescriptor(StringUTF16CompressNode.STUB, BASELINE, RUNTIME_CHECKED_CPU_FEATURES_AMD64),

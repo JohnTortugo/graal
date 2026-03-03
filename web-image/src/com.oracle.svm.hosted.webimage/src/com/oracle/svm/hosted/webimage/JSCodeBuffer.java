@@ -35,7 +35,7 @@ import com.oracle.svm.hosted.webimage.codegen.WebImageProviders;
 import com.oracle.svm.hosted.webimage.js.JSKeyword;
 import com.oracle.svm.hosted.webimage.logging.LoggerContext;
 import com.oracle.svm.hosted.webimage.options.WebImageOptions;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.webimage.hightiercodegen.CodeBuffer;
 
 import jdk.graal.compiler.nodes.ParameterNode;

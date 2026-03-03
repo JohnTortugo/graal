@@ -44,16 +44,15 @@ import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.common.meta.GuaranteeFolded;
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.RecomputeFieldValue;
 import com.oracle.svm.core.annotate.RecomputeFieldValue.Kind;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.util.HostedSubstrateUtil;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.guest.staging.Uninterruptible;
-import com.oracle.svm.shared.util.StringUtil;
+import com.oracle.svm.shared.meta.GuaranteeFolded;
 import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.graph.Node.NodeIntrinsic;
 import jdk.graal.compiler.java.LambdaUtils;
@@ -243,22 +242,6 @@ public class SubstrateUtil {
 
         /** The method to be supplied by the implementor. */
         void invoke();
-    }
-
-    /**
-     * Similar to {@link String#split(String)} but with a fixed separator string instead of a
-     * regular expression. This avoids making regular expression code reachable.
-     */
-    public static String[] split(String value, String separator) {
-        return split(value, separator, 0);
-    }
-
-    /**
-     * Similar to {@link String#split(String, int)} but with a fixed separator string instead of a
-     * regular expression. This avoids making regular expression code reachable.
-     */
-    public static String[] split(String value, String separator, int limit) {
-        return StringUtil.split(value, separator, limit);
     }
 
     /**

@@ -38,8 +38,8 @@ import org.graalvm.nativeimage.dynamicaccess.AccessCondition;
 import org.graalvm.nativeimage.impl.TypeReachabilityCondition;
 
 import com.oracle.svm.core.hub.DynamicHub;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.VMError;
-import com.oracle.svm.util.LogUtils;
 
 /**
  * The dynamic access metadata for some value that can be accessed at run time. Contains a set of

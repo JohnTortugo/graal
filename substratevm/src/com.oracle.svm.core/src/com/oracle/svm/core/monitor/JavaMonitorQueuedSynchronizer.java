@@ -35,8 +35,8 @@ import com.oracle.svm.core.jfr.JfrTicks;
 import com.oracle.svm.core.jfr.SubstrateJVM;
 import com.oracle.svm.core.jfr.events.JavaMonitorWaitEvent;
 import com.oracle.svm.core.thread.JavaThreads;
-import com.oracle.svm.core.util.BasedOnJDKClass;
-import com.oracle.svm.core.util.BasedOnJDKFile;
+import com.oracle.svm.shared.util.BasedOnJDKClass;
+import com.oracle.svm.shared.util.BasedOnJDKFile;
 
 import jdk.internal.misc.Unsafe;
 

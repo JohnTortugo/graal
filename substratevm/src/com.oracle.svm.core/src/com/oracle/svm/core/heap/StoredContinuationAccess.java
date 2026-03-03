@@ -75,8 +75,8 @@ public final class StoredContinuationAccess {
 
     private static StoredContinuation allocate(int framesSize) {
         // Using Word[] to ensure that words are properly aligned.
-        int nwords = Integer.divideUnsigned(framesSize, ConfigurationValues.getTarget().wordSize);
-        assert nwords * ConfigurationValues.getTarget().wordSize == framesSize;
+        int nwords = Integer.divideUnsigned(framesSize, ConfigurationValues.getWordSize());
+        assert nwords * ConfigurationValues.getWordSize() == framesSize;
         /*
          * There is no need to zero the array part (i.e., the stack data) of the StoredContinuation,
          * because the GC won't visit it if StoredContinuation.ip is null.
@@ -91,7 +91,7 @@ public final class StoredContinuationAccess {
 
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     private static int getSizeInBytes(StoredContinuation s) {
-        return arrayLength(s) * ConfigurationValues.getTarget().wordSize;
+        return arrayLength(s) * ConfigurationValues.getWordSize();
     }
 
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)

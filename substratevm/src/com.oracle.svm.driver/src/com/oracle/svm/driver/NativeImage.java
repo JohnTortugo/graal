@@ -80,7 +80,6 @@ import org.graalvm.nativeimage.ProcessProperties;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;
 import com.oracle.graal.pointsto.reports.ReportUtils;
-import com.oracle.svm.common.option.CommonOptions;
 import com.oracle.svm.core.JavaVersionUtil;
 import com.oracle.svm.core.NativeImageClassLoaderOptions;
 import com.oracle.svm.core.OS;
@@ -89,9 +88,6 @@ import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.VM;
 import com.oracle.svm.core.imagelayer.LayeredImageOptions;
-import com.oracle.svm.core.option.BundleMember;
-import com.oracle.svm.core.option.OptionOrigin;
-import com.oracle.svm.core.option.OptionUtils;
 import com.oracle.svm.core.util.ArchiveSupport;
 import com.oracle.svm.core.util.ClasspathUtils;
 import com.oracle.svm.core.util.ExitStatus;
@@ -106,11 +102,15 @@ import com.oracle.svm.hosted.NativeImageGeneratorRunner;
 import com.oracle.svm.hosted.NativeImageOptions;
 import com.oracle.svm.hosted.NativeImageSystemClassLoader;
 import com.oracle.svm.hosted.util.JDKArgsUtils;
+import com.oracle.svm.shared.option.BundleMember;
+import com.oracle.svm.shared.option.CommonOptionNames;
+import com.oracle.svm.shared.option.OptionOrigin;
+import com.oracle.svm.shared.option.OptionUtils;
+import com.oracle.svm.shared.util.LogUtils;
 import com.oracle.svm.shared.util.StringUtil;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.HostedModuleSupport;
-import com.oracle.svm.util.LogUtils;
 
 import jdk.graal.compiler.options.OptionKey;
 import jdk.internal.jimage.ImageReader;
@@ -250,8 +250,8 @@ public class NativeImage {
     static final String oHEnabled = oH + "+";
     static final String oR = "-R:";
 
-    final String enablePrintFlags = CommonOptions.PrintFlags.getName();
-    final String enablePrintFlagsWithExtraHelp = CommonOptions.PrintFlagsWithExtraHelp.getName();
+    final String enablePrintFlags = CommonOptionNames.PrintFlags;
+    final String enablePrintFlagsWithExtraHelp = CommonOptionNames.PrintFlagsWithExtraHelp;
 
     private static <T> String oH(OptionKey<T> option) {
         return oH + option.getName() + "=";
@@ -533,7 +533,7 @@ public class NativeImage {
                     while (inputScanner.hasNextLine()) {
                         String line = inputScanner.nextLine();
                         if (line.contains("bool UseJVMCINativeLibrary ")) {
-                            String value = SubstrateUtil.split(line, "=")[1];
+                            String value = StringUtil.split(line, "=")[1];
                             if (value.trim().startsWith("true")) {
                                 useJVMCINativeLibrary = true;
                             }
@@ -2151,11 +2151,11 @@ public class NativeImage {
     }
 
     public void addAddedModules(String addModulesArg) {
-        addModules.addAll(Arrays.asList(SubstrateUtil.split(addModulesArg, ",")));
+        addModules.addAll(Arrays.asList(StringUtil.split(addModulesArg, ",")));
     }
 
     public void addLimitedModules(String limitModulesArg) {
-        limitModules.addAll(Arrays.asList(SubstrateUtil.split(limitModulesArg, ",")));
+        limitModules.addAll(Arrays.asList(StringUtil.split(limitModulesArg, ",")));
     }
 
     void addImageProvidedJars(Path path) {

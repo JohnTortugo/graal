@@ -1900,7 +1900,16 @@ class LibffiBuilderProject(mx_native.MultitargetProject):
                         mx.run([mx_native.Ninja.binary, target, '-f', os.path.join(cwd, filename)], cwd=cwd, out=capture)
                         return capture.data.strip().split('\n')[-1]
 
-                    env['CC'] = _find_cc_var()
+                    def _find_tool_relative(env, cc, var, tool):
+                        d = os.path.dirname(cc)
+                        candidate = os.path.join(d, tool)
+                        if os.path.exists(candidate):
+                            env[var] = candidate
+
+                    cc = _find_cc_var()
+                    env['CC'] = cc
+                    _find_tool_relative(env, cc, 'OBJDUMP', 'objdump')
+                    _find_tool_relative(env, cc, 'AR', 'ar')
                     return cmdline, cwd, env
 
                 def verify_include_dirs(self):

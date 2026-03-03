@@ -174,7 +174,7 @@ public final class OptimizedRuntimeOptions {
     @Option(help = "Reduce or increase the compilation threshold depending on the size of the compilation queue (default: true).", usageSyntax = "true|false", category = OptionCategory.INTERNAL) //
     public static final OptionKey<Boolean> DynamicCompilationThresholds = new OptionKey<>(true);
 
-    @Option(help = "The desired maximum compilation queue load. When the load rises above this value, the compilation thresholds are increased. The load is scaled by the number of compiler threads.  (default: 10)", //
+    @Option(help = "The desired maximum compilation queue load. When the load rises above this value, the compilation thresholds are increased. The load is scaled by the number of compiler threads.  (default: 90)", //
                     usageSyntax = "[1, inf)", category = OptionCategory.INTERNAL) //
     public static final OptionKey<Integer> DynamicCompilationThresholdsMaxNormalLoad = new OptionKey<>(90);
 

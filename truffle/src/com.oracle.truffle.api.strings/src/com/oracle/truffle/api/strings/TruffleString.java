@@ -124,7 +124,7 @@ import com.oracle.truffle.api.strings.TStringInternalNodesFactory.CalcStringAttr
  * <li>{@link FromCodePointNode}</li>
  * <li>{@link FromLongNode}</li>
  * </ul>
- *
+ * <p>
  * For iteration use {@link TruffleStringIterator}. There is a version of {@link TruffleString} that
  * is also mutable. See {@link MutableTruffleString} for details.
  * <p>
@@ -1561,7 +1561,7 @@ public final class TruffleString extends AbstractTruffleString {
          * This mode generally means that the operation will try to determine the "most reasonable"
          * or "most useful" return value in respect to the expected encoding and the error that
          * occurred.
-         *
+         * <p>
          * For example: best-effort error handling will cause {@link CodePointAtByteIndexNode} to
          * return the value of the integer read when reading an invalid codepoint from a
          * {@link Encoding#UTF_32} string.
@@ -1572,7 +1572,7 @@ public final class TruffleString extends AbstractTruffleString {
 
         /**
          * This mode will cause a negative value to be returned in all error cases.
-         *
+         * <p>
          * For example: return-negative error handling will cause {@link CodePointAtByteIndexNode}
          * to return a negative value when reading an invalid codepoint from a
          * {@link Encoding#UTF_32} string.
@@ -1609,7 +1609,7 @@ public final class TruffleString extends AbstractTruffleString {
 
         /**
          * Creates a new TruffleString from a given code point.
-         *
+         * <p>
          * If {@code allowUTF16Surrogates} is {@code true}, {@link Character#isSurrogate(char)
          * UTF-16 surrogate values} passed as {@code codepoint} will not result in a {@code null}
          * return value, but instead be encoded on a best-effort basis. This option is only
@@ -1618,7 +1618,6 @@ public final class TruffleString extends AbstractTruffleString {
          *
          * @return a new {@link TruffleString}, or {@code null} if the given codepoint is not
          *         defined in the given encoding.
-         *
          * @since 22.2
          */
         public abstract TruffleString execute(int codepoint, Encoding encoding, boolean allowUTF16Surrogates);
@@ -1841,7 +1840,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            time it is needed. This parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(boolean) partial evaluation
          *            constant}.
-         *
          * @since 22.1
          */
         public abstract TruffleString execute(long value, Encoding encoding, boolean lazy);
@@ -2474,6 +2472,148 @@ public final class TruffleString extends AbstractTruffleString {
     }
 
     /**
+     * Equivalent to {@link FromNativePointerNode} for zero-terminated buffers, i.e. the string's
+     * length is determined by the position of the first zero-value found.
+     *
+     * <p>
+     * This operation requires native access permissions
+     * ({@code TruffleLanguage.Env#isNativeAccessAllowed()}).
+     * </p>
+     *
+     * @see FromNativePointerNode
+     * @since 25.1
+     */
+    public abstract static class FromZeroTerminatedNativePointerNode extends AbstractPublicNode {
+
+        FromZeroTerminatedNativePointerNode() {
+        }
+
+        /**
+         * Equivalent to {@link FromNativePointerNode#execute} with the only difference being that
+         * the native buffer's length is determined by the position of the first 8-bit zero value in
+         * the buffer.
+         *
+         * @since 25.1
+         */
+        public final TruffleString execute8Bit(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+            return execute(pointerObject, byteOffset, 0, encoding, copy);
+        }
+
+        /**
+         * Equivalent to {@link FromNativePointerNode#execute} with the only difference being that
+         * the native buffer's length is determined by the position of the first 16-bit zero value
+         * in the buffer. Note that the 16-bit zero value's position is checked in 2-byte increments
+         * starting from {@code native pointer + byte offset}, so a zero value starting at an odd
+         * byte index is ignored.
+         *
+         * @since 25.1
+         */
+        public final TruffleString execute16Bit(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+            return execute(pointerObject, byteOffset, 1, encoding, copy);
+        }
+
+        /**
+         * Equivalent to {@link FromNativePointerNode#execute} with the only difference being that
+         * the native buffer's length is determined by the position of the first 32-bit zero value
+         * in the buffer. Note that the 32-bit zero value's position is checked in 4-byte increments
+         * starting from {@code native pointer + byte offset}, so a zero value starting at an index
+         * that isn't a multiple of 4 is ignored.
+         *
+         * @since 25.1
+         */
+        public final TruffleString execute32Bit(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+            return execute(pointerObject, byteOffset, 2, encoding, copy);
+        }
+
+        abstract TruffleString execute(Object pointerObject, int byteOffset, int stride, Encoding encoding, boolean copy);
+
+        @Specialization
+        final TruffleString fromZeroTerminatedNativePointer(Object pointerObject, int byteOffset, int stride, Encoding enc, boolean copy,
+                        @Cached(value = "createInteropLibrary()", uncached = "getUncachedInteropLibrary()") Node interopLibrary,
+                        @Cached InlinedConditionProfile rawPointerProfile,
+                        @Cached InlinedConditionProfile utf8BrokenProfile,
+                        @Cached InlinedConditionProfile utf16CompactProfile,
+                        @Cached InlinedConditionProfile utf32Compact0Profile,
+                        @Cached InlinedConditionProfile utf32Compact1Profile,
+                        @Cached InlinedConditionProfile singleByteProfile) {
+            CompilerAsserts.partialEvaluationConstant(stride);
+            NativePointer pointer = NativePointer.create(this, pointerObject, interopLibrary, rawPointerProfile);
+            assert 0 <= stride && stride <= 2 : stride;
+            final long directPointer = pointer.pointer + byteOffset;
+            long byteLengthLong = switch (stride) {
+                case 0 -> TStringOps.strlen8Bit(this, directPointer);
+                case 1 -> TStringOps.strlen16Bit(this, directPointer);
+                default -> TStringOps.strlen32Bit(this, directPointer);
+            };
+            if (byteLengthLong > Integer.MAX_VALUE) {
+                throw InternalErrors.illegalArgument("String is too long");
+            }
+            int byteLength = (int) byteLengthLong;
+            if (copy) {
+                return fromBufferWithStringCompaction(this, pointer, byteOffset, byteLength, enc, true,
+                                utf8BrokenProfile,
+                                utf16CompactProfile,
+                                utf32Compact0Profile,
+                                utf32Compact1Profile,
+                                singleByteProfile);
+            }
+            return TStringInternalNodes.fromNativePointer(this, pointer, byteOffset, byteLength, enc, utf8BrokenProfile);
+        }
+
+        /**
+         * Create a new {@link FromZeroTerminatedNativePointerNode}.
+         *
+         * @since 25.1
+         */
+        @NeverDefault
+        public static FromZeroTerminatedNativePointerNode create() {
+            return TruffleStringFactory.FromZeroTerminatedNativePointerNodeGen.create();
+        }
+
+        /**
+         * Get the uncached version of {@link FromZeroTerminatedNativePointerNode}.
+         *
+         * @since 25.1
+         */
+        public static FromZeroTerminatedNativePointerNode getUncached() {
+            return TruffleStringFactory.FromZeroTerminatedNativePointerNodeGen.getUncached();
+        }
+    }
+
+    /**
+     * Shorthand for calling the uncached version of
+     * {@link FromZeroTerminatedNativePointerNode#execute8Bit}.
+     *
+     * @since 25.1
+     */
+    @TruffleBoundary
+    public static TruffleString fromZeroTerminatedNativePointer8BitUncached(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+        return FromZeroTerminatedNativePointerNode.getUncached().execute8Bit(pointerObject, byteOffset, encoding, copy);
+    }
+
+    /**
+     * Shorthand for calling the uncached version of
+     * {@link FromZeroTerminatedNativePointerNode#execute16Bit}.
+     *
+     * @since 25.1
+     */
+    @TruffleBoundary
+    public static TruffleString fromZeroTerminatedNativePointer16BitUncached(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+        return FromZeroTerminatedNativePointerNode.getUncached().execute16Bit(pointerObject, byteOffset, encoding, copy);
+    }
+
+    /**
+     * Shorthand for calling the uncached version of
+     * {@link FromZeroTerminatedNativePointerNode#execute32Bit}.
+     *
+     * @since 25.1
+     */
+    @TruffleBoundary
+    public static TruffleString fromZeroTerminatedNativePointer32BitUncached(Object pointerObject, int byteOffset, Encoding encoding, boolean copy) {
+        return FromZeroTerminatedNativePointerNode.getUncached().execute32Bit(pointerObject, byteOffset, encoding, copy);
+    }
+
+    /**
      * Node to create a new {@link TruffleString} from a byte array. See {@link #execute} for
      * details.
      *
@@ -2513,7 +2653,7 @@ public final class TruffleString extends AbstractTruffleString {
          * </pre>
          *
          * </p>
-         *
+         * <p>
          * Note that this node may further compact (and therefore copy) the array if possible, or
          * inflate if it contains illegal codepoints (i.e. surrogate values):
          *
@@ -2523,7 +2663,6 @@ public final class TruffleString extends AbstractTruffleString {
          * // returns a UTF-32 string "ab", copying and further compacting the given array despite
          * // copy=false
          * </pre>
-         *
          *
          * @param compactionLevel describes the given string's compaction level.
          *            {@link CompactionLevel#S1} means one byte per codepoint,
@@ -2536,7 +2675,6 @@ public final class TruffleString extends AbstractTruffleString {
          * @param copy analogous to the {@code copy} parameter of {@link FromByteArrayNode}. Must be
          *            {@link CompilerAsserts#partialEvaluationConstant(boolean) partial evaluation
          *            constant}.
-         *
          * @since 25.1
          */
         public abstract TruffleString execute(byte[] array, int byteOffset, int byteLength, CompactionLevel compactionLevel, boolean copy);
@@ -2632,7 +2770,6 @@ public final class TruffleString extends AbstractTruffleString {
          *
          * @param pointerObject native buffer, analogous to the {@code pointerObject} parameter of
          *            {@link FromNativePointerNode}.
-         *
          * @since 25.1
          */
         public abstract TruffleString execute(Object pointerObject, int byteOffset, int byteLength, CompactionLevel compactionLevel, boolean copy);
@@ -3017,7 +3154,6 @@ public final class TruffleString extends AbstractTruffleString {
      *
      * @see CodeRange
      * @see GetCodeRangeImpreciseNode
-     *
      * @since 22.1
      */
     public abstract static class GetCodeRangeNode extends AbstractPublicNode {
@@ -3065,7 +3201,6 @@ public final class TruffleString extends AbstractTruffleString {
      *
      * @see CodeRange
      * @see GetCodeRangeNode
-     *
      * @since 23.0
      */
     public abstract static class GetCodeRangeImpreciseNode extends AbstractPublicNode {
@@ -3757,7 +3892,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(Object) partial evaluation
          *            constant}.
-         *
          * @since 22.3
          */
         public abstract int execute(AbstractTruffleString a, int byteIndex, Encoding expectedEncoding, ErrorHandling errorHandling);
@@ -4069,7 +4203,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            instead. This parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(Object) partial evaluation
          *            constant}.
-         *
          * @since 22.3
          */
         public abstract int execute(AbstractTruffleString a, int i, Encoding expectedEncoding, ErrorHandling errorHandling);
@@ -4155,7 +4288,7 @@ public final class TruffleString extends AbstractTruffleString {
          * {@link ErrorHandling#BEST_EFFORT best-effort} error handling. This node should be
          * preferred over the generic {@link CodePointAtIndexNode} when possible for better
          * performance during warmup / in interpreter mode.
-         * 
+         *
          * @since 25.1
          */
         public abstract int execute(AbstractTruffleString a, int i);
@@ -4243,7 +4376,6 @@ public final class TruffleString extends AbstractTruffleString {
          * Decode and return the codepoint at byte index {@code i}.
          *
          * @param errorHandling analogous to {@link CodePointAtIndexNode}.
-         *
          * @since 22.3
          */
         public abstract int execute(AbstractTruffleString a, int i, Encoding expectedEncoding, ErrorHandling errorHandling);
@@ -4613,7 +4745,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            and the second element is the range's inclusive upper bound. Example: an array
          *            {@code [1, 4, 8, 10]} represents the inclusive ranges {@code [1-4]} and
          *            {@code [8-10]}.
-         *
          * @since 23.0
          */
         @TruffleBoundary
@@ -4730,7 +4861,6 @@ public final class TruffleString extends AbstractTruffleString {
          * @param codePointSet The set of codepoints to look for. This parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(Object) partial evaluation
          *            constant}.
-         *
          * @since 23.0
          */
         public final int execute(AbstractTruffleString a, int fromByteIndex, int toByteIndex, CodePointSet codePointSet) {
@@ -4747,7 +4877,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            {@link GetCodeRangeImpreciseNode}. This parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(Object) partial evaluation
          *            constant}.
-         *
          * @since 24.1
          */
         public abstract int execute(AbstractTruffleString a, int fromByteIndex, int toByteIndex, CodePointSet codePointSet, boolean usePreciseCodeRange);
@@ -7275,7 +7404,7 @@ public final class TruffleString extends AbstractTruffleString {
          * Note that this operation may also return a copy of the string's internal storage, if the
          * internal format does not match the regular encoded string format; compacted and native
          * strings will always yield a copy.
-         *
+         * <p>
          * CAUTION: TruffleString re-uses internal byte arrays whenever possible, DO NOT modify the
          * arrays returned by this operation. Use this operation only when absolutely necessary.
          * Reading a string's contents should always be done via nodes like {@link ReadByteNode},
@@ -7866,7 +7995,6 @@ public final class TruffleString extends AbstractTruffleString {
          *            string. This parameter is expected to be
          *            {@link CompilerAsserts#partialEvaluationConstant(Object) partial evaluation
          *            constant}.
-         *
          * @since 23.0
          */
         public abstract TruffleString execute(TruffleString a, NativeAllocator allocator, Encoding expectedEncoding, boolean useCompaction, boolean cacheResult);
@@ -8414,7 +8542,6 @@ public final class TruffleString extends AbstractTruffleString {
          * {@link TruffleStringIterator.NextNode} to iterate.
          *
          * @param errorHandling analogous to {@link CodePointAtIndexNode}.
-         *
          * @since 22.3
          */
         public abstract TruffleStringIterator execute(AbstractTruffleString a, Encoding expectedEncoding, ErrorHandling errorHandling);
@@ -8498,7 +8625,6 @@ public final class TruffleString extends AbstractTruffleString {
          * {@link TruffleStringIterator.PreviousNode} to iterate in reverse order.
          *
          * @param errorHandling analogous to {@link CodePointAtIndexNode}.
-         *
          * @since 22.3
          */
         public abstract TruffleStringIterator execute(AbstractTruffleString a, Encoding expectedEncoding, ErrorHandling errorHandling);

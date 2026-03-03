@@ -49,7 +49,6 @@ import com.oracle.svm.core.image.ImageHeapLayouter;
 import com.oracle.svm.core.image.ImageHeapObjectSorter;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.jdk.ImageKindInfoSingleton;
-import com.oracle.svm.core.option.HostedOptionValues;
 import com.oracle.svm.hosted.ImageClassLoader;
 import com.oracle.svm.hosted.MainEntryPoint;
 import com.oracle.svm.hosted.NativeImageGenerator;
@@ -71,6 +70,7 @@ import com.oracle.svm.hosted.webimage.logging.visualization.VisualizationSupport
 import com.oracle.svm.hosted.webimage.options.WebImageOptions;
 import com.oracle.svm.hosted.webimage.wasm.annotation.WasmStartFunction;
 import com.oracle.svm.hosted.webimage.wasm.codegen.WasmWebImage;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.webimage.platform.WebImagePlatformConfigurationProvider;
 import com.oracle.svm.webimage.wasm.types.WasmUtil;

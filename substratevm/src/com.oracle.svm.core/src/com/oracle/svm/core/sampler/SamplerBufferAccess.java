@@ -48,7 +48,7 @@ public final class SamplerBufferAccess {
 
     @Fold
     static UnsignedWord getHeaderSize() {
-        return UnsignedUtils.roundUp(SizeOf.unsigned(SamplerBuffer.class), Word.unsigned(ConfigurationValues.getTarget().wordSize));
+        return UnsignedUtils.roundUp(SizeOf.unsigned(SamplerBuffer.class), Word.unsigned(ConfigurationValues.getWordSize()));
     }
 
     @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)

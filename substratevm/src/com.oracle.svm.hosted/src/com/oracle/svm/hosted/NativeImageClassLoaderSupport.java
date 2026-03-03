@@ -91,13 +91,7 @@ import org.graalvm.nativeimage.libgraal.hosted.LibGraalLoader;
 import com.oracle.svm.core.NativeImageClassLoaderOptions;
 import com.oracle.svm.core.SharedConstants;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.imagelayer.LayeredImageOptions;
-import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.LocatableMultiOptionValue.ValueWithOrigin;
-import com.oracle.svm.core.option.OptionOrigin;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.ClasspathUtils;
 import com.oracle.svm.core.util.InterruptImageBuilding;
 import com.oracle.svm.core.util.UserError;
@@ -107,13 +101,19 @@ import com.oracle.svm.hosted.driver.LayerOptionsSupport;
 import com.oracle.svm.hosted.image.PreserveOptionsSupport;
 import com.oracle.svm.hosted.imagelayer.HostedImageLayerBuildingSupport;
 import com.oracle.svm.hosted.option.HostedOptionParser;
+import com.oracle.svm.shared.option.AccumulatingLocatableMultiOptionValue;
+import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.option.LocatableMultiOptionValue.ValueWithOrigin;
+import com.oracle.svm.shared.option.OptionOrigin;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.ClassUtil;
+import com.oracle.svm.shared.util.LogUtils;
+import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.StringUtil;
 import com.oracle.svm.shared.util.VMError;
-import com.oracle.svm.util.ClassUtil;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.HostedModuleSupport;
 import com.oracle.svm.util.JVMCIReflectionUtil;
-import com.oracle.svm.util.LogUtils;
-import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.options.OptionKey;
@@ -622,7 +622,7 @@ public final class NativeImageClassLoaderSupport {
                 }
             }
         });
-        NativeImageClassLoaderOptions.EnableNativeAccess.getValue(parsedHostedOptions).values().stream().flatMap(m -> Arrays.stream(SubstrateUtil.split(m, ","))).forEach(moduleName -> {
+        NativeImageClassLoaderOptions.EnableNativeAccess.getValue(parsedHostedOptions).values().stream().flatMap(m -> Arrays.stream(StringUtil.split(m, ","))).forEach(moduleName -> {
             if (ALL_UNNAMED.equals(moduleName)) {
                 ReflectionUtil.invokeMethod(implAddEnableNativeAccessToAllUnnamed, null);
             } else {

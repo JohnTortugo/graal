@@ -88,38 +88,58 @@ public abstract class ImageLayerBuildingSupport {
         return ImageSingletons.lookup(ImageLayerBuildingSupport.class);
     }
 
+    private static boolean installed() {
+        return ImageSingletons.contains(ImageLayerBuildingSupport.class);
+    }
+
     @Platforms(Platform.HOSTED_ONLY.class)
     public static boolean firstImageBuild() {
-        return !buildingImageLayer() || buildingInitialLayer();
+        if (installed()) {
+            ImageLayerBuildingSupport support = singleton();
+            return !support.buildingImageLayer || support.buildingInitialLayer;
+        }
+        return true;
     }
 
     @Platforms(Platform.HOSTED_ONLY.class)
     public static boolean lastImageBuild() {
-        return !buildingImageLayer() || buildingApplicationLayer();
+        if (installed()) {
+            ImageLayerBuildingSupport support = singleton();
+            return !support.buildingImageLayer || support.buildingApplicationLayer;
+        }
+        return true;
     }
 
     @Fold
     public static boolean buildingImageLayer() {
-        return singleton().buildingImageLayer;
+        return installed() && singleton().buildingImageLayer;
     }
 
     @Fold
     public static boolean buildingInitialLayer() {
-        return singleton().buildingInitialLayer;
+        return installed() && singleton().buildingInitialLayer;
     }
 
     @Fold
     public static boolean buildingApplicationLayer() {
-        return singleton().buildingApplicationLayer;
+        return installed() && singleton().buildingApplicationLayer;
     }
 
     @Fold
     public static boolean buildingExtensionLayer() {
-        return singleton().buildingImageLayer && !singleton().buildingInitialLayer;
+        if (installed()) {
+            ImageLayerBuildingSupport support = singleton();
+            return support.buildingImageLayer && !support.buildingInitialLayer;
+        }
+        return false;
     }
 
     @Fold
     public static boolean buildingSharedLayer() {
-        return singleton().buildingImageLayer && !singleton().buildingApplicationLayer;
+        if (installed()) {
+            ImageLayerBuildingSupport support = singleton();
+            return support.buildingImageLayer && !support.buildingApplicationLayer;
+        }
+        return false;
     }
 }

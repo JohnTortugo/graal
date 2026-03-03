@@ -58,14 +58,14 @@ import com.oracle.svm.core.annotate.Substitute;
 import com.oracle.svm.core.annotate.TargetClass;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.log.Log;
-import com.oracle.svm.core.option.HostedOptionValues;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.graal.GraalCompilerSupport;
 import com.oracle.svm.graal.RuntimeCompilationSupport;
 import com.oracle.svm.graal.hosted.FieldsOffsetsFeature;
 import com.oracle.svm.graal.hosted.GraalCompilerFeature;
 import com.oracle.svm.graal.meta.SubstrateMethod;
+import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.core.common.CompilationIdentifier;
 import jdk.graal.compiler.core.gen.NodeLIRBuilder;

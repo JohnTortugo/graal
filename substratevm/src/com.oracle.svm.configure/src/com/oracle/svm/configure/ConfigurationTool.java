@@ -38,7 +38,7 @@ import com.oracle.svm.configure.command.ConfigurationGenerateFiltersCommand;
 import com.oracle.svm.configure.command.ConfigurationHelpCommand;
 import com.oracle.svm.configure.command.ConfigurationProcessTraceCommand;
 import com.oracle.svm.configure.command.ConfigurationUnknownCommand;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.util.LogUtils;
 
 /**
  * A standalone tool for native-image. It is shipped as `native-image-utils` (previously

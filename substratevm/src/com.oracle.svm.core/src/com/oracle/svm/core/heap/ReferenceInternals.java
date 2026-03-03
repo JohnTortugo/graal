@@ -40,7 +40,7 @@ import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.monitor.MonitorSupport;
 import com.oracle.svm.core.thread.VMOperation;
-import com.oracle.svm.core.util.BasedOnJDKClass;
+import com.oracle.svm.shared.util.BasedOnJDKClass;
 import com.oracle.svm.core.util.TimeUtils;
 
 import jdk.graal.compiler.core.common.SuppressFBWarnings;

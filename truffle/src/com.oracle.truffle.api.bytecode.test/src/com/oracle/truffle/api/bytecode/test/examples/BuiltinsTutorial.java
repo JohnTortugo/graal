@@ -423,9 +423,10 @@ public class BuiltinsTutorial {
         assertEquals(42, root.getCallTarget().call(42));
         assertEquals(BytecodeTier.UNCACHED, root.getBytecodeNode().getTier());
         assertEquals(42, root.getCallTarget().call("42"));
+        assertEquals(BytecodeTier.UNCACHED, root.getBytecodeNode().getTier());
         // transitions to cached once the threshold is exceeded
-        assertEquals(BytecodeTier.CACHED, root.getBytecodeNode().getTier());
         assertEquals(42, root.getCallTarget().call(42));
+        assertEquals(BytecodeTier.CACHED, root.getBytecodeNode().getTier());
         assertEquals(42, root.getCallTarget().call("42"));
     }
 

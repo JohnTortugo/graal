@@ -168,19 +168,20 @@ final class PolyglotExceptionImpl {
                 } else {
                     this.guestObject = null;
                 }
+                PolyglotExceptionImpl cause = null;
                 if (interop.hasExceptionCause(exception)) {
                     Object guestCause = interop.getExceptionCause(exception);
-                    Throwable causeTruffleWrapper;
-                    try {
-                        throw interop.throwException(guestCause);
-                    } catch (Throwable t) {
-                        causeTruffleWrapper = t;
+                    if (!interop.isNull(guestCause)) {
+                        Throwable causeTruffleWrapper;
+                        try {
+                            throw interop.throwException(guestCause);
+                        } catch (Throwable t) {
+                            causeTruffleWrapper = t;
+                        }
+                        cause = new PolyglotExceptionImpl(polyglot, engine, polyglotContextState, polyglotContextResourceExhausted, 0, languageContext, causeTruffleWrapper, allowInterop, entered);
                     }
-                    this.causeImpl = new PolyglotExceptionImpl(polyglot, engine, polyglotContextState, polyglotContextResourceExhausted, 0, languageContext, causeTruffleWrapper, allowInterop,
-                                    entered);
-                } else {
-                    this.causeImpl = null;
                 }
+                this.causeImpl = cause;
             } catch (UnsupportedMessageException ume) {
                 throw CompilerDirectives.shouldNotReachHere(ume);
             }

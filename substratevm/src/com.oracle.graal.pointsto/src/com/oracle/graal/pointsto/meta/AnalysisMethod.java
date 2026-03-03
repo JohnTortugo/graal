@@ -46,6 +46,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import com.oracle.svm.shared.meta.GuaranteeFolded;
 import org.graalvm.nativeimage.hosted.Feature.DuringAnalysisAccess;
 
 import com.oracle.graal.pointsto.BigBang;
@@ -63,10 +64,10 @@ import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.graal.pointsto.util.AnalysisError;
 import com.oracle.graal.pointsto.util.AtomicUtils;
 import com.oracle.graal.pointsto.util.ConcurrentLightHashSet;
-import com.oracle.svm.common.meta.MethodVariant;
 import com.oracle.svm.sdk.staging.hosted.layeredimage.LayeredCompilationSupport;
 import com.oracle.svm.sdk.staging.layeredimage.LayeredCompilationBehavior;
 import com.oracle.svm.sdk.staging.layeredimage.LayeredCompilationBehavior.Behavior;
+import com.oracle.svm.shared.meta.MethodVariant;
 import com.oracle.svm.util.AnnotationUtil;
 import com.oracle.svm.util.OriginalMethodProvider;
 
@@ -208,6 +209,8 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
     private boolean hasOpaqueReturn;
 
     private LayeredCompilationBehavior.Behavior compilationBehavior;
+
+    private boolean isGuaranteeFolded;
 
     @SuppressWarnings({"this-escape", "unchecked"})
     protected AnalysisMethod(AnalysisUniverse universe, ResolvedJavaMethod wrapped, MethodVariantKey methodVariantKey, Map<MethodVariantKey, MethodVariant> methodVariantsMap) {
@@ -396,6 +399,18 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
         return compilationBehavior == LayeredCompilationBehavior.Behavior.PINNED_TO_INITIAL_LAYER;
     }
 
+    public boolean isGuaranteeFolded() {
+        return isGuaranteeFolded || AnnotationUtil.getAnnotation(this, GuaranteeFolded.class) != null;
+    }
+
+    public void setGuaranteeFolded() {
+        this.isGuaranteeFolded = true;
+    }
+
+    public void checkGuaranteeFolded() {
+        AnalysisError.guarantee(!isGuaranteeFolded(), "A method that is guaranteed to always be folded is analyzed: %s. ", this);
+    }
+
     private static String createName(ResolvedJavaMethod wrapped, MethodVariantKey methodVariantKey) {
         String aName = wrapped.getName();
         if (methodVariantKey != ORIGINAL_METHOD) {
@@ -527,6 +542,7 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
      * environment. Only direct root methods can be registered as entrypoints.
      */
     public void registerAsNativeEntryPoint(Object newEntryPointData) {
+        checkGuaranteeFolded();
         assert newEntryPointData != null;
         assert isDirectRootMethod() : "All native entrypoints must be direct root methods: " + this;
         if (nativeEntryPointData != null && !nativeEntryPointData.equals(newEntryPointData)) {
@@ -538,12 +554,14 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
     }
 
     public boolean registerAsInvoked(Object reason) {
+        checkGuaranteeFolded();
         assert isValidReason(reason) : "Registering a method as invoked needs to provide a valid reason, found: " + reason;
         registerAsTrackedAcrossLayers(reason);
         return AtomicUtils.atomicSet(this, reason, isInvokedUpdater);
     }
 
     public boolean registerAsImplementationInvoked(Object reason) {
+        checkGuaranteeFolded();
         assert isValidReason(reason) : "Registering a method as implementation invoked needs to provide a valid reason, found: " + reason;
         assert !Modifier.isAbstract(getModifiers()) : this;
 
@@ -560,6 +578,7 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
     }
 
     public void registerAsInlined(Object reason) {
+        checkGuaranteeFolded();
         assert reason instanceof NodeSourcePosition || reason instanceof ResolvedJavaMethod : "Registering a method as inlined needs to provide the inline location as reason, found: " + reason;
         AtomicUtils.atomicSetAndRun(this, reason, isInlinedUpdater, () -> onReachable(reason));
     }
@@ -636,6 +655,7 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
      * as in {@link AnalysisMethod#registerAsImplementationInvoked(Object)}.
      */
     public boolean registerAsVirtualRootMethod(Object reason) {
+        checkGuaranteeFolded();
         getDeclaringClass().registerAsReachable("declared method " + qualifiedName + " is registered as virtual root");
         return AtomicUtils.atomicSet(this, reason, isVirtualRootMethodUpdater);
     }
@@ -647,6 +667,7 @@ public abstract class AnalysisMethod extends AnalysisElement implements WrappedJ
      * marked as instantiated.
      */
     public boolean registerAsDirectRootMethod(Object reason) {
+        checkGuaranteeFolded();
         getDeclaringClass().registerAsReachable("declared method " + qualifiedName + " is registered as direct root");
         return AtomicUtils.atomicSet(this, reason, isDirectRootMethodUpdater);
     }

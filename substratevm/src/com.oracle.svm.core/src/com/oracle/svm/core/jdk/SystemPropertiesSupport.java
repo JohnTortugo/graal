@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.core.jdk;
 
-import static jdk.graal.compiler.core.common.LibGraalSupport.LIBGRAAL_SETTING_PROPERTY_PREFIX;
+import static jdk.graal.compiler.options.LibGraalSupport.LIBGRAAL_SETTING_PROPERTY_PREFIX;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -56,6 +56,7 @@ import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
+import jdk.graal.compiler.options.LibGraalSupport;
 
 /**
  * This class maintains the system properties at run time.
@@ -144,7 +145,7 @@ public abstract class SystemPropertiesSupport implements RuntimeSystemProperties
         initializeProperty("java.class.path", "");
         initializeProperty("jdk.module.path", "");
 
-        initializeProperty("sun.arch.data.model", Integer.toString(ConfigurationValues.getTarget().wordJavaKind.getBitCount()));
+        initializeProperty("sun.arch.data.model", Integer.toString(ConfigurationValues.getWordKind().getBitCount()));
 
         ArrayList<LazySystemProperty> lazyProperties = new ArrayList<>();
         lazyProperties.add(new LazySystemProperty(UserSystemProperty.NAME, this::userNameValue));
@@ -324,7 +325,7 @@ public abstract class SystemPropertiesSupport implements RuntimeSystemProperties
      * If the current image being built is libgraal, sets a runtime system property used to describe
      * some aspect of the libgraal image configuration.
      *
-     * @see jdk.graal.compiler.core.common.LibGraalSupport#LIBGRAAL_SETTING_PROPERTY_PREFIX
+     * @see LibGraalSupport#LIBGRAAL_SETTING_PROPERTY_PREFIX
      */
     public void setLibGraalRuntimeProperty(String name, String value) {
         if (!SubstrateOptions.LibGraalClassLoader.getValue().isEmpty()) {

@@ -39,12 +39,12 @@ import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.hub.RuntimeClassLoading.ClassDefinitionInfo;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.espresso.classfile.descriptors.Symbol;
 import com.oracle.svm.espresso.classfile.descriptors.Type;
 import com.oracle.svm.espresso.classfile.descriptors.TypeSymbols;
-import com.oracle.svm.util.LogUtils;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
+import com.oracle.svm.shared.util.VMError;
 
 /**
  * This class registry corresponds to the {@code null} class loader when runtime class loading is
@@ -75,17 +75,20 @@ public final class BootClassRegistry extends AbstractRuntimeClassRegistry {
         if (maybeFs == null) {
             synchronized (this) {
                 if ((maybeFs = jrtFS) == null) {
-                    try {
-                        jrtFS = maybeFs = FileSystems.getFileSystem(URI.create("jrt:/"));
-                    } catch (ProviderNotFoundException | FileSystemNotFoundException e) {
-                        if (!AllowJRTFileSystem.getValue()) {
-                            LogUtils.warning(JRTFS_UNAVAILABLE_MESSAGE);
-                        } else if (System.getProperty("java.home") == null) {
-                            LogUtils.warning(JAVA_HOME_UNAVAILABLE_MESSAGE);
-                        } else {
-                            LogUtils.warning("The boot class loader is unavailable: " + e);
-                        }
+                    if (System.getProperty("java.home") == null) {
+                        LogUtils.warning(JAVA_HOME_UNAVAILABLE_MESSAGE);
                         jrtFS = NO_JRT_FS;
+                    } else {
+                        try {
+                            jrtFS = maybeFs = FileSystems.getFileSystem(URI.create("jrt:/"));
+                        } catch (ProviderNotFoundException | FileSystemNotFoundException e) {
+                            if (!AllowJRTFileSystem.getValue()) {
+                                LogUtils.warning(JRTFS_UNAVAILABLE_MESSAGE);
+                            } else {
+                                LogUtils.warning("The boot class loader is unavailable: " + e);
+                            }
+                            jrtFS = NO_JRT_FS;
+                        }
                     }
                 }
             }

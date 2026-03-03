@@ -37,7 +37,6 @@ import com.oracle.graal.pointsto.util.TimerCollection;
 import com.oracle.svm.core.JavaMainWrapper;
 import com.oracle.svm.core.SubstrateGCOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.option.ReplacingLocatableMultiOptionValue;
 import com.oracle.svm.core.util.ExitStatus;
 import com.oracle.svm.hosted.ImageClassLoader;
 import com.oracle.svm.hosted.MainEntryPoint;
@@ -46,7 +45,6 @@ import com.oracle.svm.hosted.NativeImageGeneratorRunner;
 import com.oracle.svm.hosted.ProgressReporter;
 import com.oracle.svm.hosted.c.CAnnotationProcessorCache;
 import com.oracle.svm.hosted.image.AbstractImage;
-import com.oracle.svm.hosted.jdk.localization.LocalizationFeature;
 import com.oracle.svm.hosted.option.HostedOptionParser;
 import com.oracle.svm.hosted.webimage.logging.visualization.VisualizationSupport;
 import com.oracle.svm.hosted.webimage.name.WebImageNamingConvention;
@@ -55,6 +53,7 @@ import com.oracle.svm.hosted.webimage.options.WebImageOptions.CompilerBackend;
 import com.oracle.svm.hosted.webimage.util.BenchmarkLogger;
 import com.oracle.svm.hosted.webimage.wasm.WebImageWasmLMJavaMainSupport;
 import com.oracle.svm.hosted.webimage.wasmgc.WebImageWasmGCJavaMainSupport;
+import com.oracle.svm.shared.option.ReplacingLocatableMultiOptionValue;
 import com.oracle.svm.util.AnnotatedObjectAccess;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIReflectionUtil;
@@ -137,18 +136,6 @@ public class NativeImageWasmGeneratorRunner extends NativeImageGeneratorRunner {
         optionProvider.getHostedValues().put(CAnnotationProcessorCache.Options.UseCAPCache, false);
 
         optionProvider.getHostedValues().put(SubstrateOptions.CompilerBackend, "webImage");
-        /**
-         * SVM provides two approaches of localization support:
-         *
-         * {@link com.oracle.svm.core.jdk.localization.OptimizedLocalizationSupport} and
-         * {@link com.oracle.svm.core.jdk.localization.BundleContentSubstitutedLocalizationSupport}
-         *
-         * The latter depends on GZIPInputStream, which is not supported by Web Image Therefore, we
-         * always use the first one.
-         *
-         * @see LocalizationFeature
-         */
-        optionProvider.getHostedValues().put(LocalizationFeature.Options.LocalizationOptimizedMode, true);
 
         // reduce image size
         optionProvider.getHostedValues().put(SubstrateOptions.IncludeMethodData, false);

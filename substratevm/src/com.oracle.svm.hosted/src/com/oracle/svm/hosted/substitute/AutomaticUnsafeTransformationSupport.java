@@ -54,19 +54,19 @@ import com.oracle.svm.core.fieldvaluetransformer.ArrayIndexScaleFieldValueTransf
 import com.oracle.svm.core.fieldvaluetransformer.ArrayIndexShiftFieldValueTransformer;
 import com.oracle.svm.core.fieldvaluetransformer.FieldOffsetFieldValueTransformer;
 import com.oracle.svm.core.fieldvaluetransformer.StaticFieldBaseFieldValueTransformer;
-import com.oracle.svm.core.option.HostedOptionKey;
-import com.oracle.svm.core.option.SubstrateOptionsParser;
-import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.hosted.ImageClassLoader;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.classinitialization.ClassInitializerGraphBuilderPhase;
 import com.oracle.svm.hosted.phases.ConstantFoldLoadFieldPlugin;
 import com.oracle.svm.hosted.snippets.ReflectionPlugins;
+import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.util.LogUtils;
+import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.GuestAccess;
 import com.oracle.svm.util.JVMCIFieldValueTransformer;
 import com.oracle.svm.util.JVMCIReflectionUtil;
-import com.oracle.svm.util.LogUtils;
-import com.oracle.svm.shared.util.ReflectionUtil;
 
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.DebugContext.Builder;
