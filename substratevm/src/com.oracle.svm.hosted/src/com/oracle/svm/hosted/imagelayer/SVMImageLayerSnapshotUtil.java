@@ -92,6 +92,7 @@ import jdk.graal.compiler.debug.CounterKey;
 import jdk.graal.compiler.nodes.EncodedGraph;
 import jdk.graal.compiler.nodes.FieldLocationIdentity;
 import jdk.graal.compiler.nodes.NodeClassMap;
+import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.util.ObjectCopier;
 import jdk.graal.compiler.util.ObjectCopierInputStream;
 import jdk.graal.compiler.util.ObjectCopierOutputStream;
@@ -166,7 +167,7 @@ public class SVMImageLayerSnapshotUtil {
      */
     private void addSVMExternalValueFields() {
         for (URI svmURI : getBuilderLocations()) {
-            for (String className : imageClassLoader.classLoaderSupport.classes(svmURI)) {
+            for (String className : imageClassLoader.guestTypes.getDiscoveredClassNames(svmURI)) {
                 try {
                     Class<?> clazz = imageClassLoader.forName(className);
                     externalValueFields.addAll(getStaticFinalObjectFields(clazz));
@@ -383,7 +384,9 @@ public class SVMImageLayerSnapshotUtil {
             addBuiltin(new FieldLocationIdentityBuiltIn(null));
             addBuiltin(new HostedTypeBuiltIn(null));
             addBuiltin(new HostedMethodBuiltIn(null));
-            addBuiltin(new HostedOptionValuesBuiltIn());
+            HostedOptionValuesBuiltIn hostedOptionValuesBuiltIn = new HostedOptionValuesBuiltIn();
+            addBuiltin(hostedOptionValuesBuiltIn);
+            addBuiltin(new HostedOptionValuesPayloadBuiltIn());
             addBuiltin(new HostedSnippetReflectionProviderBuiltIn(null));
             addBuiltin(new CInterfaceLocationIdentityBuiltIn());
             addBuiltin(new FastThreadLocalLocationIdentityBuiltIn());
@@ -421,7 +424,9 @@ public class SVMImageLayerSnapshotUtil {
             addBuiltin(new AnalysisMethodBuiltIn(imageLayerLoader, analysisMethod));
             addBuiltin(new AnalysisFieldBuiltIn(imageLayerLoader));
             addBuiltin(new FieldLocationIdentityBuiltIn(imageLayerLoader));
-            addBuiltin(new HostedOptionValuesBuiltIn());
+            HostedOptionValuesBuiltIn hostedOptionValuesBuiltIn = new HostedOptionValuesBuiltIn();
+            addBuiltin(hostedOptionValuesBuiltIn);
+            addBuiltin(new HostedOptionValuesPayloadBuiltIn());
             addBuiltin(new HostedSnippetReflectionProviderBuiltIn(snippetReflectionProvider));
             addBuiltin(new CInterfaceLocationIdentityBuiltIn());
             addBuiltin(new FastThreadLocalLocationIdentityBuiltIn());
@@ -707,6 +712,24 @@ public class SVMImageLayerSnapshotUtil {
         @Override
         protected Object decode(ObjectCopier.Decoder decoder, Class<?> concreteType, ObjectCopierInputStream stream) throws IOException {
             return HostedOptionValues.singleton();
+        }
+    }
+
+    public static class HostedOptionValuesPayloadBuiltIn extends ObjectCopier.Builtin {
+        protected HostedOptionValuesPayloadBuiltIn() {
+            super(OptionValues.class);
+        }
+
+        @Override
+        protected void encode(ObjectCopier.Encoder encoder, ObjectCopierOutputStream stream, Object obj) throws IOException {
+            VMError.guarantee(obj == HostedOptionValues.singleton().get(),
+                            "Only the HostedOptionValues singleton payload is supported: %s", obj);
+        }
+
+        @Override
+        protected Object decode(ObjectCopier.Decoder decoder, Class<?> concreteType, ObjectCopierInputStream stream) throws IOException {
+            VMError.guarantee(concreteType == OptionValues.class, "Unexpected concrete type: %s", concreteType);
+            return HostedOptionValues.singleton().get();
         }
     }
 

@@ -50,7 +50,7 @@ import jdk.graal.compiler.processor.AbstractProcessor;
 @SupportedAnnotationTypes(AutomaticallyRegisteredImageSingletonProcessor.ANNOTATION_CLASS_NAME)
 public class AutomaticallyRegisteredImageSingletonProcessor extends AbstractProcessor {
 
-    static final String ANNOTATION_CLASS_NAME = "com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton";
+    static final String ANNOTATION_CLASS_NAME = "com.oracle.svm.shared.singletons.AutomaticallyRegisteredImageSingleton";
     static final String LAYERED_SINGLETON_INFO = "com.oracle.svm.core.layeredimagesingleton.LoadedLayeredImageSingletonInfo";
 
     private final Set<Element> processed = new HashSet<>(); // noEconomicSet(dependency)
@@ -143,12 +143,12 @@ public class AutomaticallyRegisteredImageSingletonProcessor extends AbstractProc
 
                             // GENERATED CONTENT - DO NOT EDIT
                             // Annotated type: %2$s
-                            // Annotation: com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton
+                            // Annotation: com.oracle.svm.shared.singletons.AutomaticallyRegisteredImageSingleton
                             // Annotation processor: com.oracle.svm.processor.AutomaticallyRegisteredImageSingletonProcessor
 
                             import org.graalvm.nativeimage.ImageSingletons;
 
-                            import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+                            import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
                             import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
                             import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
                             import com.oracle.svm.shared.singletons.traits.SingletonTraits;%3$s

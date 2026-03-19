@@ -112,6 +112,11 @@ public class LayeredImageHeapMap<K, V> implements EconomicMap<K, V> {
 
     @Override
     public V get(K key) {
+        return get(key, null);
+    }
+
+    @Override
+    public V get(K key, V defaultValue) {
         List<LayeredImageHeapMapStore> singletons = Arrays.stream(LayeredImageHeapMapStore.layeredSingletons()).toList();
         for (var singleton : fromBaseToApp ? singletons : singletons.reversed()) {
             EconomicMap<K, V> singletonMap = getRuntimeMap(singleton);
@@ -119,7 +124,7 @@ public class LayeredImageHeapMap<K, V> implements EconomicMap<K, V> {
                 return singletonMap.get(key);
             }
         }
-        return null;
+        return defaultValue;
     }
 
     @Override

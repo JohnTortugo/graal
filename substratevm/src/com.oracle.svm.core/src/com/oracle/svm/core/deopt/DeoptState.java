@@ -34,8 +34,8 @@ import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.SignedWord;
 import org.graalvm.word.UnsignedWord;
-import org.graalvm.word.impl.Word;
 import org.graalvm.word.WordBase;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.ReservedRegisters;
 import com.oracle.svm.core.code.FrameInfoQueryResult;
@@ -90,6 +90,21 @@ public class DeoptState {
         if (idx < sourceFrame.getValueInfos().length) {
             return readValue(sourceFrame.getValueInfos()[idx], sourceFrame);
         } else {
+            return JavaConstant.forIllegal();
+        }
+    }
+
+    /**
+     * Reads the value of an entry in this frame - this can be a local, a stack value or a lock.
+     */
+    public JavaConstant readValue(int idx, FrameInfoQueryResult sourceFrame) {
+        if (idx < sourceFrame.getValueInfos().length) {
+            return readValue(sourceFrame.getValueInfos()[idx], sourceFrame);
+        } else {
+            /*
+             * valueInfos can be shorter than {numLocals + numStack + numLocks}: trailing illegal
+             * slots are pruned when frame metadata is encoded.
+             */
             return JavaConstant.forIllegal();
         }
     }
@@ -256,6 +271,10 @@ public class DeoptState {
             default:
                 throw fatalDeoptimizationError("Unexpected constant kind: " + kind, frameInfo);
         }
+    }
+
+    public Pointer getSourceSp() {
+        return sourceSp;
     }
 
 }

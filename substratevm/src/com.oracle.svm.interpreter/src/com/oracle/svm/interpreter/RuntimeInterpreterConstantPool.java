@@ -32,7 +32,6 @@ import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.hub.crema.CremaSupport;
 import com.oracle.svm.core.hub.registry.SymbolsSupport;
 import com.oracle.svm.core.methodhandles.Target_java_lang_invoke_MethodHandleNatives;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.espresso.classfile.ParserKlass;
 import com.oracle.svm.espresso.classfile.attributes.BootstrapMethodsAttribute;
 import com.oracle.svm.espresso.classfile.descriptors.Name;
@@ -41,13 +40,16 @@ import com.oracle.svm.espresso.classfile.descriptors.SignatureSymbols;
 import com.oracle.svm.espresso.classfile.descriptors.Symbol;
 import com.oracle.svm.espresso.classfile.descriptors.Type;
 import com.oracle.svm.espresso.classfile.descriptors.TypeSymbols;
+import com.oracle.svm.espresso.shared.meta.SignaturePolymorphicIntrinsic;
 import com.oracle.svm.interpreter.metadata.Bytecodes;
 import com.oracle.svm.interpreter.metadata.CremaResolvedObjectType;
 import com.oracle.svm.interpreter.metadata.InterpreterConstantPool;
+import com.oracle.svm.interpreter.metadata.InterpreterResolvedInvokeGenericJavaMethod;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaField;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaType;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedObjectType;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.UnresolvedJavaField;
@@ -258,7 +260,9 @@ public final class RuntimeInterpreterConstantPool extends InterpreterConstantPoo
         // TODO(peterssen): Enable access checks and loading constraints.
         InterpreterResolvedJavaMethod classMethod = CremaLinkResolver.resolveMethodSymbol(CremaRuntimeAccess.getInstance(), accessingClass, methodName, methodSignature, holder, false, false, false);
 
-        // TODO(peterssen): Support MethodHandle invoke intrinsics.
+        if (classMethod.getSignaturePolymorphicIntrinsic() == SignaturePolymorphicIntrinsic.InvokeGeneric && classMethod.isNative()) {
+            return InterpreterResolvedInvokeGenericJavaMethod.linkInvokeGeneric(classMethod, accessingClass);
+        }
 
         return classMethod;
     }
@@ -308,7 +312,7 @@ public final class RuntimeInterpreterConstantPool extends InterpreterConstantPoo
             args[i] = switch (tagAt(entry.argAt(i))) {
                 case METHODHANDLE -> this.resolvedMethodHandleAt(entry.argAt(i), accessingClass);
                 case METHODTYPE -> this.resolvedMethodTypeAt(entry.argAt(i), accessingClass);
-                case CLASS -> this.resolveClassConstant(entry.argAt(i), accessingClass).getJavaClass();
+                case CLASS -> this.resolvedTypeAt(accessingClass, entry.argAt(i)).getJavaClass();
                 case STRING -> this.resolveStringAt(entry.argAt(i));
                 case INTEGER -> this.intAt(entry.argAt(i));
                 case LONG -> this.longAt(entry.argAt(i));
@@ -370,5 +374,10 @@ public final class RuntimeInterpreterConstantPool extends InterpreterConstantPoo
                 throw VMError.shouldNotReachHere("Unexpected opcode: " + opcode); // ExcludeFromJacocoGeneratedReport
         }
         return findClassAt(declaringClassCPI);
+    }
+
+    @Override
+    public String lookupUtf8(int cpi) {
+        return utf8At(cpi).toString();
     }
 }

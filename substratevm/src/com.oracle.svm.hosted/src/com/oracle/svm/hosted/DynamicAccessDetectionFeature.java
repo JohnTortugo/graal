@@ -50,7 +50,7 @@ import com.oracle.graal.pointsto.reports.ReportUtils;
 import com.oracle.svm.core.BuildArtifacts;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.TrackDynamicAccessEnabled;
-import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.driver.IncludeOptionsSupport;
@@ -113,7 +113,7 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     // package names
     private final Map<String, MethodsByAccessKind> callsBySourceEntry;
     private final BuildArtifacts buildArtifacts = BuildArtifacts.singleton();
-    private final OptionValues hostedOptionValues = HostedOptionValues.singleton();
+    private final OptionValues hostedOptionValues = HostedOptionValues.singleton().get();
 
     private boolean printToConsole;
     private boolean dumpJsonFiles = true;

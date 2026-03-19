@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2022, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -43,6 +43,7 @@ package com.oracle.truffle.api.bytecode;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
+import com.oracle.truffle.api.frame.Frame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.source.SourceSection;
@@ -147,6 +148,29 @@ public interface BytecodeRootNode {
     @SuppressWarnings("unused")
     default AbstractTruffleException interceptTruffleException(AbstractTruffleException ex, VirtualFrame frame, BytecodeNode bytecodeNode, int bytecodeIndex) {
         return ex;
+    }
+
+    /**
+     * Optional hook invoked when executing bytecode transitions from one bytecode node to another.
+     * Transitions are emitted only for on-stack changes observed during execution, for example when
+     * moving from uncached to cached tier, when reparsing updates the bytecode due to
+     * {@link BytecodeConfig} changes and execution continues in the new bytecode node, or when
+     * deoptimization transfers execution from Truffle runtime-compiled code back to the
+     * interpreter.
+     * <p>
+     * The frame is only valid during the invocation of this method. The transition object may
+     * outlive the execution of this method.
+     * <p>
+     * Engine-level transition logging (via {@code engine.TraceBytecodeTransition}) is always
+     * performed independently of this hook. Override this method only to add interpreter-specific
+     * behaviour on top of the engine logging.
+     *
+     * @param transition describes the transition that occurred
+     * @param frame the current execution frame
+     * @since 25.1
+     */
+    @SuppressWarnings("unused")
+    default void traceTransition(BytecodeTransition transition, Frame frame) {
     }
 
     /**

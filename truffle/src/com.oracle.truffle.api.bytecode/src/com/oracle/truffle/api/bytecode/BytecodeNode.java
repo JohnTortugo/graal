@@ -1242,6 +1242,13 @@ public abstract class BytecodeNode extends Node {
     }
 
     /**
+     * Internal method to be implemented by generated code.
+     *
+     * @since 25.1
+     */
+    protected abstract BytecodeTransition createTransition(BytecodeNode oldBytecodeNode, int oldBytecodeIndex, BytecodeNode newBytecodeNode, int newBytecodeIndex, boolean wasCompiled);
+
+    /**
      * Internal method called by generated code.
      *
      * @since 24.2

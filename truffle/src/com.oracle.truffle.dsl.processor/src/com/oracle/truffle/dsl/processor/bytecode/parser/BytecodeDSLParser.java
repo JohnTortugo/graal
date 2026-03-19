@@ -398,6 +398,7 @@ public class BytecodeDSLParser extends AbstractParser<BytecodeDSLModels> {
         model.interceptControlFlowException = ElementUtils.findMethod(typeElement, "interceptControlFlowException");
         model.interceptInternalException = ElementUtils.findMethod(typeElement, "interceptInternalException");
         model.interceptTruffleException = ElementUtils.findMethod(typeElement, "interceptTruffleException");
+        model.traceTransition = ElementUtils.findMethod(typeElement, "traceTransition");
 
         checkRootNodeOverrides(typeElement, model);
         if (model.hasErrors()) {

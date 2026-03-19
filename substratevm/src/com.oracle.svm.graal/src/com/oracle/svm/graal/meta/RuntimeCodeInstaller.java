@@ -35,8 +35,8 @@ import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.core.SubstrateUtil;
-import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.util.SubstrateUtil;
+import com.oracle.svm.shared.Uninterruptible;
 import com.oracle.svm.core.c.NonmovableArray;
 import com.oracle.svm.core.code.AbstractRuntimeCodeInstaller;
 import com.oracle.svm.core.code.CodeInfo;
@@ -113,7 +113,7 @@ public class RuntimeCodeInstaller extends AbstractRuntimeCodeInstaller {
         this.method = method;
         this.compilation = (SubstrateCompilationResult) compilation;
         this.tier = compilation.getName().endsWith(TruffleCompilerImpl.FIRST_TIER_COMPILATION_SUFFIX) ? TruffleCompilerImpl.FIRST_TIER_INDEX : TruffleCompilerImpl.LAST_TIER_INDEX;
-        this.debug = new DebugContext.Builder(RuntimeOptionValues.singleton()).build();
+        this.debug = new DebugContext.Builder(RuntimeOptionValues.singleton().get()).build();
     }
 
     private void prepareCodeMemory() {
@@ -265,8 +265,10 @@ public class RuntimeCodeInstaller extends AbstractRuntimeCodeInstaller {
     }
 
     private void createCodeChunkInfos(CodeInfo runtimeMethodInfo, ReferenceAdjuster adjuster) {
-        CodeInfoEncoder codeInfoEncoder = new CodeInfoEncoder(new RuntimeFrameInfoCustomization(), new CodeInfoEncoder.Encoders(false, null, false));
+        CodeInfoEncoder codeInfoEncoder = new CodeInfoEncoder(new RuntimeFrameInfoCustomization(), new CodeInfoEncoder.Encoders(false, _ -> {
+        }, false));
         codeInfoEncoder.addMethod(method, compilation, 0, compilation.getTargetCodeSize());
+
         Runnable noop = () -> {
         };
         codeInfoEncoder.encodeAllAndInstall(runtimeMethodInfo, adjuster, noop);

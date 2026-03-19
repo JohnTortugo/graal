@@ -24,7 +24,6 @@
  */
 package com.oracle.svm.jdwp.resident.impl;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -43,9 +42,10 @@ import com.oracle.svm.core.deopt.DeoptState;
 import com.oracle.svm.core.hub.ClassForNameSupport;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.interpreter.InterpreterFrameSourceInfo;
-import com.oracle.svm.core.locks.VMMutex;
 import com.oracle.svm.core.meta.SubstrateObjectConstant;
+import com.oracle.svm.core.thread.ThreadsLock;
 import com.oracle.svm.core.thread.VMThreads;
+import com.oracle.svm.espresso.shared.resolver.CallKind;
 import com.oracle.svm.interpreter.DebuggerSupport;
 import com.oracle.svm.interpreter.EspressoFrame;
 import com.oracle.svm.interpreter.InterpreterFrame;
@@ -362,27 +362,12 @@ public final class ResidentJDWP implements JDWP {
         return reply;
     }
 
-    /* This code is broken at the moment and may cause deadlocks, see GR-73513. */
-    private static VMMutex lockThreads() {
-        VMMutex mutex;
-        try {
-            Field mutexField = VMThreads.class.getDeclaredField("THREAD_MUTEX");
-            mutexField.setAccessible(true);
-            mutex = (VMMutex) mutexField.get(null);
-        } catch (IllegalAccessException | IllegalArgumentException | NoSuchFieldException | SecurityException ex) {
-            ex.printStackTrace();
-            throw JDWPException.raise(ErrorCode.INTERNAL);
-        }
-        mutex.lock();
-        return mutex;
-    }
-
     private static long[] getAllThreadIds() {
         long[] ids = new long[10];
         int i = 0;
-        VMMutex mutex = lockThreads();
+        ThreadsLock.lockRead();
         try {
-            for (IsolateThread thread = VMThreads.firstThreadUnsafe(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
+            for (IsolateThread thread = VMThreads.firstThread(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
                 Thread t = ThreadStartDeathSupport.get().filterAppThread(thread);
                 if (t == null) {
                     continue;
@@ -393,7 +378,7 @@ public final class ResidentJDWP implements JDWP {
                 ids[i++] = JDWPBridgeImpl.getIds().getIdOrCreateWeak(t);
             }
         } finally {
-            mutex.unlock();
+            ThreadsLock.unlockRead();
         }
         ids = Arrays.copyOf(ids, i);
         if (LOGGER.isLoggable()) {
@@ -566,10 +551,11 @@ public final class ResidentJDWP implements JDWP {
         long[] threadGroupIds = new long[10];
         int ti = 0;
         int tgi = 0;
-        VMMutex mutex = lockThreads();
+
+        ThreadsLock.lockRead();
         try {
             // Find child threads and child groups:
-            for (IsolateThread thread = VMThreads.firstThreadUnsafe(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
+            for (IsolateThread thread = VMThreads.firstThread(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
                 Thread t = ThreadStartDeathSupport.get().filterAppThread(thread);
                 if (t == null) {
                     continue;
@@ -601,7 +587,7 @@ public final class ResidentJDWP implements JDWP {
                 }
             }
         } finally {
-            mutex.unlock();
+            ThreadsLock.unlockRead();
         }
 
         WritablePacket reply = WritablePacket.newReplyTo(packet);
@@ -643,10 +629,11 @@ public final class ResidentJDWP implements JDWP {
 
         long[] threadGroupIds = new long[5];
         int tgi = 0;
-        VMMutex mutex = lockThreads();
+
+        ThreadsLock.lockRead();
         try {
             // Find all top thread groups:
-            for (IsolateThread thread = VMThreads.firstThreadUnsafe(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
+            for (IsolateThread thread = VMThreads.firstThread(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
                 Thread t = ThreadStartDeathSupport.get().filterAppThread(thread);
                 if (t == null) {
                     continue;
@@ -675,7 +662,7 @@ public final class ResidentJDWP implements JDWP {
                 }
             }
         } finally {
-            mutex.unlock();
+            ThreadsLock.unlockRead();
         }
 
         data.writeInt(tgi);
@@ -1919,9 +1906,13 @@ public final class ResidentJDWP implements JDWP {
             return new Result(null, MetadataUtil.requireNonNull(throwable));
         }
 
-        static Result ofInvoke(boolean isVirtual, InterpreterResolvedJavaMethod method, Object... args) {
+        static Result ofInvoke(boolean forceNonVirtual, InterpreterResolvedJavaMethod method, Object... args) {
             try {
-                return fromValue(InterpreterToVM.dispatchInvocation(method, args, isVirtual, false, false, false));
+                CallKind callKind = method.getCallKind();
+                if (forceNonVirtual && callKind.hasLookup()) {
+                    callKind = CallKind.DIRECT;
+                }
+                return fromValue(InterpreterToVM.dispatchInvocation(method, args, callKind, false, false, false));
             } catch (SemanticJavaException e) {
                 return fromThrowable(e.getCause());
             } catch (StackOverflowError | OutOfMemoryError error) {
@@ -2091,8 +2082,7 @@ public final class ResidentJDWP implements JDWP {
         require(!thread.isVirtual(), ErrorCode.ILLEGAL_ARGUMENT, "virtual threads not supported");
 
         Object[] args = prepend(receiver, argsWithoutReceiver);
-        boolean isVirtual = !InvokeOptions.nonVirtual(options);
-        return invokeReply(packet, Result.ofInvoke(isVirtual, method, args), method.getSignature().getReturnKind());
+        return invokeReply(packet, Result.ofInvoke(InvokeOptions.nonVirtual(options), method, args), method.getSignature().getReturnKind());
     }
 
     @Override

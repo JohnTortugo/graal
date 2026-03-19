@@ -24,9 +24,9 @@
  */
 package com.oracle.svm.core.genscavenge;
 
-import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.core.util.PointerUtils.roundDown;
 import static com.oracle.svm.core.util.PointerUtils.roundUp;
+import static com.oracle.svm.shared.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.shared.util.VMError.guarantee;
 import static org.graalvm.word.impl.Word.nullPointer;
 import static org.graalvm.word.impl.Word.unsigned;
@@ -43,6 +43,7 @@ import org.graalvm.nativeimage.c.type.WordPointer;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.IsolateArgumentAccess;
 import com.oracle.svm.core.IsolateArgumentParser;
@@ -50,7 +51,6 @@ import com.oracle.svm.core.IsolateArguments;
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.SubstrateGCOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.VMInspectionOptions;
 import com.oracle.svm.core.c.function.CEntryPointErrors;
 import com.oracle.svm.core.graal.snippets.CEntryPointSnippets;
@@ -73,10 +73,14 @@ import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.core.thread.VMOperation;
 import com.oracle.svm.core.util.PointerUtils;
 import com.oracle.svm.core.util.UnsignedUtils;
+import com.oracle.svm.shared.Uninterruptible;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.InitialLayerOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
-import org.graalvm.word.impl.Word;
 
 /**
  * Reserves a fixed-size address range and provides memory from it by committing and uncommitting
@@ -104,6 +108,7 @@ import org.graalvm.word.impl.Word;
  * for allocation. Several blocks of the same size could be grouped in one tree node to reduce tree
  * operations (particularly balancing).
  */
+@SingletonTraits(access = AllAccess.class, layeredCallbacks = SingleLayer.class, layeredInstallationKind = InitialLayerOnly.class)
 public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemoryProvider {
     private static final long MIN_RESERVED_ADDRESS_SPACE_SIZE = 32L * 1024 * 1024 * 1024;
 
@@ -419,7 +424,7 @@ public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemo
     }
 
     @Override
-    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    @Uninterruptible(reason = "Allocation internals must never end up in interruptible code.")
     public Pointer allocateAlignedChunk(UnsignedWord nbytes, UnsignedWord alignment) {
         WordPointer allocOut = UnsafeStackValue.get(WordPointer.class);
         int error = allocateInHeapAddressSpace(nbytes, alignment, allocOut);
@@ -444,7 +449,7 @@ public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemo
     }
 
     @Override
-    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    @Uninterruptible(reason = "Allocation internals must never end up in interruptible code.")
     public Pointer allocateUnalignedChunk(UnsignedWord nbytes) {
         WordPointer allocOut = UnsafeStackValue.get(WordPointer.class);
         int error = allocateInHeapAddressSpace(nbytes, getAlignmentForUnalignedChunks(), allocOut);
@@ -666,7 +671,7 @@ public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemo
     }
 
     @Override
-    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    @Uninterruptible(reason = "Allocation internals must never end up in interruptible code.")
     public void freeAlignedChunk(PointerBase start, UnsignedWord nbytes, UnsignedWord alignment) {
         if (VMInspectionOptions.hasNativeMemoryTrackingSupport()) {
             NativeMemoryTracking.singleton().trackUncommit(nbytes, NmtCategory.JavaHeap);
@@ -675,7 +680,7 @@ public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemo
     }
 
     @Override
-    @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
+    @Uninterruptible(reason = "Allocation internals must never end up in interruptible code.")
     public void freeUnalignedChunk(PointerBase start, UnsignedWord nbytes) {
         if (VMInspectionOptions.hasNativeMemoryTrackingSupport()) {
             NativeMemoryTracking.singleton().trackUncommit(nbytes, NmtCategory.JavaHeap);
@@ -771,7 +776,7 @@ public class AddressRangeCommittedMemoryProvider extends ChunkBasedCommittedMemo
         }
     }
 
-    @Uninterruptible(reason = "Switch to interruptible code for error reporting.", calleeMustBe = false)
+    @Uninterruptible(reason = "Switch to interruptible code for error reporting.", mayBeInlined = true, calleeMustBe = false)
     private static RuntimeException reportUncommitFailed(Pointer mapBegin, UnsignedWord mappingSize) {
         throw reportUncommitFailedInterruptibly(mapBegin, mappingSize);
     }

@@ -36,7 +36,7 @@ import org.graalvm.nativeimage.impl.VMRuntimeSupport;
 
 import com.oracle.svm.core.IsolateArgumentParser;
 import com.oracle.svm.core.Isolates;
-import com.oracle.svm.core.feature.AutomaticallyRegisteredImageSingleton;
+import com.oracle.svm.shared.singletons.AutomaticallyRegisteredImageSingleton;
 import com.oracle.svm.core.heap.HeapSizeVerifier;
 import com.oracle.svm.core.option.RuntimeOptionValidationSupport;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;

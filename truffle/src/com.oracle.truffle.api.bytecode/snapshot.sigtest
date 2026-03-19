@@ -45,6 +45,7 @@ hfds safeSingleton,unsafeSingleton
 
 CLSS public abstract com.oracle.truffle.api.bytecode.BytecodeDescriptor<%0 extends com.oracle.truffle.api.nodes.RootNode & com.oracle.truffle.api.bytecode.BytecodeRootNode, %1 extends com.oracle.truffle.api.TruffleLanguage<?>, %2 extends com.oracle.truffle.api.bytecode.BytecodeBuilder>
 cons protected init(java.lang.Object)
+meth protected final void onTransition(com.oracle.truffle.api.TruffleLanguage<?>,{com.oracle.truffle.api.bytecode.BytecodeDescriptor%0},com.oracle.truffle.api.bytecode.BytecodeTransition)
 meth protected final long withGlobalConfig(com.oracle.truffle.api.TruffleLanguage<?>,long)
 meth protected final void onPrepareForLoad(com.oracle.truffle.api.TruffleLanguage<?>,{com.oracle.truffle.api.bytecode.BytecodeDescriptor%0})
 meth public abstract com.oracle.truffle.api.bytecode.BytecodeConfig$Builder newConfigBuilder()
@@ -141,6 +142,7 @@ meth protected com.oracle.truffle.api.frame.Frame resolveFrameImpl(com.oracle.tr
 meth protected com.oracle.truffle.api.frame.Frame resolveNonVirtualFrameImpl(com.oracle.truffle.api.TruffleStackTraceElement)
 meth protected double getLocalValueInternalDouble(com.oracle.truffle.api.frame.Frame,int,int) throws com.oracle.truffle.api.nodes.UnexpectedResultException
 meth protected final com.oracle.truffle.api.bytecode.BytecodeLocation findLocation(int)
+meth protected abstract com.oracle.truffle.api.bytecode.BytecodeTransition createTransition(com.oracle.truffle.api.bytecode.BytecodeNode,int,com.oracle.truffle.api.bytecode.BytecodeNode,int,boolean)
 meth protected final static java.lang.Object createDefaultStackTraceElement(com.oracle.truffle.api.TruffleStackTraceElement)
 meth protected float getLocalValueInternalFloat(com.oracle.truffle.api.frame.Frame,int,int) throws com.oracle.truffle.api.nodes.UnexpectedResultException
 meth protected int getLocalValueInternalInt(com.oracle.truffle.api.frame.Frame,int,int) throws com.oracle.truffle.api.nodes.UnexpectedResultException
@@ -212,6 +214,7 @@ meth public com.oracle.truffle.api.source.SourceSection ensureSourceSection()
 meth public java.lang.Object interceptControlFlowException(com.oracle.truffle.api.nodes.ControlFlowException,com.oracle.truffle.api.frame.VirtualFrame,com.oracle.truffle.api.bytecode.BytecodeNode,int) throws java.lang.Throwable
 meth public java.lang.String dump()
 meth public java.lang.Throwable interceptInternalException(java.lang.Throwable,com.oracle.truffle.api.frame.VirtualFrame,com.oracle.truffle.api.bytecode.BytecodeNode,int)
+meth public void traceTransition(com.oracle.truffle.api.bytecode.BytecodeTransition,com.oracle.truffle.api.frame.Frame)
 
 CLSS public abstract com.oracle.truffle.api.bytecode.BytecodeRootNodes<%0 extends com.oracle.truffle.api.nodes.RootNode & com.oracle.truffle.api.bytecode.BytecodeRootNode>
 cons protected init(java.lang.Object,com.oracle.truffle.api.bytecode.BytecodeParser<? extends com.oracle.truffle.api.bytecode.BytecodeBuilder>)
@@ -263,6 +266,17 @@ fld public final static com.oracle.truffle.api.bytecode.BytecodeTier UNCACHED
 meth public static com.oracle.truffle.api.bytecode.BytecodeTier valueOf(java.lang.String)
 meth public static com.oracle.truffle.api.bytecode.BytecodeTier[] values()
 supr java.lang.Enum<com.oracle.truffle.api.bytecode.BytecodeTier>
+
+CLSS public abstract com.oracle.truffle.api.bytecode.BytecodeTransition
+cons protected init(java.lang.Object)
+meth public abstract boolean isBytecodeUpdate()
+meth public abstract boolean isTransferToInterpreter()
+meth public abstract com.oracle.truffle.api.bytecode.BytecodeLocation getNewLocation()
+meth public abstract com.oracle.truffle.api.bytecode.BytecodeLocation getOldLocation()
+meth public java.lang.String toString()
+meth public abstract java.util.Set<java.lang.Class<?>> getAddedInstrumentations()
+meth public abstract java.util.Set<java.lang.Class<?>> getAddedTags()
+supr java.lang.Object
 
 CLSS public abstract interface !annotation com.oracle.truffle.api.bytecode.ConstantOperand
  anno 0 java.lang.annotation.Repeatable(java.lang.Class<? extends java.lang.annotation.Annotation> value=class com.oracle.truffle.api.bytecode.ConstantOperand$Repeat)

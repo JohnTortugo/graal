@@ -531,7 +531,7 @@ public class SubstrateAllocationSnippets extends AllocationSnippets {
     @Fold
     @Override
     protected int getMinimalBulkZeroingSize() {
-        return GraalOptions.MinimalBulkZeroingSize.getValue(HostedOptionValues.singleton());
+        return GraalOptions.MinimalBulkZeroingSize.getValue(HostedOptionValues.singleton().get());
     }
 
     @Override

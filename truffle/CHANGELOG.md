@@ -79,7 +79,11 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-73519: `InteropLibrary#getExceptionCause` may return an interop null object if the exception supports a cause but the cause itself is `null`.
 * GR-44465: Added `TruffleString.FromZeroTerminatedNativePointerNode` to support creating TruffleStrings from zero-terminated native buffers.
 * GR-72022: Added `@GenerateBytecode(enableTailCallHandlers=true)` to enable the tail call bytecode handler annotations.
-* GR-72022: Deprecated `BytecodeDebugListener.beforeInstructionExecute(...)` and `BytecodeDebugListener.afterInstructionExecute(...)`. Please use instrumentation based instruction tracing instead. 
+* GR-72022: Deprecated `BytecodeDebugListener.beforeInstructionExecute(...)` and `BytecodeDebugListener.afterInstructionExecute(...)`. Please use instrumentation based instruction tracing instead.
+* GR-73953: Starting with Truffle 25.1, the optimizing runtime is supported only with GraalVM 25.1 or later, including Oracle GraalVM and GraalVM Community Edition. It is no longer supported with GraalVM 25.0 or earlier, or on plain OpenJDK or Oracle JDK via jargraal (`org.graalvm.compiler:compiler` on `--upgrade-module-path`). The fallback runtime remains supported on standard JDKs and remains backwards compatible down to JDK 21, but runs without runtime compilation. If you need the optimizing runtime on plain OpenJDK or Oracle JDK, continue using the 25.0 LTS release.
+* GR-73707: Bytecode DSL: Added `BytecodeRootNode#traceTransition(BytecodeTransition, Frame)`, an optional hook invoked whenever the interpreter transitions between bytecode nodes due to deoptimization (`isTransferToInterpreter()`) or a bytecode update (`isBytecodeUpdate()`).
+* GR-73707: Added `CompilerDirectives.preserveFrameStateHere()` to insert a state-split marker at a specific program point so deoptimization restores the precise frame state for that location. Use this in bytecode interpreters when transfer-to-interpreter transitions must be attributed reliably to the current bytecode location.
+* GR-73707: Added engine option `engine.TraceBytecodeTransition` to log bytecode interpreter transition events engine-wide. Supported values are `true` (all kinds), `transferToInterpreter`, `bytecode`, `tier`, `tag`, and `instrumentation` (comma-separated for combinations). Use `engine.BytecodeMethodFilter` and `engine.BytecodeLanguageFilter` to scope tracing.
 
 ## Version 25.0
 * GR-31495 Added ability to specify language and instrument specific options using `Source.Builder.option(String, String)`. Languages may describe available source options by implementing `TruffleLanguage.getSourceOptionDescriptors()` and `TruffleInstrument.getSourceOptionDescriptors()` respectively.
@@ -154,7 +158,6 @@ This changelog summarizes major changes between Truffle versions relevant to lan
 * GR-32682 Added detection of boxing overloads to support state sharing and better boxing elimination. See `Specialization#rewriteOn` for details. 
     * `TruffleSafepoint#poll(Node)` does not require a non-null location anymore. However, it is still recommended to always pass a location node, if available. 
 * GR-57838 Added `InternalResource#unpackResourceFiles(Path, Path, Path, Predicate)` to allow filtering of resources to unpack. 
-
 ## Version 24.1.0
 * GR-43839 Added optional parameter to TruffleString.ByteIndexOfCodePointSetNode to choose whether the node may calculate the input string's precise code range.
 * GR-51253 Extend allowed DynamicObject shape flags from 8 to 16 bits.

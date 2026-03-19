@@ -42,7 +42,6 @@ import java.lang.reflect.Modifier;
 import org.graalvm.nativeimage.MissingReflectionRegistrationError;
 
 import com.oracle.svm.core.StaticFieldsSupport;
-import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.AnnotateOriginal;
 import com.oracle.svm.core.annotate.Delete;
@@ -56,11 +55,12 @@ import com.oracle.svm.core.hub.RuntimeClassLoading.WithRuntimeClassLoading;
 import com.oracle.svm.core.hub.crema.CremaSupport;
 import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
-import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.core.reflect.UnsafeFieldUtil;
 import com.oracle.svm.core.reflect.target.Target_java_lang_reflect_Field;
-import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.shared.util.ReflectionUtil;
+import com.oracle.svm.shared.util.SubstrateUtil;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.debug.GraalError;
 import jdk.vm.ci.meta.ResolvedJavaField;
@@ -259,6 +259,12 @@ public final class Target_java_lang_invoke_MethodHandleNatives {
     @Alias
     @TargetElement(onlyWith = WithRuntimeClassLoading.class)
     public static native MethodHandle linkMethodHandleConstant(Class<?> callerClass, int refKind, Class<?> defc, String name, Object type);
+
+    @Alias
+    @TargetElement(onlyWith = WithRuntimeClassLoading.class)
+    public static native Target_java_lang_invoke_MemberName linkMethod(Class<?> callerClass, int refKind,
+                    Class<?> defc, String name, Object type,
+                    Object[] appendixResult);
 }
 
 /**

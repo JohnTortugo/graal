@@ -1035,6 +1035,7 @@ final class BytecodeNodeElement extends AbstractElement {
             b.statement("handlers__ = handlers_");
             b.statement("numNodes__ = numNodes_");
             b.statement("locals__ = locals_");
+            b.statement("configEncoding__ = configEncoding_");
 
             if (parent.model.enableTagInstrumentation) {
                 b.statement("tagRoot__ = tagRoot_");
@@ -1049,6 +1050,7 @@ final class BytecodeNodeElement extends AbstractElement {
         b.statement("handlers__ = this.handlers");
         b.statement("numNodes__ = this.numNodes");
         b.statement("locals__ = this.locals");
+        b.statement("configEncoding__ = configEncoding_");
 
         if (parent.model.enableTagInstrumentation) {
             b.statement("tagRoot__ = this.tagRoot");
@@ -1425,6 +1427,11 @@ final class BytecodeNodeElement extends AbstractElement {
             return;
         }
 
+        if (tier.isCached()) {
+            b.startDeclaration(type(boolean.class), "wasCompiled").startStaticCall(types.CompilerDirectives, "inCompiledCode").end().end();
+            b.startStatement().startStaticCall(types.CompilerDirectives, "preserveFrameStateHere").end().end();
+        }
+
         b.startDeclaration(types.FrameWithoutBoxing, "frame").startCall("ACCESS.uncheckedCast").string("frame_").typeLiteral(types.FrameWithoutBoxing).end().end();
         if (parent.model.hasYieldOperation()) {
             b.startDeclaration(types.FrameWithoutBoxing, "localFrame").startCall("ACCESS.uncheckedCast").string("localFrame_").typeLiteral(types.FrameWithoutBoxing).end().end();
@@ -1498,7 +1505,7 @@ final class BytecodeNodeElement extends AbstractElement {
         }
 
         CodeTree op;
-        if (parent.model.bytecodeDebugListener || instructionPartitions.size() > 1) {
+        if (instructionPartitions.size() > 1) {
             b.declaration(type(int.class), "op", BytecodeRootNodeElement.readInstruction("bc", "bci"));
             op = CodeTreeBuilder.singleString("op");
         } else {
@@ -1603,11 +1610,29 @@ final class BytecodeNodeElement extends AbstractElement {
         }
 
         b.end(); // switch
+
+        if (tier.isCached()) {
+            b.lineComment("Detect if a tier-down occurred during the loop iteration");
+            b.startIf().startStaticCall(types.CompilerDirectives, "inInterpreter").end().string(" && wasCompiled").end().startBlock();
+            b.lineComment("Leave slow deoptimized method and reenter continueAt for faster execution");
+            if (this.handlerLayout.isTailCall()) {
+                b.statement("return ", parent.encodeState("bci", "vstate.sp"));
+            } else {
+                b.statement("return ", parent.encodeState("bci", "sp"));
+            }
+            b.end();
+        }
+
         b.end(); // try
 
         if (handlerLayout.isTailCall()) {
             b.startCatchBlock(parent.abstractBytecodeNode.branchBackwardReturnException.asType(), "bre");
             b.statement("return bre.targetState");
+            b.end();
+        }
+        if (tier.isCached()) {
+            b.startCatchBlock(parent.branchBackwardThrowException.asType(), "bte");
+            b.startThrow().string("sneakyThrow(bte.throwable)").end();
             b.end();
         }
 

@@ -38,7 +38,7 @@ import com.oracle.svm.core.code.InstalledCodeObserverSupportFeature;
 import com.oracle.svm.core.debug.SubstrateDebugInfoInstaller;
 import com.oracle.svm.core.debug.SubstrateDebugInfoProvider;
 import com.oracle.svm.core.debug.SubstrateDebugInfoWriter;
-import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.jdk.RuntimeSupport;

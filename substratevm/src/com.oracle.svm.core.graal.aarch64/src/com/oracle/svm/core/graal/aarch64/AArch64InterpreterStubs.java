@@ -24,11 +24,13 @@
  */
 package com.oracle.svm.core.graal.aarch64;
 
-import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.core.graal.aarch64.SubstrateAArch64RegisterConfig.fp;
+import static com.oracle.svm.shared.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static jdk.graal.compiler.asm.aarch64.AArch64Address.createImmediateAddress;
 import static jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode.IMMEDIATE_POST_INDEXED;
 import static jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode.IMMEDIATE_SIGNED_UNSCALED;
 import static jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode.IMMEDIATE_UNSIGNED_SCALED;
+import static jdk.vm.ci.aarch64.AArch64.lr;
 import static jdk.vm.ci.aarch64.AArch64.r0;
 import static jdk.vm.ci.aarch64.AArch64.r1;
 import static jdk.vm.ci.aarch64.AArch64.r2;
@@ -52,14 +54,20 @@ import org.graalvm.nativeimage.c.struct.RawStructure;
 import org.graalvm.nativeimage.c.struct.SizeOf;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
+import org.graalvm.word.impl.Word;
 
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.struct.OffsetOf;
 import com.oracle.svm.core.deopt.DeoptimizationSlotPacking;
 import com.oracle.svm.core.graal.code.InterpreterAccessStubData;
 import com.oracle.svm.core.graal.code.PreparedArgumentType;
 import com.oracle.svm.core.jdk.UninterruptibleUtils;
 import com.oracle.svm.core.meta.SharedMethod;
+import com.oracle.svm.shared.Uninterruptible;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.Disallowed;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.Duplicable;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -68,8 +76,10 @@ import jdk.graal.compiler.asm.aarch64.AArch64Address;
 import jdk.graal.compiler.asm.aarch64.AArch64MacroAssembler;
 import jdk.graal.compiler.lir.asm.CompilationResultBuilder;
 import jdk.vm.ci.aarch64.AArch64;
+import jdk.vm.ci.code.CallingConvention;
 import jdk.vm.ci.code.Register;
-import org.graalvm.word.impl.Word;
+import jdk.vm.ci.code.RegisterConfig;
+import jdk.vm.ci.code.ValueUtil;
 
 public class AArch64InterpreterStubs {
 
@@ -480,6 +490,7 @@ public class AArch64InterpreterStubs {
         return OffsetOf.get(InterpreterDataAArch64.class, "AbiGpRet");
     }
 
+    @SingletonTraits(access = RuntimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Duplicable.class, other = Disallowed.class)
     public static class AArch64InterpreterAccessStubData implements InterpreterAccessStubData {
 
         @Override
@@ -629,6 +640,50 @@ public class AArch64InterpreterStubs {
         @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
         public int allocateStubDataSize() {
             return sizeOfInterpreterData();
+        }
+    }
+
+    /**
+     * Frame context for
+     * {@link com.oracle.svm.core.deopt.Deoptimizer.StubType#InterpreterDeoptEntryPointStub}. This
+     * transition restores the source-frame stack/base pointers and return address, then jumps to
+     * the interpreter deoptimization entry point.
+     */
+    protected static class InterpreterDeoptEntryPointStubFrameContext extends SubstrateAArch64Backend.SubstrateAArch64FrameContext {
+        protected final CallingConvention callingConvention;
+
+        protected InterpreterDeoptEntryPointStubFrameContext(SharedMethod method, CallingConvention callingConvention) {
+            super(method);
+            this.callingConvention = callingConvention;
+        }
+
+        @Override
+        public void enter(CompilationResultBuilder crb) {
+            /* do nothing */
+        }
+
+        @Override
+        public void leave(CompilationResultBuilder crb) {
+            AArch64MacroAssembler masm = (AArch64MacroAssembler) crb.asm;
+            RegisterConfig registerConfig = crb.frameMap.getRegisterConfig();
+
+            /* leave arg0 untouched, it's the first argument to the interpreter entry point */
+
+            Register regRevertSp = ValueUtil.asRegister(callingConvention.getArgument(1));
+            Register regInterpEntryPoint = ValueUtil.asRegister(callingConvention.getArgument(2));
+            Register regOldReturnAddress = ValueUtil.asRegister(callingConvention.getArgument(3));
+            Register regOldBasePointer = ValueUtil.asRegister(callingConvention.getArgument(4));
+
+            masm.mov(64, sp, regRevertSp);
+            if (((SubstrateAArch64RegisterConfig) registerConfig).shouldPreserveFramePointer()) {
+                masm.mov(64, fp, regOldBasePointer);
+            }
+            /*
+             * wire up lr properly so that the interpreter entrypoint returns to the original caller
+             */
+            masm.mov(64, lr, regOldReturnAddress);
+
+            masm.jmp(regInterpEntryPoint);
         }
     }
 }

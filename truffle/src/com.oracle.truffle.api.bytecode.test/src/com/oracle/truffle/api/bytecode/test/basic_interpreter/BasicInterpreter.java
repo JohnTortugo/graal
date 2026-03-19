@@ -869,6 +869,17 @@ public abstract class BasicInterpreter extends DebugBytecodeRootNode implements 
         }
     }
 
+    // Special operation that forces its operand to escape.
+    @Operation
+    public static final class Deoptimize {
+        @Specialization
+        public static void deoptimize(boolean condition) {
+            if (condition) {
+                CompilerDirectives.transferToInterpreter();
+            }
+        }
+    }
+
     @Instrumentation
     public static final class PrintHere {
         @Specialization
@@ -956,6 +967,14 @@ public abstract class BasicInterpreter extends DebugBytecodeRootNode implements 
         @Specialization
         static boolean doLongs(long left, long right) {
             return left < right;
+        }
+    }
+
+    @Operation
+    static final class Greater {
+        @Specialization
+        static boolean doLongs(long left, long right) {
+            return left > right;
         }
     }
 

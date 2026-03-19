@@ -24,7 +24,7 @@
  */
 package com.oracle.svm.interpreter;
 
-import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.shared.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static com.oracle.svm.interpreter.InterpreterUtil.traceInterpreter;
 
 import java.io.IOException;
@@ -47,11 +47,10 @@ import org.graalvm.word.Pointer;
 import com.oracle.graal.pointsto.heap.ImageHeapConstant;
 import com.oracle.svm.core.BuildPhaseProvider;
 import com.oracle.svm.core.FunctionPointerHolder;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.CGlobalData;
 import com.oracle.svm.core.c.CGlobalDataFactory;
 import com.oracle.svm.core.heap.UnknownObjectField;
-import com.oracle.svm.shared.util.VMError;
+import com.oracle.svm.shared.Uninterruptible;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod;
 import com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaType;
 import com.oracle.svm.interpreter.metadata.InterpreterUniverse;
@@ -60,12 +59,18 @@ import com.oracle.svm.interpreter.metadata.Lazy;
 import com.oracle.svm.interpreter.metadata.MetadataUtil;
 import com.oracle.svm.interpreter.metadata.serialization.SerializationContext;
 import com.oracle.svm.interpreter.metadata.serialization.Serializers;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.Disallowed;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
 import jdk.graal.compiler.api.replacements.SnippetReflectionProvider;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
+@SingletonTraits(access = AllAccess.class, layeredCallbacks = NoLayeredCallbacks.class, other = Disallowed.class)
 public class DebuggerSupport {
     public static final String IMAGE_INTERP_HASH_SYMBOL_NAME = "__svm_interp_hash";
 
@@ -122,16 +127,16 @@ public class DebuggerSupport {
     }
 
     private static void logForcedReferencesHistogram(ArrayList<Object> references, ArrayList<FunctionPointerHolder> methodPointers) {
-        traceInterpreter("Forced constants: ").signed(references.size()).newline();
-        traceInterpreter("Forced method pointers: ").signed(methodPointers.size()).newline();
-        traceInterpreter("Forced constants histogram:");
+        traceInterpreter().string("Forced constants: ").signed(references.size()).newline();
+        traceInterpreter().string("Forced method pointers: ").signed(methodPointers.size()).newline();
+        traceInterpreter().string("Forced constants histogram:");
         EconomicMap<Class<?>, Integer> histogram = EconomicMap.create();
         for (Object object : references) {
             histogram.put(object.getClass(), histogram.get(object.getClass(), 0) + 1);
         }
         MapCursor<Class<?>, Integer> cursor = histogram.getEntries();
         while (cursor.advance()) {
-            traceInterpreter("  ").string(cursor.getKey().toString()).string(" ").string(cursor.getValue().toString()).newline();
+            traceInterpreter().string("  ").string(cursor.getKey().toString()).string(" ").string(cursor.getValue().toString()).newline();
         }
     }
 

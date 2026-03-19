@@ -38,9 +38,9 @@ import com.oracle.graal.pointsto.meta.HostedProviders;
 import com.oracle.svm.core.hub.RuntimeClassLoading;
 import com.oracle.svm.core.invoke.MethodHandleUtils;
 import com.oracle.svm.core.invoke.Target_java_lang_invoke_MemberName;
-import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.hosted.annotation.AnnotationWrapper;
 import com.oracle.svm.hosted.phases.HostedGraphKit;
+import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.AnnotatedWrapper;
 import com.oracle.svm.util.OriginalMethodProvider;
 
@@ -156,9 +156,19 @@ public class PolymorphicSignatureWrapperMethod implements ResolvedJavaMethod, Gr
                             case "invokeBasic":
                             case "invokeExact":
                             case "invoke":
-                                methodHandleOrMemberName = receiver;
-                                unboxMethod = kit.getMetaAccess().lookupJavaMethod(
-                                                MethodHandleUtils.class.getMethod(unboxMethodName, Object.class, MethodHandle.class));
+                                if (RuntimeClassLoading.isSupported()) {
+                                    /*
+                                     * Crema returns a type based on the form's vmentry. See
+                                     * CremaSupportImpl.invokeBasic*
+                                     */
+                                    methodHandleOrMemberName = receiver;
+                                    unboxMethod = kit.getMetaAccess().lookupJavaMethod(
+                                                    MethodHandleUtils.class.getMethod(unboxMethodName + "Crema", Object.class, MethodHandle.class));
+                                } else {
+                                    methodHandleOrMemberName = receiver;
+                                    unboxMethod = kit.getMetaAccess().lookupJavaMethod(
+                                                    MethodHandleUtils.class.getMethod(unboxMethodName, Object.class, MethodHandle.class));
+                                }
                                 break;
                             case "linkToVirtual":
                             case "linkToStatic":

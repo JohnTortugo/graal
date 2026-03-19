@@ -406,6 +406,7 @@ public class TruffleTypes {
     public static final String BytecodeRootNodes_Name = "com.oracle.truffle.api.bytecode.BytecodeRootNodes";
     public static final String BytecodeNode_Name = "com.oracle.truffle.api.bytecode.BytecodeNode";
     public static final String BytecodeLocation_Name = "com.oracle.truffle.api.bytecode.BytecodeLocation";
+    public static final String BytecodeTransition_Name = "com.oracle.truffle.api.bytecode.BytecodeTransition";
     public static final String BytecodeTier_Name = "com.oracle.truffle.api.bytecode.BytecodeTier";
     public static final String BytecodeSupport_Name = "com.oracle.truffle.api.bytecode.BytecodeSupport";
     public static final String BytecodeSupport_ConstantsBuffer_Name = "com.oracle.truffle.api.bytecode.BytecodeSupport.ConstantsBuffer";
@@ -480,6 +481,7 @@ public class TruffleTypes {
     public final DeclaredType BytecodeRootNodes = c.getDeclaredTypeOptional(BytecodeRootNodes_Name);
     public final DeclaredType BytecodeNode = c.getDeclaredTypeOptional(BytecodeNode_Name);
     public final DeclaredType BytecodeLocation = c.getDeclaredTypeOptional(BytecodeLocation_Name);
+    public final DeclaredType BytecodeTransition = c.getDeclaredTypeOptional(BytecodeTransition_Name);
     public final DeclaredType BytecodeTier = c.getDeclaredTypeOptional(BytecodeTier_Name);
     public final DeclaredType BytecodeSupport = c.getDeclaredTypeOptional(BytecodeSupport_Name);
     public final DeclaredType BytecodeSupport_ConstantsBuffer = c.getDeclaredTypeOptional(BytecodeSupport_ConstantsBuffer_Name);

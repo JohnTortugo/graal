@@ -20,13 +20,10 @@ A typical way to address this is to use `-H:Preserve=package=...` at build time 
 ## Current Limitations
 * Parallel class loading is explicitly disabled and not supported.
 * JNI is not supported (JNI will not find run-time-loaded classes/methods/fields, and native methods in run-time-loaded classes will not link).
-* Public signature-polymorphic methods of `MethodHandle` and `VarHandle` cannot be called from run-time-loaded methods.
 * "condy" entries are not supported in the constant pool of run-time-loaded classes.
 * The boot layer modules are frozen at build time, and it may not be possible to load additional classes at run time from modules of the build-time module path.
 * The assertion status of classes is fixed at image build time.
-* Run-time-loaded classes cannot determine whether they are a `Proxy` or not.
 * Reflection is limited for run-time-loaded classes:
-  * Annotations cannot be accessed.
   * The enclosing class cannot be determined.
   * `getRecordComponents` does not work.
   * `getPermittedSubClasses` does not work.

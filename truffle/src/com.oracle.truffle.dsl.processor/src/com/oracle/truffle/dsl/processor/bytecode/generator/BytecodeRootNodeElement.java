@@ -203,6 +203,8 @@ public final class BytecodeRootNodeElement extends AbstractElement {
     final VirtualStateElement virtualState;
     final CounterStateElement counterState = new CounterStateElement(this);
 
+    final BranchBackwardThrowExceptionElement branchBackwardThrowException;
+
     CodeTypeElement configEncoder;
     OldBytecodesBoxElement oldBytecodesBoxElement;
     AbstractBytecodeNodeElement abstractBytecodeNode;
@@ -213,6 +215,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
     InstructionDescriptorImplElement instructionDescriptorImpl;
     InstructionDescriptorListElement instructionDescriptorList;
     InstructionImplElement instructionImpl;
+    final BytecodeTransitionImplElement bytecodeTransitionImplElement;
 
     private Map<TypeMirror, CodeExecutableElement> expectMethods = new HashMap<>();
 
@@ -281,7 +284,10 @@ public final class BytecodeRootNodeElement extends AbstractElement {
             this.oldBytecodesBoxElement = this.add(new OldBytecodesBoxElement(this));
         }
 
+        this.branchBackwardThrowException = add(new BranchBackwardThrowExceptionElement(parent));
+
         this.abstractBytecodeNode = this.add(new AbstractBytecodeNodeElement(this));
+        this.bytecodeTransitionImplElement = new BytecodeTransitionImplElement(this);
 
         if (model.enableTagInstrumentation) {
             tagNode.lazyInit();
@@ -321,6 +327,8 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         // Define the interpreter implementations.
         BytecodeNodeElement cachedBytecodeNode = this.add(new BytecodeNodeElement(this, InterpreterTier.CACHED));
         abstractBytecodeNode.getPermittedSubclasses().add(cachedBytecodeNode.asType());
+
+        this.add(bytecodeTransitionImplElement);
 
         CodeTypeElement initialBytecodeNode;
         if (model.enableUncachedInterpreter) {
@@ -884,6 +892,8 @@ public final class BytecodeRootNodeElement extends AbstractElement {
             b.end();
         }
 
+        b.statement("boolean wasCompiled = CompilerDirectives.inCompiledCode()");
+
         b.statement("long state = ", encodeState("bci", "sp"));
 
         b.startWhile().string("true").end().startBlock();
@@ -905,30 +915,18 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         b.lineComment("Bytecode or tier changed");
         b.tree(GeneratorUtils.createTransferToInterpreterAndInvalidate());
 
-        if (model.needsTransition()) {
-            b.declaration(abstractBytecodeNode.asType(), "oldBytecode", "bc");
-            b.statement("bc = this.bytecode");
-
-            if (model.isBytecodeUpdatable()) {
-                b.startAssign("state");
-            } else {
-                b.startStatement();
-            }
-            b.startCall("oldBytecode.transition");
-            b.string("bc");
-            if (model.isBytecodeUpdatable() || model.needsCachedTagsTransition()) {
-                b.string("state");
-            }
-            if (model.needsCachedTagsTransition()) {
-                b.string(localFrame());
-            }
-            if (model.hasYieldOperation()) {
-                b.string("continuationRootNode");
-            }
-            b.end(2);
+        b.declaration(abstractBytecodeNode.asType(), "oldBytecode", "bc");
+        b.statement("bc = this.bytecode");
+        if (model.isBytecodeUpdatable()) {
+            b.startAssign("state");
         } else {
-            b.statement("bc = this.bytecode");
+            b.startStatement();
         }
+        b.string("oldBytecode.");
+        emitCallDefault(b, abstractBytecodeNode.transition);
+        b.end();
+
+        b.statement("wasCompiled = false");
 
         b.end();
         b.end();

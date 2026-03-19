@@ -47,6 +47,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import com.oracle.svm.core.BuilderUtil;
 import org.graalvm.nativeimage.AnnotationAccess;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
@@ -58,7 +59,6 @@ import com.oracle.graal.pointsto.infrastructure.SubstitutionProcessor;
 import com.oracle.graal.pointsto.meta.AnalysisField;
 import com.oracle.graal.pointsto.meta.AnalysisUniverse;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.SubstrateUtil;
 import com.oracle.svm.core.annotate.Alias;
 import com.oracle.svm.core.annotate.AnnotateOriginal;
 import com.oracle.svm.core.annotate.Delete;
@@ -197,7 +197,7 @@ public class AnnotationSubstitutionProcessor extends SubstitutionProcessor {
                  * requested dimension has not yet been created. The registered substitution is the
                  * original type that the alias is pointing to.
                  */
-                int dimension = SubstrateUtil.arrayTypeDimension(type);
+                int dimension = BuilderUtil.arrayTypeDimension(type);
 
                 /*
                  * Eagerly register all array types of dimensions up to the required type dimension.
@@ -1010,9 +1010,16 @@ public class AnnotationSubstitutionProcessor extends SubstitutionProcessor {
             substitutions.put(annotated, target);
         }
         if (original != null) {
-            guarantee(!substitutions.containsKey(original) || substitutions.get(original).equals(original) || substitutions.get(original).equals(target),
-                            "Substitution: %s -> %s conflicts with previously registered: %s", original, target, substitutions.get(original));
-            substitutions.put(original, target);
+            boolean isMethodAlias = original == target && original instanceof ResolvedJavaMethod;
+            /*
+             * if there was already a substitution, and we are only adding a self-mapping for an
+             * alias, skip that self mapping in favor of the substitution.
+             */
+            if (!isMethodAlias || substitutions.get(original) == null) {
+                guarantee(!substitutions.containsKey(original) || substitutions.get(original).equals(original) || substitutions.get(original).equals(target),
+                                "Substitution: %s -> %s conflicts with previously registered: %s", original, target, substitutions.get(original));
+                substitutions.put(original, target);
+            }
         }
     }
 

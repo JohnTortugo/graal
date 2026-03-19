@@ -71,7 +71,7 @@ public class ClassLoaderSupportImpl extends ClassLoaderSupport {
 
     private final NativeImageClassLoaderSupport classLoaderSupport;
 
-    private final NativeImageClassLoader imageClassLoader;
+    private final ClassLoader imageClassLoader;
 
     private final Map<String, EconomicSet<Module>> packageToModules;
 

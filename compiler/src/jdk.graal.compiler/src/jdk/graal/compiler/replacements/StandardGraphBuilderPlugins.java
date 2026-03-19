@@ -35,6 +35,7 @@ import static jdk.graal.compiler.nodes.NamedLocationIdentity.OFF_HEAP_LOCATION;
 import static jdk.graal.compiler.replacements.BoxingSnippets.Templates.getCacheClass;
 import static jdk.graal.compiler.replacements.nodes.AESNode.CryptMode.DECRYPT;
 import static jdk.graal.compiler.replacements.nodes.AESNode.CryptMode.ENCRYPT;
+import static jdk.vm.ci.meta.DeoptimizationAction.InvalidateRecompile;
 import static jdk.vm.ci.meta.DeoptimizationAction.InvalidateReprofile;
 import static jdk.vm.ci.meta.DeoptimizationAction.None;
 import static jdk.vm.ci.meta.DeoptimizationReason.TransferToInterpreter;
@@ -254,7 +255,8 @@ public class StandardGraphBuilderPlugins {
                     InvocationPlugins plugins,
                     boolean useExactMathPlugins,
                     boolean explicitUnsafeNullChecks,
-                    boolean supportsStubBasedPlugins) {
+                    boolean supportsStubBasedPlugins,
+                    boolean enableAesPlugins) {
         registerObjectPlugins(plugins);
         registerClassPlugins(plugins);
         registerMathPlugins(plugins, useExactMathPlugins);
@@ -282,7 +284,9 @@ public class StandardGraphBuilderPlugins {
 
         if (supportsStubBasedPlugins) {
             registerArraysPlugins(plugins);
-            registerAESPlugins(plugins);
+            if (enableAesPlugins) {
+                registerAESPlugins(plugins);
+            }
             registerGHASHPlugin(plugins);
             registerBigIntegerPlugins(plugins);
             registerMessageDigestPlugins(plugins);
@@ -1759,6 +1763,7 @@ public class StandardGraphBuilderPlugins {
 
         r.register(new DeoptimizePlugin(snippetReflection, None, TransferToInterpreter, false, "deoptimize"));
         r.register(new DeoptimizePlugin(snippetReflection, InvalidateReprofile, TransferToInterpreter, false, "deoptimizeAndInvalidate"));
+        r.register(new DeoptimizePlugin(snippetReflection, InvalidateRecompile, TransferToInterpreter, false, "deoptimizeAndRecompile"));
         r.register(new DeoptimizePlugin(snippetReflection, null, null, null,
                         "deoptimize", DeoptimizationAction.class, DeoptimizationReason.class, boolean.class));
         r.register(new DeoptimizePlugin(snippetReflection, null, null, null,
@@ -1930,14 +1935,14 @@ public class StandardGraphBuilderPlugins {
                         return true;
                     }
                 });
-                r.register(new RequiredInvocationPlugin("opaque", javaClass) {
+                r.register(new RequiredInlineOnlyInvocationPlugin("opaque", javaClass) {
                     @Override
                     public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode value) {
                         b.addPush(kind, new OpaqueValueNode(value));
                         return true;
                     }
                 });
-                r.register(new RequiredInvocationPlugin("opaqueUntilAfter", javaClass, GraphState.StageFlag.class) {
+                r.register(new RequiredInlineOnlyInvocationPlugin("opaqueUntilAfter", javaClass, GraphState.StageFlag.class) {
                     @Override
                     public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode value, ValueNode stageFlag) {
                         GraphState.StageFlag foldAfter = Objects.requireNonNull(asConstantObject(b, GraphState.StageFlag.class, stageFlag), stageFlag + " must be a non-null compile time constant");

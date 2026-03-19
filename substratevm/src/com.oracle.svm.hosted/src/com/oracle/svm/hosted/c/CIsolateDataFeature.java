@@ -33,30 +33,32 @@ import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.c.CIsolateData;
 import com.oracle.svm.core.c.CIsolateDataStorage;
-import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.util.UnsignedUtils;
 import com.oracle.svm.shared.collections.ConcurrentIdentityHashMap;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.PartiallyLayerAware;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
 
 @AutomaticallyRegisteredFeature
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = PartiallyLayerAware.class)
 public class CIsolateDataFeature implements InternalFeature {
 
     private final Map<String, CIsolateData<?>> usedEntries = new ConcurrentIdentityHashMap<>();
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
-        access.registerObjectReplacer(this::replaceObject);
+        access.registerObjectReachabilityHandler(this::collectCIsolateData, CIsolateData.class);
     }
 
-    private Object replaceObject(Object obj) {
-        if (obj instanceof CIsolateData<?> entry) {
-            usedEntries.compute(entry.getName(), (key, old) -> {
-                VMError.guarantee(old == null || old == entry, "The isolate data section already contains an entry for %s", key);
-                return entry;
-            });
-        }
-        return obj;
+    private void collectCIsolateData(CIsolateData<?> data) {
+        usedEntries.compute(data.getName(), (key, old) -> {
+            VMError.guarantee(old == null || old == data, "The isolate data section already contains an entry for %s", key);
+            return data;
+        });
     }
 
     @Override

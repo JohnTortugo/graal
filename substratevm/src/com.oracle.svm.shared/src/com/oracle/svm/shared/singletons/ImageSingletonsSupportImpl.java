@@ -301,6 +301,10 @@ public final class ImageSingletonsSupportImpl extends ImageSingletonsSupport imp
             return singletonDuringImageBuild;
         }
 
+        public static void install() {
+            install(new HostedManagement());
+        }
+
         public static void install(HostedManagement vmConfig) {
             Invariants.guarantee(singletonDuringImageBuild == null, "Only one native image build can run at a time");
             singletonDuringImageBuild = vmConfig;
@@ -352,7 +356,6 @@ public final class ImageSingletonsSupportImpl extends ImageSingletonsSupport imp
          */
         private final Map<Class<?>, SingletonInfo> configObjects;
         private final Map<Object, SingletonTraitMap> singletonToTraitMap;
-
         private final boolean layeredBuild;
         private final AnnotationExtractor extractor;
         /** Callback to be executed before the singleton is published in the registry. */

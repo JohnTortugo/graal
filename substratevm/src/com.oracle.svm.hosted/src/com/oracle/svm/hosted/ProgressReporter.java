@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -70,7 +71,7 @@ import com.oracle.svm.core.BuildArtifacts.ArtifactType;
 import com.oracle.svm.core.RuntimeAssertionsSupport;
 import com.oracle.svm.core.SubstrateGCOptions;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.SubstrateUtil;
+import com.oracle.svm.shared.util.SubstrateUtil;
 import com.oracle.svm.core.VM;
 import com.oracle.svm.core.configure.ConditionalRuntimeValue;
 import com.oracle.svm.core.heap.Heap;
@@ -366,16 +367,17 @@ public class ProgressReporter {
          * Step 2: scan HostedOptionValues and collect migrationMessage, alternatives, and origins.
          */
         Map<String, ExperimentalOptionDetails> experimentalOptions = new HashMap<>();
-        var hostedOptionValues = HostedOptionValues.singleton().getMap();
-        for (OptionKey<?> option : hostedOptionValues.getKeys()) {
+        OptionValues hostedOptionValues = HostedOptionValues.singleton().get();
+        var hostedOptionValuesMap = hostedOptionValues.getMap();
+        for (OptionKey<?> option : hostedOptionValuesMap.getKeys()) {
             if (option instanceof RuntimeOptionKey || option == SubstrateOptions.UnlockExperimentalVMOptions || option.getDescriptor().getStability() != OptionStability.EXPERIMENTAL) {
                 continue;
             }
             OptionDescriptor descriptor = option.getDescriptor();
-            Object optionValue = option.getValueOrDefault(hostedOptionValues);
+            Object optionValue = option.getValue(hostedOptionValues);
             String emptyOrBooleanValue = "";
             if (descriptor.getOptionValueType() == Boolean.class) {
-                emptyOrBooleanValue = Boolean.parseBoolean(optionValue.toString()) ? "+" : "-";
+                emptyOrBooleanValue = Boolean.parseBoolean(Objects.toString(optionValue)) ? "+" : "-";
             }
             String prefixedOptionName = CommonOptionParser.HOSTED_OPTION_PREFIX + emptyOrBooleanValue + option.getName();
             if (!experimentalBuilderOptionsAndOrigins.containsKey(prefixedOptionName)) {
@@ -868,8 +870,8 @@ public class ProgressReporter {
             l().println();
             l().dim().a("> %s", unhandledThrowable).reset().println();
             l().println();
-            l().a("Please inspect the generated error report at:").println();
-            l().link(NativeImageOptions.getErrorFilePath(parsedHostedOptions)).println();
+            // Keep in sync with the {@code catch_files} array in {@code ci/common.jsonnet}.
+            l().a("Please inspect the generated error report at: '").link(NativeImageOptions.getErrorFilePath(parsedHostedOptions)).a("'").println();
             l().println();
             l().a("If you are unable to resolve this problem, please file an issue with the error report at:").println();
             var supportUrl = VM.getSupportUrl();
@@ -948,7 +950,7 @@ public class ProgressReporter {
 
     private static Path reportImageBuildStatistics() {
         Consumer<PrintWriter> statsReporter = ImageSingletons.lookup(ImageBuildStatistics.class).getReporter();
-        Path reportsPath = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton()).resolve("reports");
+        Path reportsPath = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton().get()).resolve("reports");
         return ReportUtils.report("image build statistics", reportsPath.resolve("image_build_statistics.json"), statsReporter, false);
     }
 

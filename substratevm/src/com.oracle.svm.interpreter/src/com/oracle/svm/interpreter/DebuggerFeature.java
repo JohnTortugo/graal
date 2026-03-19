@@ -31,8 +31,10 @@ import static com.oracle.svm.interpreter.metadata.Bytecodes.INVOKESPECIAL;
 import static com.oracle.svm.interpreter.metadata.Bytecodes.INVOKESTATIC;
 import static com.oracle.svm.interpreter.metadata.Bytecodes.INVOKEVIRTUAL;
 import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.EST_NO_ENTRY;
-import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.VTBL_NO_ENTRY;
+import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.VTBL_ALWAYS_INLINED;
+import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.VTBL_INVALID;
 import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.VTBL_ONE_IMPL;
+import static com.oracle.svm.interpreter.metadata.InterpreterResolvedJavaMethod.VTBL_UNINITIALIZED;
 import static com.oracle.svm.interpreter.metadata.InterpreterUniverseImpl.toHexString;
 
 import java.io.IOException;
@@ -72,7 +74,7 @@ import com.oracle.svm.core.BuildArtifacts;
 import com.oracle.svm.core.FunctionPointerHolder;
 import com.oracle.svm.core.ParsingReason;
 import com.oracle.svm.core.RuntimeAssertionsSupport;
-import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.hub.DynamicHub;
 import com.oracle.svm.core.meta.MethodPointer;
@@ -107,6 +109,10 @@ import com.oracle.svm.interpreter.metadata.ReferenceConstant;
 import com.oracle.svm.interpreter.metadata.serialization.SerializationContext;
 import com.oracle.svm.interpreter.metadata.serialization.Serializers;
 import com.oracle.svm.shared.option.HostedOptionValues;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.PartiallyLayerAware;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
 import com.oracle.svm.util.JVMCIReflectionUtil;
 
@@ -141,6 +147,7 @@ import jdk.vm.ci.meta.UnresolvedJavaMethod;
  */
 @Platforms(Platform.HOSTED_ONLY.class)
 @AutomaticallyRegisteredFeature
+@SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = PartiallyLayerAware.class)
 public class DebuggerFeature implements InternalFeature {
     private AnalysisMethod enterInterpreterMethod;
     private InterpreterStubTable enterStubTable = null;
@@ -550,7 +557,7 @@ public class DebuggerFeature implements InternalFeature {
 
             if (!hostedMethod.isCompiled()) {
                 InterpreterUtil.log("[got] after compilation: %s is not compiled, nulling it out", hostedMethod);
-                interpreterMethod.setVTableIndex(VTBL_NO_ENTRY);
+                interpreterMethod.setVTableIndex(VTBL_UNINITIALIZED);
                 interpreterMethod.setNativeEntryPoint(null);
             } else {
                 if (interpreterMethod.hasBytecodes()) {
@@ -565,6 +572,7 @@ public class DebuggerFeature implements InternalFeature {
                 if (hostedMethod.getImplementations().length > 1) {
                     if (!hostedMethod.hasVTableIndex()) {
                         InterpreterUtil.log("[vtable assignment] %s has multiple implementations but no vtable slot. This is not supported.%n", hostedMethod);
+                        interpreterMethod.setVTableIndex(VTBL_INVALID);
                     } else {
                         InterpreterUtil.log("[vtable assignment] Setting to Index %s for methods %s <> %s%n", hostedMethod.getVTableIndex(), interpreterMethod, hostedMethod);
                         interpreterMethod.setVTableIndex(hostedMethod.getVTableIndex());
@@ -582,7 +590,7 @@ public class DebuggerFeature implements InternalFeature {
                     InterpreterUtil.log("[vtable assignment]  set oneImpl to -> %s%n", oneImpl);
                 } else {
                     InterpreterUtil.log("[vtable assignment] No implementation available: %s%n", hostedMethod);
-                    interpreterMethod.setVTableIndex(VTBL_NO_ENTRY);
+                    interpreterMethod.setVTableIndex(VTBL_ALWAYS_INLINED);
                 }
             }
         }
@@ -731,7 +739,7 @@ public class DebuggerFeature implements InternalFeature {
                             }
                         }));
 
-        Path destDir = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton());
+        Path destDir = NativeImageGenerator.generatedFiles(HostedOptionValues.singleton().get());
 
         // Be explicit here: .metadata file is derived from <final binary name (including
         // extension)>

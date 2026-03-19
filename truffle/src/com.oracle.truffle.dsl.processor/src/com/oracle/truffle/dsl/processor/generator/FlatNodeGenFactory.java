@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * The Universal Permissive License (UPL), Version 1.0
@@ -5930,9 +5930,13 @@ public class FlatNodeGenFactory {
             if (useSpecializationClass) {
                 method.addParameter(new CodeVariableElement(specializationType, specializationLocalName));
             }
+            for (VariableElement arg : plugs.additionalArguments()) {
+                method.addParameter(arg);
+            }
             CodeTreeBuilder builder = method.createBuilder();
             if (!useSpecializationClass || !specialization.hasMultipleInstances()) {
                 // single instance remove
+                builder.tree(multiState.createForceLoad(frameState, StateQuery.create(SpecializationActive.class, specialization)));
                 builder.tree((multiState.createSet(frameState, null, StateQuery.create(SpecializationActive.class, specialization), false, true)));
                 plugs.notifySpecialize(this, builder, frameState, specialization);
                 if (useSpecializationClass) {
@@ -5957,7 +5961,7 @@ public class FlatNodeGenFactory {
                 builder.statement("update = cur.next_");
                 builder.end().startElseBlock();
                 if (specializedIsNode) {
-                    builder.statement("update = original.remove(this, ", specializationLocalName, ")");
+                    builder.startStatement().string("update = original.remove(").tree(createNodeAccess(frameState)).string(", ").string(specializationLocalName).string(")").end();
                 } else {
                     builder.statement("update = original.remove(", specializationLocalName, ")");
                 }
@@ -5999,6 +6003,9 @@ public class FlatNodeGenFactory {
         }
         if (useSpecializationClass) {
             builder.string(specializationLocalName);
+        }
+        for (VariableElement arg : plugs.additionalArguments()) {
+            builder.variable(arg);
         }
         builder.end().end();
         builder.tree(createCallExecuteAndSpecialize(builder, forType, frameState));

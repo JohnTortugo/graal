@@ -39,7 +39,7 @@ import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.c.function.CEntryPointOptions.NoEpilogue;
 import com.oracle.svm.core.c.function.CEntryPointOptions.NoPrologue;
 import com.oracle.svm.core.thread.VMThreads;
-import com.oracle.svm.guest.staging.Uninterruptible;
+import com.oracle.svm.shared.Uninterruptible;
 
 @CHeader(value = GraalIsolateHeader.class)
 public final class CEntryPointNativeFunctions {
@@ -207,13 +207,8 @@ public final class CEntryPointNativeFunctions {
         if (result != 0) {
             return result;
         }
-        detachAllThreadsAndTearDownIsolate0();
+        VMThreads.detachAllExternallyStartedThreadsWithoutCleanupForTearDown();
         return CEntryPointActions.leaveTearDownIsolate();
-    }
-
-    @Uninterruptible(reason = UNINTERRUPTIBLE_REASON, calleeMustBe = false)
-    private static void detachAllThreadsAndTearDownIsolate0() {
-        VMThreads.detachAllThreadsExceptCurrentWithoutCleanupForTearDown();
     }
 
     private CEntryPointNativeFunctions() {

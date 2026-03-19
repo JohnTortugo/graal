@@ -160,7 +160,6 @@ public class SubstrateReplacements extends ReplacementsImpl {
 
     @Platforms(Platform.HOSTED_ONLY.class)
     public void registerImmutableObjects(BeforeHeapLayoutAccess access) {
-        access.registerAsImmutable(this);
         access.registerAsImmutable(snippetEncoding);
         access.registerAsImmutable(snippetObjects);
         access.registerAsImmutable(snippetNodeClasses);
@@ -226,8 +225,9 @@ public class SubstrateReplacements extends ReplacementsImpl {
             parameterPlugin = new ConstantBindingParameterPlugin(args, providers.getMetaAccess(), providers.getSnippetReflection());
         }
 
-        OptionValues optionValues = new OptionValues(options, GraalOptions.TraceInlining, GraalOptions.TraceInliningForStubsAndSnippets.getValue(options),
+        OptionValues optionValues = options.derive(GraalOptions.TraceInlining, GraalOptions.TraceInliningForStubsAndSnippets.getValue(options),
                         DebugOptions.OptimizationLog, null);
+
         try (DebugContext debug = openSnippetDebugContext("SVMSnippet_", method, optionValues)) {
             StructuredGraph result = new StructuredGraph.Builder(optionValues, debug)
                             .method(method)
@@ -339,7 +339,7 @@ public class SubstrateReplacements extends ReplacementsImpl {
         Map<ResolvedJavaMethod, InvocationPlugin> result = new HashMap<>(builder.delayedInvocationPluginMethods.size());
         for (ResolvedJavaMethod method : builder.delayedInvocationPluginMethods) {
             ResolvedJavaMethod replacedMethod = (ResolvedJavaMethod) objectReplacer.apply(method);
-            InvocationPlugin plugin = plugins.getInvocationPlugins().lookupInvocation(replacedMethod, HostedOptionValues.singleton());
+            InvocationPlugin plugin = plugins.getInvocationPlugins().lookupInvocation(replacedMethod, HostedOptionValues.singleton().get());
             assert plugin != null : "expected invocation plugin for " + replacedMethod;
             result.put(replacedMethod, plugin);
         }

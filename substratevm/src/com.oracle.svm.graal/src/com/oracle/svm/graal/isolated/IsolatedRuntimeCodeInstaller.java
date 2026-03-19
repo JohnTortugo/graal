@@ -30,6 +30,7 @@ import org.graalvm.nativeimage.c.struct.SizeOf;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
 import org.graalvm.word.UnsignedWord;
+import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.c.function.CEntryPointOptions;
 import com.oracle.svm.core.code.CodeInfo;
@@ -49,7 +50,6 @@ import com.oracle.svm.graal.meta.SubstrateMethod;
 
 import jdk.graal.compiler.code.CompilationResult;
 import jdk.graal.compiler.core.common.CompilationIdentifier;
-import org.graalvm.word.impl.Word;
 
 public final class IsolatedRuntimeCodeInstaller extends RuntimeCodeInstaller {
 

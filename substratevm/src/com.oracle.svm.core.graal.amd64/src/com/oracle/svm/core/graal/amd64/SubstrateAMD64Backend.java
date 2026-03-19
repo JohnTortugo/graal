@@ -53,7 +53,7 @@ import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.ReservedRegisters;
 import com.oracle.svm.core.SubstrateControlFlowIntegrity;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.core.SubstrateUtil;
+import com.oracle.svm.shared.util.SubstrateUtil;
 import com.oracle.svm.core.amd64.AMD64CPUFeatureAccess;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.cpufeature.Stubs;
@@ -2009,6 +2009,12 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
             case InterpreterLeaveStub -> {
                 assert InterpreterSupport.isEnabled();
                 yield new AMD64InterpreterStubs.InterpreterLeaveStubContext(method, callingConvention);
+            }
+            case InterpreterDeoptEntryPointStub -> {
+                assert InterpreterSupport.isEnabled();
+                assert SubstrateOptions.useRistretto();
+                yield new AMD64InterpreterStubs.InterpreterEntryPointStubFrameContext(method, callingConvention);
+
             }
             case NoDeoptStub -> new SubstrateAMD64FrameContext(method, callingConvention);
         };

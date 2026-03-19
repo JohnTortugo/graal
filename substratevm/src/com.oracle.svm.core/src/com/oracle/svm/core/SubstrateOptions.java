@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -41,7 +41,6 @@ import java.util.UUID;
 import java.util.function.Predicate;
 
 import org.graalvm.collections.EconomicMap;
-import org.graalvm.collections.UnmodifiableEconomicMap;
 import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
@@ -150,18 +149,13 @@ public class SubstrateOptions {
     @Option(help = "Selects the libc implementation to use. Available implementations: glibc, musl, bionic")//
     public static final HostedOptionKey<String> UseLibC = new HostedOptionKey<>(null) {
         @Override
-        public String getValueOrDefault(UnmodifiableEconomicMap<OptionKey<?>, Object> values) {
-            if (!values.containsKey(this)) {
+        public String getValue(OptionValues values) {
+            if (!hasBeenSet(values)) {
                 return Platform.includedIn(Platform.ANDROID.class)
                                 ? "bionic"
                                 : System.getProperty("substratevm.HostLibC", "glibc");
             }
-            return (String) values.get(this);
-        }
-
-        @Override
-        public String getValue(OptionValues values) {
-            return getValueOrDefault(values.getMap());
+            return super.getValue(values);
         }
     };
 
@@ -437,12 +431,12 @@ public class SubstrateOptions {
 
     @Fold
     public static boolean useEconomyCompilerConfig() {
-        return useEconomyCompilerConfig(HostedOptionValues.singleton());
+        return useEconomyCompilerConfig(HostedOptionValues.singleton().get());
     }
 
     @Fold
     public static boolean useCodeSizeCompilerConfig() {
-        return useCodeSizeCompilerConfig(HostedOptionValues.singleton());
+        return useCodeSizeCompilerConfig(HostedOptionValues.singleton().get());
     }
 
     @Fold
@@ -507,7 +501,7 @@ public class SubstrateOptions {
 
     @Platforms(HOSTED_ONLY.class)
     public static Path getImagePath() {
-        return getImagePath(HostedOptionValues.singleton());
+        return getImagePath(HostedOptionValues.singleton().get());
     }
 
     public static final class GCGroup implements APIOptionGroup {
@@ -1144,16 +1138,11 @@ public class SubstrateOptions {
     @Option(help = "Provide java.lang.Terminator exit handlers. Default value is true for executables and false for shared libraries because this option installs signal handlers.", type = Expert, stability = OptionStability.EXPERIMENTAL)//
     protected static final HostedOptionKey<Boolean> InstallExitHandlers = new HostedOptionKey<>(null) {
         @Override
-        public Boolean getValueOrDefault(UnmodifiableEconomicMap<OptionKey<?>, Object> values) {
-            if (values.containsKey(this)) {
-                return (Boolean) values.get(this);
-            }
-            return isExecutableHelper();
-        }
-
-        @Override
         public Boolean getValue(OptionValues values) {
-            return getValueOrDefault(values.getMap());
+            if (!hasBeenSet(values)) {
+                return isExecutableHelper();
+            }
+            return super.getValue(values);
         }
     };
 
@@ -1186,16 +1175,11 @@ public class SubstrateOptions {
         @Option(help = "Support runtime compilation in separate isolates (enable at runtime with option CompileInIsolates).") //
         public static final HostedOptionKey<Boolean> SupportCompileInIsolates = new HostedOptionKey<>(null) {
             @Override
-            public Boolean getValueOrDefault(UnmodifiableEconomicMap<OptionKey<?>, Object> values) {
-                if (!values.containsKey(this)) {
-                    return SpawnIsolates.getValueOrDefault(values);
-                }
-                return super.getValueOrDefault(values);
-            }
-
-            @Override
             public Boolean getValue(OptionValues values) {
-                return getValueOrDefault(values.getMap());
+                if (hasBeenSet(values)) {
+                    return super.getValue(values);
+                }
+                return SpawnIsolates.getValue(values);
             }
         };
 
@@ -1425,15 +1409,10 @@ public class SubstrateOptions {
     public static final HostedOptionKey<Boolean> RunMainInNewThread = new HostedOptionKey<>(false) {
         @Override
         public Boolean getValue(OptionValues values) {
-            return getValueOrDefault(values.getMap());
-        }
-
-        @Override
-        public Boolean getValueOrDefault(UnmodifiableEconomicMap<OptionKey<?>, Object> values) {
-            if (!values.containsKey(this) && Platform.includedIn(Platform.LINUX.class) && LibCBase.targetLibCIs(MuslLibC.class)) {
+            if (!hasBeenSet(values) && Platform.includedIn(Platform.LINUX.class) && LibCBase.targetLibCIs(MuslLibC.class)) {
                 return true;
             }
-            return (Boolean) values.get(this, this.getDefaultValue());
+            return super.getValue(values);
         }
     };
 
@@ -1715,4 +1694,7 @@ public class SubstrateOptions {
         return ConcealedOptions.GraalJITCompileAtRuntime.getValue();
     }
 
+    @Option(type = Expert, help = "Support for continuations which are used by virtual threads. " +
+                    "If disabled, virtual threads can be started but each of them is backed by a platform thread.") //
+    public static final HostedOptionKey<Boolean> VMContinuations = new HostedOptionKey<>(true);
 }

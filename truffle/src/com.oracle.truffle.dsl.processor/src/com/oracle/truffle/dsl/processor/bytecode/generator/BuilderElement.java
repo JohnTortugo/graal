@@ -2631,6 +2631,8 @@ final class BuilderElement extends AbstractElement {
         for (VariableElement e : ElementFilter.fieldsIn(parent.abstractBytecodeNode.getEnclosedElements())) {
             b.defaultDeclaration(e.asType(), e.getSimpleName().toString() + "_");
         }
+        b.statement("configEncoding_ = (parseSources ? 0x1L : 0L) | (((long) instrumentations) << " + BytecodeRootNodeElement.INSTRUMENTATION_OFFSET + ") | (((long) tags) << " +
+                        BytecodeRootNodeElement.TAG_OFFSET + ")");
 
         b.statement("doEmitRootSourceInfo(", operationStack.read(model.rootOperation, operationFields.index), ")");
         b.startIf().string("parseSources").end().startBlock();

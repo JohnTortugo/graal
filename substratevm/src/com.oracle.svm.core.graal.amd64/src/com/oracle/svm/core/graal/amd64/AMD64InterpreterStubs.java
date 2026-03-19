@@ -24,8 +24,9 @@
  */
 package com.oracle.svm.core.graal.amd64;
 
-import static com.oracle.svm.guest.staging.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
+import static com.oracle.svm.shared.Uninterruptible.CALLED_FROM_UNINTERRUPTIBLE_CODE;
 import static jdk.vm.ci.amd64.AMD64.rax;
+import static jdk.vm.ci.amd64.AMD64.rbp;
 import static jdk.vm.ci.amd64.AMD64.rsp;
 import static jdk.vm.ci.amd64.AMD64.xmm0;
 
@@ -38,9 +39,10 @@ import org.graalvm.nativeimage.c.struct.SizeOf;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.PointerBase;
+import org.graalvm.word.impl.Word;
 
+import com.oracle.svm.core.FrameAccess;
 import com.oracle.svm.core.SubstrateOptions;
-import com.oracle.svm.guest.staging.Uninterruptible;
 import com.oracle.svm.core.c.struct.OffsetOf;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.deopt.DeoptimizationSlotPacking;
@@ -49,6 +51,12 @@ import com.oracle.svm.core.graal.code.PreparedArgumentType;
 import com.oracle.svm.core.graal.meta.SubstrateRegisterConfig;
 import com.oracle.svm.core.jdk.UninterruptibleUtils;
 import com.oracle.svm.core.meta.SharedMethod;
+import com.oracle.svm.shared.Uninterruptible;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.Disallowed;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.RuntimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.SingletonLayeredInstallationKind.Duplicable;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.VMError;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -60,7 +68,8 @@ import jdk.graal.compiler.lir.asm.CompilationResultBuilder;
 import jdk.vm.ci.amd64.AMD64;
 import jdk.vm.ci.code.CallingConvention;
 import jdk.vm.ci.code.Register;
-import org.graalvm.word.impl.Word;
+import jdk.vm.ci.code.RegisterConfig;
+import jdk.vm.ci.code.ValueUtil;
 
 public class AMD64InterpreterStubs {
 
@@ -478,6 +487,7 @@ public class AMD64InterpreterStubs {
         return OffsetOf.get(InterpreterDataAMD64.class, "AbiFpRet");
     }
 
+    @SingletonTraits(access = RuntimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, layeredInstallationKind = Duplicable.class, other = Disallowed.class)
     public static class AMD64InterpreterAccessStubData implements InterpreterAccessStubData {
 
         @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
@@ -653,6 +663,67 @@ public class AMD64InterpreterStubs {
         @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
         public int allocateStubDataSize() {
             return sizeOfInterpreterData();
+        }
+    }
+
+    /**
+     * Frame context for
+     * {@link com.oracle.svm.core.deopt.Deoptimizer.StubType#InterpreterDeoptEntryPointStub}. This
+     * transition restores the source-frame stack/base pointers, recreates the original return
+     * address edge, and jumps to the interpreter deoptimization entry point.
+     */
+    public static class InterpreterEntryPointStubFrameContext extends SubstrateAMD64Backend.SubstrateAMD64FrameContext {
+        public InterpreterEntryPointStubFrameContext(SharedMethod method, CallingConvention callingConvention) {
+            super(method, callingConvention);
+        }
+
+        @Override
+        public void enter(CompilationResultBuilder tasm) {
+            /*
+             * Keep this otherwise-empty entrypoint walkable (including Windows unwind expectations)
+             * by reporting a minimal frame: return-address slot only.
+             */
+            tasm.setTotalFrameSize(FrameAccess.returnAddressSize());
+        }
+
+        @Override
+        public void leave(CompilationResultBuilder tasm) {
+            AMD64MacroAssembler asm = (AMD64MacroAssembler) tasm.asm;
+
+            RegisterConfig registerConfig = tasm.frameMap.getRegisterConfig();
+
+            /* leave arg0 untouched, it's the first argument to the interpreter entry point */
+
+            Register regRevertSp = ValueUtil.asRegister(callingConvention.getArgument(1));
+            Register regInterpEntryPoint = ValueUtil.asRegister(callingConvention.getArgument(2));
+            Register regOldReturnAddress = ValueUtil.asRegister(callingConvention.getArgument(3));
+            Register regOldBasePointer = ValueUtil.asRegister(callingConvention.getArgument(4));
+
+            if (((SubstrateAMD64RegisterConfig) registerConfig).shouldUseBasePointer()) {
+                asm.movq(rbp, regOldBasePointer);
+            }
+
+            /*
+             * Keep every IP in this epilogue walkable (notably on Windows): materialize the
+             * synthetic return edge first, then make stack-pointer restoration the last state
+             * change before the tail jump.
+             *
+             * This avoids a transient state where rsp already points to revertSp but the synthetic
+             * return-address slot is not initialized yet.
+             */
+            /*
+             * regRevertSp is the caller SP after the deoptimized frame is removed. The active
+             * return-address slot for that SP is [regRevertSp - returnAddressSize()], so write the
+             * original caller return PC there using regOldReturnAddress.
+             */
+            asm.movq(asm.makeAddress(regRevertSp, -FrameAccess.returnAddressSize()), regOldReturnAddress);
+            /*
+             * Set rsp to that exact slot address (not to regRevertSp): the jump target and stack
+             * walkers expect [rsp] to be the current return-address word.
+             */
+            asm.leaq(rsp, asm.makeAddress(regRevertSp, -FrameAccess.returnAddressSize()));
+
+            asm.jmp(regInterpEntryPoint);
         }
     }
 }

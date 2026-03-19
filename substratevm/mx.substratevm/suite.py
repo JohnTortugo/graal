@@ -274,6 +274,31 @@ suite = {
             "jacoco" : "include",
         },
 
+        "com.oracle.svm.common": {
+            "subDir": "src",
+            "sourceDirs": ["src"],
+            "dependencies": [
+                "sdk:NATIVEIMAGE",
+                "sdk:NATIVEIMAGE_LIBGRAAL",
+                "compiler:GRAAL",
+                "compiler:VMACCESS",
+                "SVM_SHARED",
+            ],
+            "requiresConcealed" : {
+                "jdk.internal.vm.ci" : [
+                    "jdk.vm.ci.meta",
+                    "jdk.vm.ci.meta.annotation",
+                ]
+            },
+            "javaCompliance" : "21+",
+            "annotationProcessors": [
+                "compiler:GRAAL_PROCESSOR",
+            ],
+            "checkstyle": "com.oracle.svm.core",
+            "workingSets": "SVM",
+            "jacoco" : "include",
+        },
+
         # Shade Cap'n Proto Runtime
         "com.oracle.svm.shaded.org.capnproto": {
             "subDir" : "src",
@@ -607,7 +632,7 @@ suite = {
             "subDir": "src",
             "sourceDirs": ["src"],
             "dependencies": [
-                "SVM_SHARED",
+                "com.oracle.svm.common",
                 "com.oracle.svm.sdk",
                 "com.oracle.svm.util",
             ],
@@ -1991,7 +2016,7 @@ suite = {
             "moduleInfo" : {
                 "name" : "org.graalvm.nativeimage.shared",
                 "exports" : [
-                    """com.oracle.svm.shared.* to
+                    """* to
                             com.oracle.svm.extraimage_enterprise,
                             com.oracle.svm.jdwp.server,
                             com.oracle.svm.svm_enterprise,
@@ -2499,6 +2524,7 @@ suite = {
             "subDir": "src",
             "description" : "Native Image base that can be shared by native image building and pointsto.",
             "dependencies": [
+                "com.oracle.svm.common",
                 "com.oracle.svm.util",
                 "com.oracle.svm.sdk",
             ],
@@ -2540,6 +2566,13 @@ suite = {
                            org.graalvm.nativeimage.foreign,
                            org.graalvm.truffle.runtime.svm,
                            com.oracle.truffle.enterprise.svm""",
+                    """com.oracle.svm.common.meta to org.graalvm.nativeimage.pointsto,
+                           org.graalvm.nativeimage.builder,
+                           org.graalvm.nativeimage.llvm,
+                           org.graalvm.extraimage.builder,
+                           org.graalvm.nativeimage.foreign,
+                           org.graalvm.truffle.runtime.svm,
+                           com.oracle.truffle.enterprise.svm""",
                     """com.oracle.svm.sdk.staging.hosted.layeredimage to org.graalvm.nativeimage.pointsto,
                            org.graalvm.nativeimage.builder""",
                     """com.oracle.svm.sdk.staging.layeredimage to org.graalvm.nativeimage.pointsto,
@@ -2563,6 +2596,7 @@ suite = {
             "distDependencies": [
                 "compiler:GRAAL",
                 "NATIVE_IMAGE_BASE",
+                "SVM_SHARED",
             ],
             "exclude": [
             ],

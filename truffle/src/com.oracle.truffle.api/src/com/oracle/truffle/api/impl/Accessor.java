@@ -63,6 +63,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -1528,6 +1529,8 @@ public abstract class Accessor {
         public abstract void registerInstructionTracerFactory(Object hostLanguage, Function<? extends Object, ? extends Object> tracerFactory);
 
         public abstract <T> List<T> getEngineInstructionTracers(Object hostLanguage, Function<? extends Object, T> tracerFactory);
+
+        public abstract void registerTransitionLogger(Object sharingLayer, BiConsumer<? extends Object, ? extends Object> logger);
     }
 
     public final void transferOSRFrameStaticSlot(FrameWithoutBoxing sourceFrame, FrameWithoutBoxing targetFrame, int slot) {

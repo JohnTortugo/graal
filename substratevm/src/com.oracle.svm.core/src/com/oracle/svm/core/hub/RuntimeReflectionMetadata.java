@@ -120,17 +120,13 @@ public final class RuntimeReflectionMetadata implements ReflectionMetadata {
                         toClassArrayOrThrow(new JavaType[0], type),
                         resolvedJavaMethod.getModifiers(),
                         resolvedJavaMethod.getGenericSignature(),
-                        /* (GR-69096) resolvedJavaMethod.getRawAnnotations() */
-                        new byte[0],
-                        /* (GR-69096) resolvedJavaMethod.getRawParameterAnnotations() */
-                        new byte[0],
-                        /* (GR-69096) resolvedJavaMethod.getRawAnnotationDefault() */
-                        new byte[0],
+                        resolvedJavaMethod.getRawAnnotations(),
+                        resolvedJavaMethod.getRawParameterAnnotations(),
+                        resolvedJavaMethod.getRawAnnotationDefault(),
                         resolvedJavaMethod.getAccessor(receiverType, parameterTypes),
-                        /* (GR-69096) resolvedJavaMethod.getRawParameters() */
+                        /* (GR-74007) resolvedJavaMethod.getRawParameters() */
                         null,
-                        /* (GR-69096) resolvedJavaMethod.getRawTypeAnnotations() */
-                        new byte[0],
+                        resolvedJavaMethod.getRawTypeAnnotations(),
                         declaringClass.getLayerId());
     }
 
@@ -156,15 +152,12 @@ public final class RuntimeReflectionMetadata implements ReflectionMetadata {
                         toClassArrayOrThrow(new JavaType[0], type),
                         resolvedConstructor.getModifiers(),
                         resolvedConstructor.getGenericSignature(),
-                        /* (GR-69096) resolvedConstructor.getRawAnnotations() */
-                        new byte[0],
-                        /* (GR-69096) resolvedConstructor.getRawParameterAnnotations() */
-                        new byte[0],
+                        resolvedConstructor.getRawAnnotations(),
+                        resolvedConstructor.getRawParameterAnnotations(),
                         resolvedConstructor.getAccessor(DynamicHub.toClass(declaringClass), parameterTypes),
-                        /* (GR-69096) resolvedConstructor.getRawParameters() */
+                        /* (GR-74007) resolvedConstructor.getRawParameters() */
                         new byte[0],
-                        /* (GR-69096) resolvedConstructor.getRawTypeAnnotations() */
-                        new byte[0]);
+                        resolvedConstructor.getRawTypeAnnotations());
     }
 
     @Override

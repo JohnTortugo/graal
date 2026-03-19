@@ -394,7 +394,7 @@ public class NativeImageGeneratorRunner {
 
         checkCommonPool(nativeImageClassLoader);
 
-        return new ImageClassLoader(NativeImageGenerator.getTargetPlatform(nativeImageClassLoader), nativeImageClassLoaderSupport, vmAccess);
+        return new ImageClassLoader(NativeImageGenerator.getTargetPlatform(nativeImageClassLoader), nativeImageClassLoaderSupport);
     }
 
     /**

@@ -36,6 +36,7 @@ import com.oracle.svm.espresso.classfile.attributes.AttributedElement;
 import com.oracle.svm.espresso.classfile.attributes.BootstrapMethodsAttribute;
 import com.oracle.svm.espresso.classfile.attributes.NestHostAttribute;
 import com.oracle.svm.espresso.classfile.attributes.NestMembersAttribute;
+import com.oracle.svm.espresso.classfile.descriptors.ParserSymbols;
 import com.oracle.svm.shared.singletons.MultiLayeredImageSingleton;
 import com.oracle.svm.shared.util.VMError;
 
@@ -118,14 +119,20 @@ public final class CremaResolvedObjectType extends InterpreterResolvedObjectType
 
     @Override
     public byte[] getRawAnnotations() {
-        // (GR-69096)
-        throw VMError.unimplemented("getRawAnnotations");
+        Attribute attribute = getAttribute(ParserSymbols.ParserNames.RuntimeVisibleAnnotations);
+        if (attribute == null) {
+            return null;
+        }
+        return attribute.getData();
     }
 
     @Override
     public byte[] getRawTypeAnnotations() {
-        // (GR-69096)
-        throw VMError.unimplemented("getRawTypeAnnotations");
+        Attribute attribute = getAttribute(ParserSymbols.ParserNames.RuntimeVisibleTypeAnnotations);
+        if (attribute == null) {
+            return null;
+        }
+        return attribute.getData();
     }
 
     @Override
