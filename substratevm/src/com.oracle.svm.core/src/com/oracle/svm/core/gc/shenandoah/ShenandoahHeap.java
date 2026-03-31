@@ -704,7 +704,8 @@ public final class ShenandoahHeap extends Heap {
 
         @SuppressWarnings("unused")
         private static void printRegion(Log log, int regionIndex, ShenandoahRegionInfo r) {
-            throw VMError.shouldNotReachHere("Unimplemented: region printing");
+            log = log.unsigned(regionIndex).string(" : bottom=").hex(r.bottom()).string(" top=").hex(r.end());
+            log.string(" end=").hex(r.end()).string(" type=").unsigned(r.regionType()).newline();
         }
     }
 
