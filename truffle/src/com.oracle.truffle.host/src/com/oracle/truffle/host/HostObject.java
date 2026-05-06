@@ -81,6 +81,7 @@ import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.interop.ArityException;
+import com.oracle.truffle.api.interop.DatapathObject;
 import com.oracle.truffle.api.interop.DatapathReadOnlyArrayList;
 import com.oracle.truffle.api.interop.ExceptionType;
 import com.oracle.truffle.api.interop.InteropException;
@@ -299,44 +300,62 @@ public final class HostObject implements TruffleObject {
     }
 
     @ExportMessage
-    Object readMember(String name,
-                    @Bind Node node,
-                    @Shared("lookupField") @Cached LookupFieldNode lookupField,
-                    @Shared("readField") @Cached ReadFieldNode readField,
-                    @Shared("lookupMethod") @Cached LookupMethodNode lookupMethod,
-                    @Cached LookupInnerClassNode lookupInnerClass,
-                    @Shared("error") @Cached InlinedBranchProfile error) throws UnsupportedMessageException, UnknownIdentifierException {
-        if (isNull()) {
+    static final class ReadMember {
+        @Specialization(guards = "receiver.isNull()")
+        static Object doNull(HostObject receiver, String name,
+                        @Bind Node node,
+                        @Shared("error") @Cached InlinedBranchProfile error)
+                        throws UnsupportedMessageException {
             error.enter(node);
             throw UnsupportedMessageException.create();
         }
-        boolean isStatic = isStaticClass();
-        Class<?> lookupClass = getLookupClass();
-        HostFieldDesc foundField = lookupField.execute(node, this, lookupClass, name, isStatic);
-        if (foundField != null) {
-            return readField.execute(node, foundField, this);
-        }
-        HostMethodDesc foundMethod = lookupMethod.execute(node, this, lookupClass, name, isStatic);
-        if (foundMethod != null) {
-            return new HostFunction(foundMethod, this.obj, this.context);
+
+        @Specialization(guards = {"receiver.isDatapathObject(hostClassCache)"})
+        static Object doDatapathObject(HostObject receiver, String name,
+                        @Bind Node node,
+                        @Shared("error") @Cached InlinedBranchProfile error,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache) throws UnsupportedMessageException, UnknownIdentifierException {
+
+            Map<String, Object> map = receiver.unwrapDatapathObject(hostClassCache);
+            return map.get(name);
         }
 
-        if (isStatic) {
-            LookupInnerClassNode lookupInnerClassNode = lookupInnerClass;
-            if (HostInteropReflect.STATIC_TO_CLASS.equals(name)) {
-                return HostObject.forClass(lookupClass, context);
+        @Specialization(guards = "!receiver.isNull()")
+        static Object readMember(HostObject receiver, String name,
+                        @Bind Node node,
+                        @Shared("lookupField") @Cached LookupFieldNode lookupField,
+                        @Shared("readField") @Cached ReadFieldNode readField,
+                        @Shared("lookupMethod") @Cached LookupMethodNode lookupMethod,
+                        @Cached LookupInnerClassNode lookupInnerClass,
+                        @Shared("error") @Cached InlinedBranchProfile error) throws UnsupportedMessageException, UnknownIdentifierException {
+            boolean isStatic = receiver.isStaticClass();
+            Class<?> lookupClass = receiver.getLookupClass();
+            HostFieldDesc foundField = lookupField.execute(node, receiver, lookupClass, name, isStatic);
+            if (foundField != null) {
+                return readField.execute(node, foundField, receiver);
             }
-            Class<?> innerclass = lookupInnerClassNode.execute(node, lookupClass, name);
-            if (innerclass != null) {
-                return HostObject.forStaticClass(innerclass, context);
+            HostMethodDesc foundMethod = lookupMethod.execute(node, receiver, lookupClass, name, isStatic);
+            if (foundMethod != null) {
+                return new HostFunction(foundMethod, receiver.obj, receiver.context);
             }
-        } else if (isClass() && HostInteropReflect.CLASS_TO_STATIC.equals(name)) {
-            return HostObject.forStaticClass(asClass(), context);
-        } else if (HostInteropReflect.ADAPTER_SUPER_MEMBER.equals(name) && HostAdapterFactory.isAdapterInstance(this.obj)) {
-            return HostAdapterFactory.getSuperAdapter(this);
+
+            if (isStatic) {
+                LookupInnerClassNode lookupInnerClassNode = lookupInnerClass;
+                if (HostInteropReflect.STATIC_TO_CLASS.equals(name)) {
+                    return HostObject.forClass(lookupClass, receiver.context);
+                }
+                Class<?> innerclass = lookupInnerClassNode.execute(node, lookupClass, name);
+                if (innerclass != null) {
+                    return HostObject.forStaticClass(innerclass, receiver.context);
+                }
+            } else if (receiver.isClass() && HostInteropReflect.CLASS_TO_STATIC.equals(name)) {
+                return HostObject.forStaticClass(receiver.asClass(), receiver.context);
+            } else if (HostInteropReflect.ADAPTER_SUPER_MEMBER.equals(name) && HostAdapterFactory.isAdapterInstance(receiver.obj)) {
+                return HostAdapterFactory.getSuperAdapter(receiver);
+            }
+            error.enter(node);
+            throw UnknownIdentifierException.create(name);
         }
-        error.enter(node);
-        throw UnknownIdentifierException.create(name);
     }
 
     @ExportMessage
@@ -391,27 +410,52 @@ public final class HostObject implements TruffleObject {
     }
 
     @ExportMessage
-    void writeMember(String member, Object value,
-                    @Bind Node node,
-                    @Shared("lookupField") @Cached LookupFieldNode lookupField,
-                    @Cached WriteFieldNode writeField,
-                    @Shared("error") @Cached InlinedBranchProfile error)
-                    throws UnsupportedMessageException, UnknownIdentifierException, UnsupportedTypeException {
-        if (isNull()) {
+    static final class WriteMember {
+        @Specialization(guards = "receiver.isNull()")
+        static void doNull(HostObject receiver, String member, Object value,
+                        @Bind Node node,
+                        @Shared("error") @Cached InlinedBranchProfile error)
+                        throws UnsupportedMessageException {
             error.enter(node);
             throw UnsupportedMessageException.create();
         }
-        HostFieldDesc f = lookupField.execute(node, this, getLookupClass(), member, isStaticClass());
-        if (f == null) {
-            error.enter(node);
-            throw UnknownIdentifierException.create(member);
+
+        @Specialization(guards = {"receiver.isDatapathObject(hostClassCache)"})
+        static void doDatapathObject(HostObject receiver, String member, Object value,
+                        @Bind Node node,
+                        @Shared("lookupField") @Cached LookupFieldNode lookupField,
+                        @Shared("wField") @Cached WriteFieldNode writeField,
+                        @Shared("error") @Cached InlinedBranchProfile error,
+                        @Shared @Cached(value = "receiver.getHostClassCache()", allowUncached = true) HostClassCache hostClassCache)
+                        throws UnsupportedMessageException, UnknownIdentifierException, UnsupportedTypeException {
+
+            Map<String, Object> map = receiver.unwrapDatapathObject(hostClassCache);
+            if (map == null || member == null) {
+                error.enter(node);
+                return;
+            }
+            map.put(member, value);
         }
-        try {
-            writeField.execute(node, f, this, value);
-        } catch (ClassCastException | NullPointerException e) {
-            // conversion failed by ToJavaNode
-            error.enter(node);
-            throw UnsupportedTypeException.create(new Object[]{value}, getMessage(e));
+
+        @Specialization(guards = "!receiver.isNull()")
+        static void writeMember(HostObject receiver, String member, Object value,
+                        @Bind Node node,
+                        @Shared("lookupField") @Cached LookupFieldNode lookupField,
+                        @Shared("wField") @Cached WriteFieldNode writeField,
+                        @Shared("error") @Cached InlinedBranchProfile error)
+                        throws UnsupportedMessageException, UnknownIdentifierException, UnsupportedTypeException {
+            HostFieldDesc f = lookupField.execute(node, receiver, receiver.getLookupClass(), member, receiver.isStaticClass());
+            if (f == null) {
+                error.enter(node);
+                throw UnknownIdentifierException.create(member);
+            }
+            try {
+                writeField.execute(node, f, receiver, value);
+            } catch (ClassCastException | NullPointerException e) {
+                // conversion failed by ToJavaNode
+                error.enter(node);
+                throw UnsupportedTypeException.create(new Object[]{value}, getMessage(e));
+            }
         }
     }
 
@@ -3907,10 +3951,20 @@ public final class HostObject implements TruffleObject {
         return hostClassCache.isListAccess() && obj instanceof DatapathReadOnlyArrayList;
     }
 
+    boolean isDatapathObject(HostClassCache hostClassCache) {
+        return obj instanceof DatapathObject;
+    }
+
     Object[] unwrapDatapathReadOnlyArrayList(HostClassCache hostClassCache) {
         assert isDatapathReadOnlyArrayList(hostClassCache);
         DatapathReadOnlyArrayList dlList = (DatapathReadOnlyArrayList) obj;
         return dlList.getArray();
+    }
+
+    Map<String, Object> unwrapDatapathObject(HostClassCache hostClassCache) {
+        assert isDatapathObject(hostClassCache);
+        DatapathObject dlList = (DatapathObject) obj;
+        return dlList.getMap();
     }
 
     boolean isBuffer(HostClassCache hostClassCache) {
