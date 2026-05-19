@@ -809,6 +809,9 @@ public final class InstructionModel implements PrettyPrintable {
         if (nodeData == null) {
             return false;
         }
+        if (nodeData.isGenerateStatistics()) {
+            return false;
+        }
         if (!canInlineState() && (nodeData.needsState() || nodeData.isForceSpecialize())) {
             return false;
         }

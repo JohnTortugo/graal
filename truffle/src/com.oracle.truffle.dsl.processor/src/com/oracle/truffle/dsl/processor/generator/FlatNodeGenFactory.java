@@ -4213,7 +4213,7 @@ public class FlatNodeGenFactory {
                 }
             }
 
-            if (isGenerateStatistics()) {
+            if (isGenerateStatistics() && !frameState.getMode().isUncached()) {
                 CodeTreeBuilder statistics = builder.create();
                 statistics.startStatement();
                 statistics.startCall("statistics_", "acceptExecute");
