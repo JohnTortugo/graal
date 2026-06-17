@@ -431,7 +431,7 @@ public final class HeapImpl extends Heap {
     }
 
     @Override
-    @Uninterruptible(reason = "Thread is detaching and holds the THREAD_MUTEX.")
+    @Uninterruptible(reason = "Current thread holds the ThreadsLock with exclusive write access.")
     public void detachThread(IsolateThread isolateThread) {
         TlabSupport.disableAndFlushForThread(isolateThread);
     }

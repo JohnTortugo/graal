@@ -118,19 +118,19 @@ public class MetaspaceImpl implements Metaspace {
 
     @Override
     public void walkObjects(ObjectVisitor visitor) {
-        assert VMOperation.isInProgress() : "prevent other threads from manipulating the metaspace";
+        assert VMOperation.isInProgressAtSafepoint() : "prevent other threads from manipulating the metaspace";
         space.walkObjects(visitor);
     }
 
     @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
     public void walkObjects(UninterruptibleObjectVisitor objectVisitor) {
-        assert VMOperation.isInProgress() : "prevent other threads from manipulating the metaspace";
+        assert VMOperation.isInProgressAtSafepoint() : "prevent other threads from manipulating the metaspace";
         space.walkObjects(objectVisitor);
     }
 
     @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
     public void walkDirtyObjects(UninterruptibleObjectVisitor objectVisitor, UninterruptibleObjectReferenceVisitor refVisitor, boolean clean) {
-        assert VMOperation.isInProgress() : "prevent other threads from manipulating the metaspace";
+        assert VMOperation.isInProgressAtSafepoint() : "prevent other threads from manipulating the metaspace";
         RememberedSet.get().walkDirtyObjects(space.getFirstAlignedHeapChunk(), space.getFirstUnalignedHeapChunk(), Word.nullPointer(), objectVisitor, refVisitor, clean);
     }
 

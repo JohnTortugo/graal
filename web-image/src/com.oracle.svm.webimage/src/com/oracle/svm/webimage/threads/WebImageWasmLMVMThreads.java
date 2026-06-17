@@ -82,7 +82,7 @@ public class WebImageWasmLMVMThreads extends VMThreads {
 
     @Override
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
-    protected void detachThread(IsolateThread thread, boolean currentThread) {
+    protected void detachThread(IsolateThread thread) {
         throw VMError.shouldNotReachHere("VMThreads.detachThread");
     }
 

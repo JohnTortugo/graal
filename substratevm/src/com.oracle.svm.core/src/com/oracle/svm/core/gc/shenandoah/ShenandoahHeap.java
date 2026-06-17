@@ -93,6 +93,7 @@ import com.oracle.svm.core.snippets.KnownIntrinsics;
 import com.oracle.svm.core.thread.PlatformThreads;
 import com.oracle.svm.core.thread.Safepoint;
 import com.oracle.svm.core.thread.ThreadStatus;
+import com.oracle.svm.core.thread.ThreadsLock;
 import com.oracle.svm.core.thread.VMOperationControl;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.thread.VMThreads.SafepointBehavior;
@@ -148,7 +149,7 @@ public final class ShenandoahHeap extends Heap {
 
     @Uninterruptible(reason = "Called during startup.")
     private void initialize(IsolateThread isolateThread) {
-        VMThreads.guaranteeOwnsThreadMutex("Only the first thread may initialize the heap");
+        VMError.guarantee(ThreadsLock.hasWriteAccess(), "Only the first thread may initialize the heap");
         assert !isInitialized;
         isInitialized = true;
 
@@ -453,7 +454,7 @@ public final class ShenandoahHeap extends Heap {
     }
 
     @Override
-    @Uninterruptible(reason = "Thread is detaching and holds the THREAD_MUTEX.")
+    @Uninterruptible(reason = "Thread is detaching and holds the ThreadsLock with exclusive write access.")
     public void detachThread(IsolateThread isolateThread) {
         ShenandoahLibrary.detachThread(isolateThread);
 

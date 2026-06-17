@@ -259,7 +259,7 @@ public class JavaMainWrapper {
         }
 
         /* Wait for all non-daemon threads to exit. */
-        PlatformThreads.singleton().joinAllNonDaemons();
+        PlatformThreads.singleton().joinAllNonDaemonsInNative();
 
         try {
             /*

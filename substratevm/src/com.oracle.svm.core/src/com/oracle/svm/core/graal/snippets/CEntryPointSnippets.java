@@ -590,7 +590,7 @@ public final class CEntryPointSnippets extends SubstrateTemplates implements Sni
             // print diagnostics. A full attach operation would be too dangerous.
             SubstrateDiagnostics.setOnlyAttachedForCrashHandler(thread);
         } else {
-            int error = VMThreads.singleton().attachThread(thread, startedByIsolate);
+            int error = VMThreads.singleton().attachCurrentThread(startedByIsolate);
             if (error != CEntryPointErrors.NO_ERROR) {
                 VMThreads.singleton().freeCurrentIsolateThread();
                 return error;
@@ -679,7 +679,7 @@ public final class CEntryPointSnippets extends SubstrateTemplates implements Sni
 
             /* Wait until the reference handler thread detaches (it was already stopped earlier). */
             if (ReferenceHandler.useDedicatedThread()) {
-                ReferenceHandlerThread.waitUntilDetached();
+                ReferenceHandlerThread.waitInNativeUntilDetached();
             }
 
             /* Shut down VM operation thread. */
@@ -788,8 +788,8 @@ public final class CEntryPointSnippets extends SubstrateTemplates implements Sni
 
         if (runtimeAssertionsEnabled() || SubstrateOptions.CheckIsolateThreadAtEntry.getValue()) {
             /*
-             * Verification must happen before the thread state transition. It locks the raw
-             * THREAD_MUTEX, so the thread must still be invisible to the safepoint manager.
+             * Verification must happen before the thread state transition. It acquires the
+             * ThreadsLock, so the thread must still be invisible to the safepoint master.
              */
             runtimeCall(VERIFY_ISOLATE_THREAD, thread);
         }

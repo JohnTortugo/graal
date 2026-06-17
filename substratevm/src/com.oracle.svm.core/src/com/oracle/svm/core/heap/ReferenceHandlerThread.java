@@ -77,7 +77,7 @@ public final class ReferenceHandlerThread implements Runnable {
     }
 
     @Uninterruptible(reason = "Executed during teardown after VMThreads#threadExit")
-    public static void waitUntilDetached() {
+    public static void waitInNativeUntilDetached() {
         if (!isSupported()) {
             return;
         }

@@ -163,8 +163,8 @@ public class MultiThreadedMonitorSupport extends MonitorSupport {
             monitorTypes.put(DynamicHubCompanion.class, false);
 
             /*
-             * When a thread exits, it locks its own thread mutex and changes its state to
-             * TERMINATED. Without an explict monitor slot, the thread could get parked when
+             * When a thread exits, it synchronizes on its Java Thread object and changes its state
+             * to TERMINATED. Without an explicit monitor slot, the thread could get parked when
              * unlocking its own mutex (because we need to lock the shared monitor map). If the
              * thread gets blocked during unlocking, its thread state would change unexpectedly.
              */

@@ -402,7 +402,17 @@ public class RecurringCallbackSupport {
 
         @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
         private boolean isCallbackDisabled() {
-            return isExecuting || isCallbackTimerSuspended();
+            /*
+             * When a thread holds the ThreadsLock with write access, safepoint checks are typically
+             * either disallowed or recurring callbacks are explicitly disabled. However, if a
+             * thread acquires the ThreadsLock while in STATUS_IN_NATIVE, it is possible to enter
+             * the safepoint slowpath when doing the transition back to STATUS_IN_JAVA.
+             *
+             * Recurring callbacks may trigger VM operations such as GCs. So. deadlocks could happen
+             * if we tried to execute a recurring callback while holding the ThreadsLock with write
+             * access.
+             */
+            return isExecuting || isCallbackTimerSuspended() || ThreadsLock.hasWriteAccess();
         }
 
         /**

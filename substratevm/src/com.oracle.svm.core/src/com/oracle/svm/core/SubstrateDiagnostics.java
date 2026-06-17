@@ -1113,8 +1113,10 @@ public class SubstrateDiagnostics {
         @RestrictHeapAccess(access = RestrictHeapAccess.Access.NO_ALLOCATION, reason = "Must not allocate while printing diagnostics.")
         public void printDiagnostics(Log log, ErrorContext context, int maxDiagnosticLevel, int invocationCount) {
             if (VMOperation.isInProgressAtSafepoint()) {
-                // Iterate all threads without checking if the thread mutex is locked (it should
-                // be locked by this thread though because we are at a safepoint).
+                /*
+                 * Iterate all threads without checking if current thread holds the ThreadsLock.
+                 * Most likely, we are at a safepoint anyway, but there is no guarantee.
+                 */
                 int printed = 0;
                 for (IsolateThread vmThread = VMThreads.firstThreadUnsafe(); vmThread.isNonNull(); vmThread = VMThreads.nextThread(vmThread)) {
                     if (vmThread == CurrentIsolate.getCurrentThread()) {

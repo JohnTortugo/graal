@@ -48,6 +48,7 @@ import com.oracle.svm.core.config.ObjectLayout;
 import com.oracle.svm.core.graal.snippets.SubstrateAllocationSnippets;
 import com.oracle.svm.core.jdk.UninterruptibleUtils;
 import com.oracle.svm.core.log.Log;
+import com.oracle.svm.core.thread.ThreadsLock;
 import com.oracle.svm.core.thread.VMOperation;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.core.threadlocal.FastThreadLocalBytes;
@@ -308,7 +309,11 @@ public class TlabSupport {
 
     @Uninterruptible(reason = "Accesses TLAB")
     private static void retireTlabToEden(IsolateThread thread) {
-        VMThreads.guaranteeOwnsThreadMutex("Otherwise, we wouldn't be allowed to access the space.", true);
+        /*
+         * This method is used both during a VM operation and while detaching a thread. So, it
+         * cannot check more than that there is some mutual exclusion.
+         */
+        VMError.guarantee(ThreadsLock.hasWriteAccess(), "Otherwise, we wouldn't be allowed to access the space.");
 
         retireTlab(thread, true);
 

@@ -231,7 +231,7 @@ public final class HeapAllocation {
     }
 
     public void retireChunksToEden() {
-        VMOperation.guaranteeInProgressAtSafepoint("HeapAllocation.retireChunksToEden");
+        assert VMOperation.isInProgressAtSafepoint();
 
         AlignedHeader chunk = currentChunk;
         currentChunk = Word.nullPointer();
