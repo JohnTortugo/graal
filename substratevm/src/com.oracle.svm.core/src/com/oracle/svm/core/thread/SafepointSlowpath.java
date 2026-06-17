@@ -250,13 +250,13 @@ public class SafepointSlowpath {
          * Release the mutex. This does not block, so it does not matter that we no longer have a
          * JavaFrameAnchor.
          */
-        VMThreads.THREAD_MUTEX.unlock();
+        VMThreads.SAFEPOINT_MUTEX.unlock();
     }
 
     @NeverInline("CFunctionPrologue and CFunctionEpilogue are placed around call to this function")
     @Uninterruptible(reason = "Must not contain safepoint checks.")
     private static void notInlinedLockNoTransition() {
-        VMThreads.THREAD_MUTEX.lockNoTransition();
+        VMThreads.SAFEPOINT_MUTEX.lockNoTransition();
         ThreadSuspendSupport.blockCurrentThreadIfSuspended();
     }
 }

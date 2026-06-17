@@ -68,10 +68,10 @@ public final class ThreadSuspendSupport {
     /**
      * The value is either {@code 0} (not suspended), or positive (suspended, possibly blocked on
      * {@link #COND_SUSPEND}). This counter may only be modified while holding the
-     * {@link VMThreads#THREAD_MUTEX}.
+     * {@link VMThreads#SAFEPOINT_MUTEX}.
      */
     private static final FastThreadLocalInt suspendedTL = FastThreadLocalFactory.createInt("ThreadSuspendSupport.suspended");
-    private static final VMCondition COND_SUSPEND = new VMCondition(VMThreads.THREAD_MUTEX);
+    private static final VMCondition COND_SUSPEND = new VMCondition(VMThreads.SAFEPOINT_MUTEX);
 
     private ThreadSuspendSupport() {
     }
@@ -97,7 +97,7 @@ public final class ThreadSuspendSupport {
     }
 
     private static void suspend(IsolateThread isolateThread) {
-        VMThreads.guaranteeOwnsThreadMutex("Must own the THREAD_MUTEX to prevent races.");
+        VMThreads.SAFEPOINT_MUTEX.guaranteeIsOwner("Must own the SAFEPOINT_MUTEX to prevent races.");
 
         int newValue = suspendedTL.get(isolateThread) + 1;
         VMError.guarantee(newValue > 0, "Too many thread suspends.");
@@ -105,7 +105,7 @@ public final class ThreadSuspendSupport {
     }
 
     private static void resume(IsolateThread isolateThread) {
-        VMThreads.guaranteeOwnsThreadMutex("Must own the THREAD_MUTEX to prevent races.");
+        VMThreads.SAFEPOINT_MUTEX.guaranteeIsOwner("Must own the SAFEPOINT_MUTEX to prevent races.");
 
         int newValue = suspendedTL.get(isolateThread) - 1;
         VMError.guarantee(newValue >= 0, "Only a suspended thread can be resumed.");
@@ -123,13 +123,13 @@ public final class ThreadSuspendSupport {
 
     @Uninterruptible(reason = CALLED_FROM_UNINTERRUPTIBLE_CODE, mayBeInlined = true)
     public static boolean isSuspended(IsolateThread thread) {
-        assert VMThreads.THREAD_MUTEX.isOwner() || thread == CurrentIsolate.getCurrentThread();
+        assert VMThreads.SAFEPOINT_MUTEX.isOwner() || thread == CurrentIsolate.getCurrentThread();
         return suspendedTL.getVolatile(thread) > 0;
     }
 
     @Uninterruptible(reason = "Must not contain safepoint checks.")
     public static void blockCurrentThreadIfSuspended() {
-        assert VMThreads.THREAD_MUTEX.isOwner();
+        assert VMThreads.SAFEPOINT_MUTEX.isOwner();
         while (ThreadSuspendSupport.isCurrentThreadSuspended()) {
             COND_SUSPEND.blockNoTransition();
         }

@@ -362,6 +362,7 @@ public final class ResidentJDWP implements JDWP {
         return reply;
     }
 
+    /* This code is broken at the moment and may cause deadlocks, see GR-73513. */
     private static VMMutex lockThreads() {
         VMMutex mutex;
         try {

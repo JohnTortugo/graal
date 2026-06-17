@@ -263,16 +263,19 @@ public final class VMOperationControl {
                 // a recursive VM operation (either triggered implicitly or explicitly) -> execute
                 // it right away
                 immediateQueues.enqueueAndExecute(operation, data);
-            } else if (useDedicatedVMOperationThread()) {
-                // a thread queues an operation that the VM operation thread will execute
-                assert !isDedicatedVMOperationThread() : "the dedicated VM operation thread must execute and not queue VM operations";
-                assert dedicatedVMOperationThread.isRunning() : "must not queue VM operations before the VM operation thread is started or after it is shut down";
-                VMThreads.THREAD_MUTEX.guaranteeNotOwner("could result in deadlocks otherwise");
-                mainQueues.enqueueAndWait(operation, data);
             } else {
-                // use the current thread to execute the operation under a lock
                 VMThreads.THREAD_MUTEX.guaranteeNotOwner("could result in deadlocks otherwise");
-                mainQueues.enqueueAndExecute(operation, data);
+                VMThreads.SAFEPOINT_MUTEX.guaranteeNotOwner("could result in deadlocks otherwise");
+
+                if (useDedicatedVMOperationThread()) {
+                    // a thread queues an operation that the VM operation thread will execute
+                    assert !isDedicatedVMOperationThread() : "the dedicated VM operation thread must execute and not queue VM operations";
+                    assert dedicatedVMOperationThread.isRunning() : "must not queue VM operations before the VM operation thread is started or after it is shut down";
+                    mainQueues.enqueueAndWait(operation, data);
+                } else {
+                    // use the current thread to execute the operation under a lock
+                    mainQueues.enqueueAndExecute(operation, data);
+                }
             }
             assert operation.isFinished(data);
             log().string("]").newline();
@@ -532,15 +535,14 @@ public final class VMOperationControl {
 
             // Drain the safepoint queues.
             if (!nativeSafepointOperations.isEmpty() || !javaSafepointOperations.isEmpty()) {
-                String safepointReason = null;
                 boolean startedSafepoint = false;
-                boolean lockedForSafepoint = false;
+                boolean lockedThreadMutex = false;
 
                 Safepoint safepoint = Safepoint.singleton();
                 if (!safepoint.isInProgress()) {
                     startedSafepoint = true;
-                    safepointReason = getSafepointReason(nativeSafepointOperations, javaSafepointOperations);
-                    lockedForSafepoint = safepoint.startSafepoint(safepointReason);
+                    String safepointReason = getSafepointReason(nativeSafepointOperations, javaSafepointOperations);
+                    lockedThreadMutex = safepoint.startSafepoint(safepointReason);
                 }
 
                 try {
@@ -548,7 +550,7 @@ public final class VMOperationControl {
                     drain(javaSafepointOperations);
                 } finally {
                     if (startedSafepoint) {
-                        safepoint.endSafepoint(lockedForSafepoint);
+                        safepoint.endSafepoint(lockedThreadMutex);
                     }
                 }
             }
