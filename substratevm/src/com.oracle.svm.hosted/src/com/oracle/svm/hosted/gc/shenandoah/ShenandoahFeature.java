@@ -62,6 +62,8 @@ import com.oracle.svm.core.heap.BarrierSetProvider;
 import com.oracle.svm.core.heap.FillerArray;
 import com.oracle.svm.core.heap.Heap;
 import com.oracle.svm.core.image.ImageHeapLayouter;
+import com.oracle.svm.core.jfr.HasJfrSupport;
+import com.oracle.svm.core.jfr.JfrGCNames;
 import com.oracle.svm.core.jvmstat.PerfDataFeature;
 import com.oracle.svm.core.option.RuntimeOptionKey;
 import com.oracle.svm.core.option.SubstrateOptionKey;
@@ -132,6 +134,16 @@ public class ShenandoahFeature implements InternalFeature {
          * Ensure that SVM knows about all runtime options that Shenandoah parses on the C++ side.
          */
         registerRuntimeOptionsAsRead(accessImpl);
+
+        /*
+         * Register a GC name for JFR (mirrors genscavenge's JfrGCEventFeature, which registers
+         * "serial"). The JfrGCNameSerializer unconditionally writes all registered GC names into
+         * every chunk's GCName constant pool; without at least one registered name that pool would
+         * be empty, which is rejected when a JFR recording is parsed/verified.
+         */
+        if (HasJfrSupport.get()) {
+            JfrGCNames.singleton().addGCName("Shenandoah");
+        }
     }
 
     private static void registerRuntimeOptionsAsRead(BeforeAnalysisAccessImpl accessImpl) {
