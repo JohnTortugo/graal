@@ -52,10 +52,22 @@ public class ShenandoahVMOperations {
     private static final ShenandoahVMOperation OP_COLLECT_FOR_ALLOCATION = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Collect for allocation", SAFEPOINT), true);
     private static final ShenandoahVMOperation OP_COLLECT_FULL = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Collect full", SAFEPOINT), true);
     private static final ShenandoahVMOperation OP_COLLECT_DEGENERATED = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Degenerated full", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_INIT_MARK = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Init mark", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_FINAL_MARK = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Final mark", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_INIT_UPDATE_REFS = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Init update refs", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_FINAL_UPDATE_REFS = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Final update refs", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_FINAL_ROOTS = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Final roots", SAFEPOINT), true);
+    private static final ShenandoahVMOperation OP_HANDSHAKE_FALLBACK = new ShenandoahVMOperation(VMOperationInfos.get(ShenandoahVMOperation.class, "Handshake fallback", SAFEPOINT), true);
 
     public final CEntryPointLiteral<CFunctionPointer> funcCollectForAllocation;
     public final CEntryPointLiteral<CFunctionPointer> funcCollectFull;
     public final CEntryPointLiteral<CFunctionPointer> funcCollectDegenerated;
+    public final CEntryPointLiteral<CFunctionPointer> funcInitMark;
+    public final CEntryPointLiteral<CFunctionPointer> funcFinalMark;
+    public final CEntryPointLiteral<CFunctionPointer> funcInitUpdateRefs;
+    public final CEntryPointLiteral<CFunctionPointer> funcFinalUpdateRefs;
+    public final CEntryPointLiteral<CFunctionPointer> funcFinalRoots;
+    public final CEntryPointLiteral<CFunctionPointer> funcHandshakeFallback;
 
     @Platforms(Platform.HOSTED_ONLY.class)
     public ShenandoahVMOperations() {
@@ -64,6 +76,18 @@ public class ShenandoahVMOperations {
         funcCollectFull = CEntryPointLiteral.create(ShenandoahVMOperations.class, "collectFull",
                         Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
         funcCollectDegenerated = CEntryPointLiteral.create(ShenandoahVMOperations.class, "collectDegenerated",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcInitMark = CEntryPointLiteral.create(ShenandoahVMOperations.class, "initMark",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcFinalMark = CEntryPointLiteral.create(ShenandoahVMOperations.class, "finalMark",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcInitUpdateRefs = CEntryPointLiteral.create(ShenandoahVMOperations.class, "initUpdateRefs",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcFinalUpdateRefs = CEntryPointLiteral.create(ShenandoahVMOperations.class, "finalUpdateRefs",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcFinalRoots = CEntryPointLiteral.create(ShenandoahVMOperations.class, "finalRoots",
+                Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
+        funcHandshakeFallback = CEntryPointLiteral.create(ShenandoahVMOperations.class, "handshakeFallback",
                 Isolate.class, IsolateThread.class, NativeGCVMOperationData.class, NativeGCVMOperationWrapperData.class);
     }
 
@@ -89,6 +113,54 @@ public class ShenandoahVMOperations {
     public static void collectDegenerated(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
                                    NativeGCVMOperationWrapperData wrapperData) {
         enqueue(OP_COLLECT_DEGENERATED, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void initMark(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_INIT_MARK, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void finalMark(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_FINAL_MARK, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void initUpdateRefs(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_INIT_UPDATE_REFS, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void finalUpdateRefs(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_FINAL_UPDATE_REFS, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void finalRoots(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_FINAL_ROOTS, data, wrapperData);
+    }
+
+    @Uninterruptible(reason = "Can be called from an unattached thread.")
+    @CEntryPoint(include = UseShenandoahGC.class, publishAs = Publish.NotPublished)
+    @CEntryPointOptions(prologue = InitializeReservedRegistersForPossiblyUnattachedThread.class, epilogue = NoEpilogue.class)
+    public static void handshakeFallback(@SuppressWarnings("unused") Isolate isolate, @SuppressWarnings("unused") IsolateThread isolateThread, NativeGCVMOperationData data,
+                    NativeGCVMOperationWrapperData wrapperData) {
+        enqueue(OP_HANDSHAKE_FALLBACK, data, wrapperData);
     }
 
     private static class ShenandoahVMOperation extends NativeGCVMOperation {
