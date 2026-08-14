@@ -80,7 +80,11 @@ public final class ReferenceInternals {
     @SuppressWarnings("unchecked")
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     public static <T> T getReferent(Reference<T> instance) {
-        return (T) SubstrateUtil.cast(instance, Target_java_lang_ref_Reference.class).referent;
+        T referent = (T) SubstrateUtil.cast(instance, Target_java_lang_ref_Reference.class).referent;
+        // Keep the read referent alive under concurrent-marking collectors (no-op for STW collectors
+        // such as Serial GC). Must be atomic w.r.t. GC, hence performed here while @Uninterruptible.
+        Heap.getHeap().keepReferentAlive(referent);
+        return referent;
     }
 
     /** Write {@link Target_java_lang_ref_Reference#referent}. */
@@ -95,7 +99,20 @@ public final class ReferenceInternals {
          * Use a read without a barrier to avoid that this code keeps the object alive, see
          * JDK-8188055.
          */
-        return value == ObjectAccess.readObject(instance, Word.signed(Target_java_lang_ref_Reference.referentFieldOffset));
+        Object referent = ObjectAccess.readObject(instance, Word.signed(Target_java_lang_ref_Reference.referentFieldOffset));
+        if (value == referent) {
+            return true;
+        }
+        /*
+         * Under a concurrently-evacuating collector (Shenandoah) the barrier-less read may return
+         * the from-space copy while 'value' is the healed to-space reference (or vice versa), so a
+         * raw mismatch is inconclusive: canonicalize both sides WITHOUT keeping them alive and
+         * compare again. For stop-the-world collectors resolveGCPointer is the identity and this
+         * re-check is trivially false. (HotSpot equivalently implements refersTo0 with a
+         * resolve-only, no-keep-alive barrier.)
+         */
+        Heap heap = Heap.getHeap();
+        return heap.resolveGCPointer(value) == heap.resolveGCPointer(referent);
     }
 
     @Uninterruptible(reason = "Must be atomic with regard to garbage collection.")

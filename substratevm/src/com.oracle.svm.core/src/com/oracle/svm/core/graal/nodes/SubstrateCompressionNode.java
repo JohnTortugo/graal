@@ -60,6 +60,19 @@ public final class SubstrateCompressionNode extends CompressionNode {
         return graph.unique(uncompress(input, encoding));
     }
 
+    /**
+     * Adds a compress node to the graph without using {@code unique()}. This is required by the
+     * Shenandoah load-reference barrier: the uncompress node inserted before the barrier must not
+     * be matched with (and thereby fold away) the original uncompress after the load.
+     */
+    public static SubstrateCompressionNode compressWithoutUnique(StructuredGraph graph, ValueNode input, CompressEncoding encoding) {
+        return graph.addWithoutUnique(compress(input, encoding));
+    }
+
+    public static SubstrateCompressionNode uncompressWithoutUnique(StructuredGraph graph, ValueNode input, CompressEncoding encoding) {
+        return graph.addWithoutUnique(uncompress(input, encoding));
+    }
+
     private static SubstrateCompressionNode compress(ValueNode input, CompressEncoding encoding) {
         return new SubstrateCompressionNode(CompressionOp.Compress, input, encoding);
     }

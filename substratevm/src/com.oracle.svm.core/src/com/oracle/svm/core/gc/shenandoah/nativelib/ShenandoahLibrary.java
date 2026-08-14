@@ -80,7 +80,8 @@ public class ShenandoahLibrary {
                     CFunctionPointer fetchThreadStackFrames, CFunctionPointer freeThreadStackFrames,
                     CFunctionPointer fetchContinuationStackFrames, CFunctionPointer freeContinuationStackFrames,
                     CFunctionPointer fetchCodeInfos, CFunctionPointer freeCodeInfos, CFunctionPointer cleanRuntimeCodeCache,
-                    CFunctionPointer transitionVMToNative, CFunctionPointer fastTransitionNativeToVM, CFunctionPointer slowTransitionNativeToVM);
+                    CFunctionPointer transitionVMToNative, CFunctionPointer fastTransitionNativeToVM, CFunctionPointer slowTransitionNativeToVM,
+                    CFunctionPointer lockThreadsRead, CFunctionPointer unlockThreadsRead);
 
     @CFunction(value = "svm_gc_update_option_value", transition = Transition.NO_TRANSITION)
     public static native void updateOptionValue(Word optionName, long value);
@@ -139,7 +140,22 @@ public class ShenandoahLibrary {
     public static native void unpinObject(Word object);
 
     @CFunction(value = "svm_gc_pre_write_barrier", transition = Transition.NO_TRANSITION)
-    public static native void preWriteBarrierStub(Word object);
+    public static native void preWriteBarrierStub(Word previousValue);
+
+    @CFunction(value = "svm_gc_pre_write_barrier_narrow", transition = Transition.NO_TRANSITION)
+    public static native void preWriteBarrierNarrowStub(Word narrowPreviousValue);
+
+    @CFunction(value = "svm_gc_load_reference_barrier", transition = Transition.NO_TRANSITION)
+    public static native Word loadReferenceBarrierStub(Word obj, Word loadAddr);
+
+    @CFunction(value = "svm_gc_load_reference_barrier_weak", transition = Transition.NO_TRANSITION)
+    public static native Word loadReferenceBarrierWeakStub(Word obj, Word loadAddr);
+
+    @CFunction(value = "svm_gc_load_reference_barrier_phantom", transition = Transition.NO_TRANSITION)
+    public static native Word loadReferenceBarrierPhantomStub(Word obj, Word loadAddr);
+
+    @CFunction(value = "svm_gc_load_reference_barrier_heal", transition = Transition.NO_TRANSITION)
+    public static native void loadReferenceBarrierHealStub(Word addr);
 
     @CFunction(value = "svm_gc_post_write_barrier", transition = Transition.NO_TRANSITION)
     public static native void postWriteBarrierStub(Word cardAddress);

@@ -27,21 +27,43 @@ package com.oracle.svm.core.gc.shenandoah.graal;
 import org.graalvm.word.LocationIdentity;
 
 import com.oracle.svm.core.StaticFieldsSupport;
+import com.oracle.svm.core.graal.nodes.SubstrateCompressionNode;
+import com.oracle.svm.core.heap.ReferenceAccess;
 
+import jdk.graal.compiler.core.common.CompressEncoding;
 import jdk.graal.compiler.core.common.memory.BarrierType;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.nodes.ValueNode;
-import jdk.graal.compiler.nodes.extended.RawStoreNode;
 import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahBarrierSet;
-import jdk.graal.compiler.nodes.memory.FixedAccessNode;
-import jdk.graal.compiler.nodes.spi.CoreProviders;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.ResolvedJavaField;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
+/**
+ * SubstrateVM specialization of the shared {@link ShenandoahBarrierSet}. It reuses the barrier
+ * insertion logic of the base class (SATB pre-write barriers, load-reference barriers and, for
+ * generational mode, card-marking barriers) and only adapts the Native Image specific details:
+ *
+ * <ul>
+ * <li>Static object fields are represented as elements of the native image heap "static object
+ * fields" array (see {@link StaticFieldsSupport}), so they require array write barriers.</li>
+ *
+ * <li>Native Image always uses a heap base and may use compressed references. The load-reference
+ * barrier therefore has to (un)compress references using the SubstrateVM compression nodes.</li>
+ * </ul>
+ */
 public class SubstrateShenandoahBarrierSet extends ShenandoahBarrierSet {
+
+    private final CompressEncoding oopEncoding;
+
     public SubstrateShenandoahBarrierSet(ResolvedJavaType objectArrayType, ResolvedJavaField referentField) {
         super(objectArrayType, referentField);
+        this.oopEncoding = ReferenceAccess.singleton().getCompressEncoding();
+        /*
+         * Card-marking barriers are only required for generational Shenandoah, which is not yet
+         * supported on SubstrateVM. Concurrent (SATB) and passive modes do not need them.
+         */
+        this.useCardBarrier = false;
     }
 
     /**
@@ -54,40 +76,43 @@ public class SubstrateShenandoahBarrierSet extends ShenandoahBarrierSet {
         if (field.isStatic() && storageKind == JavaKind.Object) {
             return arrayWriteBarrierType(storageKind);
         }
-        return BarrierType.NONE;
+        return super.fieldWriteBarrierType(field, storageKind);
     }
 
-    @Override
-    public BarrierType arrayWriteBarrierType(JavaKind storageKind) {
-        return BarrierType.NONE;
-    }
-
-    @Override
-    public BarrierType postAllocationInitBarrier(BarrierType original) {
-        return BarrierType.NONE;
-    }
-
+    /**
+     * SubstrateVM issues {@code Word}-plugin reads for which no {@code loadStamp} is available
+     * (see {@code WordOperationPlugin.readOp}). The plugin only requests a barrier type for
+     * OBJECT reads ({@code readKind.isObject()}, i.e. {@code BarrieredAccess.readObject}), so a
+     * null stamp means "object read that wants all barriers" and requires the load-reference
+     * barrier. Returning {@code NONE} here would elide the LRB on such reads - e.g. the monitor
+     * slot reads in {@code MultiThreadedMonitorSupport.monitorEnter/monitorExit} - letting a
+     * mutator obtain (and lock / write to) the from-space copy of a {@code JavaMonitor} during
+     * concurrent evacuation, which breaks mutual exclusion and loses lock-state updates.
+     */
     @Override
     public BarrierType readBarrierType(LocationIdentity location, ValueNode address, Stamp loadStamp) {
-        return BarrierType.NONE;
+        if (loadStamp == null) {
+            return BarrierType.READ;
+        }
+        if (!loadStamp.isObjectStamp()) {
+            return BarrierType.NONE;
+        }
+        return super.readBarrierType(location, address, loadStamp);
     }
 
     @Override
-    public BarrierType writeBarrierType(RawStoreNode store) {
-        return BarrierType.NONE;
+    protected ValueNode maybeUncompressReference(ValueNode value, boolean narrow) {
+        if (value != null && narrow) {
+            return SubstrateCompressionNode.uncompressWithoutUnique(value.graph(), value, oopEncoding);
+        }
+        return value;
     }
 
     @Override
-    public BarrierType fieldReadBarrierType(ResolvedJavaField field, JavaKind storageKind) {
-        return BarrierType.NONE;
-    }
-
-    @Override
-    public BarrierType readWriteBarrier(ValueNode object, ValueNode value) {
-        return BarrierType.NONE;
-    }
-
-    @Override
-    public void addBarriers(FixedAccessNode n, CoreProviders context) {
+    protected ValueNode maybeCompressReference(ValueNode value, boolean narrow) {
+        if (value != null && narrow) {
+            return SubstrateCompressionNode.compressWithoutUnique(value.graph(), value, oopEncoding);
+        }
+        return value;
     }
 }

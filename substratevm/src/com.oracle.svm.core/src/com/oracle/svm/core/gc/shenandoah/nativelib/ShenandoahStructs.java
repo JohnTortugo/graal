@@ -55,6 +55,9 @@ public class ShenandoahStructs {
         @CField("card_table_address")
         Word cardTableAddress();
 
+        @CField("cset_fast_test_address")
+        Word csetFastTestAddress();
+
         @CField("tlab_top_offset")
         int tlabTopOffset();
 
@@ -76,8 +79,20 @@ public class ShenandoahStructs {
         @CField("vm_operation_wrapper_data_size")
         int vmOperationWrapperDataSize();
 
+        @CField("satb_index_offset")
+        int satbIndexOffset();
+
+        @CField("satb_buffer_offset")
+        int satbBufferOffset();
+
         @CField("dirty_card_value")
         byte dirtyCardValue();
+
+        @CField("mark_offset")
+        int markOffset();
+
+        @CField("gc_state_offset")
+        int gcStateOffset();
     }
 
     @CStruct(addStructKeyword = true)

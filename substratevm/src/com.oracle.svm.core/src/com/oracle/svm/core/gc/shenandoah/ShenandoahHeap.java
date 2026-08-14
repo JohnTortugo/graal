@@ -61,6 +61,7 @@ import com.oracle.svm.core.code.RuntimeCodeInfoMemory;
 import com.oracle.svm.core.config.ConfigurationValues;
 import com.oracle.svm.core.gc.shared.NativeGCStackWalker;
 import com.oracle.svm.core.gc.shared.NativeGCThreadTransitions;
+import com.oracle.svm.core.gc.shared.NativeGCThreadsLock;
 import com.oracle.svm.core.gc.shared.NativeGCVMOperationSupport;
 import com.oracle.svm.core.gc.shared.NativeGCVMOperationSupport.NativeGCVMOperationData;
 import com.oracle.svm.core.gc.shared.NativeGCVMOperationSupport.NativeGCVMOperationWrapperData;
@@ -113,12 +114,21 @@ import jdk.vm.ci.meta.JavaKind;
 public final class ShenandoahHeap extends Heap {
     public static final FastThreadLocalBytes<Word> javaThreadTL = FastThreadLocalFactory.createBytes(ShenandoahConstants::javaThreadSize, "ShenandoahHeap.javaThread");
     private static final FastThreadLocalWord<Word> cardTableAddressTL = FastThreadLocalFactory.createWord("ShenandoahHeap.cardTableAddress").setMaxOffset(FastThreadLocal.FIRST_CACHE_LINE);
+    /**
+     * Base of the Shenandoah collection-set fast-test map (biased by {@code heap_base >> region_shift}
+     * so it can be indexed directly by {@code object_address >> region_shift}). Per-isolate and stable
+     * for the isolate's lifetime; read by the compiled CAS heal barrier off the thread register to skip
+     * the heal stub for references that are not in the collection set. See
+     * {@link com.oracle.svm.core.graal.amd64.AMD64SubstrateShenandoahCASHealOp}.
+     */
+    public static final FastThreadLocalWord<Word> csetMapAddressTL = FastThreadLocalFactory.createWord("ShenandoahHeap.csetMapAddress");
 
     private final ShenandoahGC gc = new ShenandoahGC();
     private final ShenandoahImageHeapInfo imageHeapInfo = new ShenandoahImageHeapInfo();
     private final ShenandoahRuntimeCodeInfoGCSupport runtimeCodeInfoGCSupport = new ShenandoahRuntimeCodeInfoGCSupport();
     private final NativeGCStackWalker stackWalker = new NativeGCStackWalker();
     private final NativeGCThreadTransitions threadTransitions = new NativeGCThreadTransitions();
+    private final NativeGCThreadsLock threadsLock = new NativeGCThreadsLock();
     private final NativeGCVMOperationSupport vmOperationSupport = new NativeGCVMOperationSupport();
     private final ShenandoahVMOperations vmOperations = new ShenandoahVMOperations();
     private final ShenandoahObjectHeader objectHeader = new ShenandoahObjectHeader();
@@ -127,6 +137,8 @@ public final class ShenandoahHeap extends Heap {
     private List<Class<?>> classList;
     /* The card table address is relative to the heap base and not an absolute address */
     private Word cardTableAddress;
+    /* Base of the (biased) collection-set fast-test map; stable for the isolate's lifetime. */
+    private Word csetMapAddress;
 
     @UnknownObjectField(availability = ReadyForCompilation.class) private byte[] accessedFieldOffsets;
 
@@ -206,6 +218,8 @@ public final class ShenandoahHeap extends Heap {
         CFunctionPointer transitionVMToNative = getFunctionPointer(threadTransitions.funcVMToNative);
         CFunctionPointer fastTransitionNativeToVM = getFunctionPointer(threadTransitions.funcFastNativeToVM);
         CFunctionPointer slowTransitionNativeToVM = getFunctionPointer(threadTransitions.funcSlowNativeToVM);
+        CFunctionPointer lockThreadsRead = getFunctionPointer(threadsLock.funcLockThreadsRead);
+        CFunctionPointer unlockThreadsRead = getFunctionPointer(threadsLock.funcUnlockThreadsRead);
 
         ShenandoahInitState initState = ShenandoahLibrary.create(isolateThread, heapBase,
                         closedImageHeapRegions, openImageHeapRegions, imageHeapRegionTypes, imageHeapRegionFreeSpaces,
@@ -220,11 +234,13 @@ public final class ShenandoahHeap extends Heap {
                         fetchThreadStackFrames, freeThreadStackFrames,
                         fetchContinuationStackFrames, freeContinuationStackFrames,
                         fetchCodeInfos, freeCodeInfos, cleanRuntimeCodeCache,
-                        transitionVMToNative, fastTransitionNativeToVM, slowTransitionNativeToVM);
+                        transitionVMToNative, fastTransitionNativeToVM, slowTransitionNativeToVM,
+                        lockThreadsRead, unlockThreadsRead);
 
         VMError.guarantee(initState.isNonNull(), "Fatal error while initializing Shenandoah");
         validateInitState(initState);
         ShenandoahHeap.get().cardTableAddress = initState.cardTableAddress();
+        ShenandoahHeap.get().csetMapAddress = initState.csetFastTestAddress();
     }
 
     @Uninterruptible(reason = "Called during startup.")
@@ -443,6 +459,10 @@ public final class ShenandoahHeap extends Heap {
         VMError.guarantee(ShenandoahConstants.cardTableShift() == state.cardTableShift(), "Failed while validating the Shenandoah state: cardTableShift");
         VMError.guarantee(ShenandoahConstants.logOfHeapRegionGrainBytes() == state.logOfHeapRegionGrainBytes(), "Failed while validating the Shenandoah state: logOfHeapRegionGrainBytes");
         VMError.guarantee(ShenandoahConstants.javaThreadSize() == state.javaThreadSize(), "Failed while validating the Shenandoah state: javaThreadSize");
+        VMError.guarantee(ShenandoahConstants.satbIndexOffsetRel() == state.satbIndexOffset(), "Failed while validating the Shenandoah state: satbIndexOffset");
+        VMError.guarantee(ShenandoahConstants.satbBufferOffsetRel() == state.satbBufferOffset(), "Failed while validating the Shenandoah state: satbBufferOffset");
+        VMError.guarantee(ShenandoahConstants.markOffset() == state.markOffset(), "Failed while validating the Shenandoah state: markOffset");
+        VMError.guarantee(ShenandoahConstants.javaThreadGcStateOffset() == state.gcStateOffset(), "Failed while validating the Shenandoah state: gcStateOffset");
         VMError.guarantee(SizeOf.get(NativeGCVMOperationData.class) <= state.vmOperationDataSize(), "Failed while validating the Shenandoah state: vmOperationDataSize");
         VMError.guarantee(SizeOf.get(NativeGCVMOperationWrapperData.class) <= state.vmOperationWrapperDataSize(), "Failed while validating the Shenandoah state: vmOperationWrapperDataSize");
     }
@@ -457,6 +477,7 @@ public final class ShenandoahHeap extends Heap {
             initialize(isolateThread);
         }
         cardTableAddressTL.set(isolateThread, cardTableAddress);
+        csetMapAddressTL.set(isolateThread, csetMapAddress);
     }
 
     @Override
@@ -607,6 +628,44 @@ public final class ShenandoahHeap extends Heap {
 
         VMError.guarantee(obj instanceof StoredContinuation);
         ShenandoahLibrary.dirtyAllReferencesOf(Word.objectToUntrackedPointer(obj));
+    }
+
+    @Override
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    public void keepReferentAlive(Object referent) {
+        if (referent == null) {
+            return;
+        }
+        // Keep the just-read referent alive during concurrent marking (SATB keep-alive). The stub
+        // (svm_gc_pre_write_barrier -> satb_enqueue) itself checks whether marking is active, so it
+        // is a no-op outside of marking.
+        ShenandoahLibrary.preWriteBarrierStub(Word.objectToUntrackedPointer(referent));
+    }
+
+    @Override
+    @Uninterruptible(reason = "Must be atomic with regard to garbage collection.")
+    public Object resolveGCPointer(Object obj) {
+        /*
+         * Resolve a (possibly from-space) reference to its canonical to-space location WITHOUT
+         * keeping it alive: pure mark-word forwarding-pointer decode, mirroring the C++
+         * ShenandoahForwarding::get_forwardee_raw_unchecked. Needed for identity comparisons on
+         * barrier-less reads (Reference.refersTo): during concurrent evacuation the raw referent
+         * field may still hold the from-space copy while the caller's reference has already been
+         * healed to to-space; comparing the raw pointers would yield a false negative (observed as
+         * ThreadLocalMap.getEntry missing a live entry -> ThreadLocal.get() == null in jenetics).
+         */
+        if (obj == null) {
+            return null;
+        }
+        Pointer p = Word.objectToUntrackedPointer(obj);
+        Word mark = p.readWord(ShenandoahConstants.markOffset());
+        if (mark.and(ShenandoahConstants.MARK_FORWARDED_MASK).notEqual(0)) {
+            Pointer fwd = (Pointer) mark.and(Word.signed(~(long) ShenandoahConstants.MARK_FORWARDED_MASK));
+            if (fwd.isNonNull()) {
+                return fwd.toObjectNonNull();
+            }
+        }
+        return obj;
     }
 
     @Override

@@ -168,6 +168,7 @@ import jdk.graal.compiler.lir.framemap.FrameMapBuilder;
 import jdk.graal.compiler.lir.framemap.FrameMapBuilderTool;
 import jdk.graal.compiler.lir.framemap.ReferenceMapBuilder;
 import jdk.graal.compiler.lir.gen.LIRGenerationResult;
+import jdk.graal.compiler.lir.gen.BarrierSetLIRGeneratorTool;
 import jdk.graal.compiler.lir.gen.LIRGeneratorTool;
 import jdk.graal.compiler.lir.gen.MoveFactory;
 import jdk.graal.compiler.lir.gen.MoveFactory.BackupSlotProvider;
@@ -183,6 +184,8 @@ import jdk.graal.compiler.nodes.ParameterNode;
 import jdk.graal.compiler.nodes.SafepointNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.gc.BarrierSet;
+import jdk.graal.compiler.nodes.gc.shenandoah.ShenandoahBarrierSet;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
 import jdk.graal.compiler.nodes.spi.NodeLIRBuilderTool;
 import jdk.graal.compiler.nodes.spi.NodeValueMap;
@@ -627,7 +630,20 @@ public class SubstrateAMD64Backend extends SubstrateBackendWithAssembler<AMD64Ma
     protected class SubstrateAMD64LIRGenerator extends AMD64LIRGenerator implements SubstrateLIRGenerator {
 
         public SubstrateAMD64LIRGenerator(LIRKindTool lirKindTool, AMD64ArithmeticLIRGenerator arithmeticLIRGen, MoveFactory moveFactory, Providers providers, LIRGenerationResult lirGenRes) {
-            super(lirKindTool, arithmeticLIRGen, null, moveFactory, providers, lirGenRes);
+            super(lirKindTool, arithmeticLIRGen, createBarrierSetLIRGenerator(providers), moveFactory, providers, lirGenRes);
+        }
+
+        private static BarrierSetLIRGeneratorTool createBarrierSetLIRGenerator(Providers providers) {
+            /*
+             * The Shenandoah barriers are lowered at the LIR level (like on HotSpot), so they need
+             * a barrier-set LIR generator. All other SubstrateVM GCs implement their barriers as
+             * snippets and therefore do not need one.
+             */
+            BarrierSet barrierSet = providers.getPlatformConfigurationProvider().getBarrierSet();
+            if (barrierSet instanceof ShenandoahBarrierSet) {
+                return new AMD64SubstrateShenandoahBarrierSetLIRGenerator();
+            }
+            return null;
         }
 
         @Override

@@ -51,6 +51,9 @@ import com.oracle.svm.core.gc.shenandoah.ShenandoahOptions;
 import com.oracle.svm.core.gc.shenandoah.ShenandoahPinnedObjectSupport;
 import com.oracle.svm.core.gc.shenandoah.ShenandoahRelatedMXBeans;
 import com.oracle.svm.core.gc.shenandoah.graal.ShenandoahAllocationSupport;
+import com.oracle.svm.core.gc.shenandoah.graal.ShenandoahBarrierSupport;
+import com.oracle.graal.pointsto.meta.AnalysisMethod;
+import com.oracle.svm.core.snippets.SnippetRuntime.SubstrateForeignCallDescriptor;
 import com.oracle.svm.core.gc.shenandoah.graal.ShenandoahBarrierSetProvider;
 import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.meta.SubstrateForeignCallsProvider;
@@ -131,6 +134,16 @@ public class ShenandoahFeature implements InternalFeature {
         accessImpl.registerAsUsed(Object[].class);
 
         /*
+         * The Shenandoah barriers are emitted at the LIR level and their foreign-call targets are
+         * therefore not reachable through any analyzed graph. Register them as roots explicitly
+         * (mirrors StubForeignCallsFeatureBase).
+         */
+        for (SubstrateForeignCallDescriptor descriptor : ShenandoahBarrierSupport.FOREIGN_CALLS) {
+            AnalysisMethod method = (AnalysisMethod) descriptor.findMethod(accessImpl.getMetaAccess());
+            accessImpl.registerAsRoot(method, true, "Shenandoah barrier foreign call, registered in " + ShenandoahFeature.class);
+        }
+
+        /*
          * Ensure that SVM knows about all runtime options that Shenandoah parses on the C++ side.
          */
         registerRuntimeOptionsAsRead(accessImpl);
@@ -180,6 +193,7 @@ public class ShenandoahFeature implements InternalFeature {
     @Override
     public void registerForeignCalls(SubstrateForeignCallsProvider foreignCalls) {
         ShenandoahAllocationSupport.registerForeignCalls(foreignCalls);
+        ShenandoahBarrierSupport.registerForeignCalls(foreignCalls);
     }
 
     @Override

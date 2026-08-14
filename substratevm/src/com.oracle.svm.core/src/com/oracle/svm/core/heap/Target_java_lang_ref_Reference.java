@@ -120,8 +120,14 @@ public final class Target_java_lang_ref_Reference<T> {
         this.queue = (queue == null) ? Target_java_lang_ref_ReferenceQueue.NULL_QUEUE : queue;
     }
 
-    @KeepOriginal
-    native T get();
+    @Substitute
+    T get() {
+        // Route through ReferenceInternals.getReferent so that the read keeps the referent alive
+        // under concurrent-marking collectors (Shenandoah). This is a no-op for STW collectors such
+        // as the Serial GC, which inherit Heap.keepReferentAlive()'s default. SoftReference and
+        // WeakReference inherit this get(); PhantomReference overrides get() to return null.
+        return ReferenceInternals.getReferent(ReferenceInternals.uncast(this));
+    }
 
     @KeepOriginal
     native void clear();

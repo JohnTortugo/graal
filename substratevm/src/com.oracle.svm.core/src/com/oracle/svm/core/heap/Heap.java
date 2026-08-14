@@ -250,6 +250,34 @@ public abstract class Heap {
     public abstract void dirtyAllReferencesOf(Object obj);
 
     /**
+     * Notifies the collector that the referent of a {@link java.lang.ref.Reference} has just been
+     * read (e.g. via {@link java.lang.ref.Reference#get()}). Concurrent-marking collectors must keep
+     * the returned referent alive (an SATB "keep-alive" / referent-read barrier), so that a referent
+     * which is only weakly reachable at the marking snapshot but is resurrected by this read is not
+     * reclaimed. Stop-the-world collectors such as the Serial GC do not need this and inherit the
+     * default no-op.
+     */
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    public void keepReferentAlive(@SuppressWarnings("unused") Object referent) {
+        // Default: no-op. Only concurrent-marking collectors (Shenandoah) override this.
+    }
+
+    /**
+     * Resolves a GC-internal (possibly stale/from-space) object pointer to its canonical location
+     * WITHOUT keeping the object alive. Used for identity comparisons on barrier-less reads (e.g.
+     * {@link java.lang.ref.Reference#refersTo}, which must not extend the referent's lifetime, see
+     * JDK-8188055): under a concurrently-evacuating collector the raw field value and the caller's
+     * reference may designate the same object via different (from-/to-space) copies, so both sides
+     * must be canonicalized before comparing. Stop-the-world collectors never expose stale pointers
+     * and inherit the default identity implementation.
+     */
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    public Object resolveGCPointer(Object obj) {
+        // Default: identity. Only concurrently-evacuating collectors (Shenandoah) override this.
+        return obj;
+    }
+
+    /**
      * Returns the longest time (in ms) that has elapsed since the last time that the whole heap has
      * been examined by a garbage collection.
      */
