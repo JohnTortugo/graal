@@ -1190,6 +1190,8 @@ class NativeImageVM(GraalVm):
                     return "epsilon"
                 elif value == "Serial GC":
                     return "serial"
+                elif value == "Shenandoah GC":
+                    return "shenandoah"
                 else:
                     raise AssertionError(f"Unknown GC value: {value}")
 
