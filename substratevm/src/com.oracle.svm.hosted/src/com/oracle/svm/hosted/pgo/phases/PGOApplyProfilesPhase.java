@@ -511,21 +511,26 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         NodeSourcePosition context = createPointContext(conditionalNode.getNodeSourcePosition(), inliningContext);
         Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context);
         conditionalSuccessors.ifPresentOrElse(s -> {
-            setSuccessorsProbabilities(s.source(), s.value(), conditionalNode);
+            ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode);
+            pgoProfiles.recordConditionalProfileApplication(context, application.profiledSuccessors(), application.appliedSuccessors());
             countSuccess();
         }, () -> countFailure(context));
     }
 
-    private static void setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode) {
+    private record ConditionalApplication(int profiledSuccessors, int appliedSuccessors) {
+    }
+
+    private static ConditionalApplication setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode) {
         List<Node> successors = conditionalNode.successors().snapshot();
         List<Node> aliveSuccessors = successors.stream().filter(Node::isAlive).collect(Collectors.toList());
         Optional<Map<Integer, Double>> aggregatedProbabilities = aggregatedProbabilities(conditionalSuccessors);
         if (aggregatedProbabilities.isEmpty()) {
-            return;
+            return new ConditionalApplication(0, 0);
         }
         List<Node> matchingProfiles = successorsMatchingProfiles(aliveSuccessors, aggregatedProbabilities.get());
         matchingProfiles.forEach(
                         s -> conditionalNode.setProbability((AbstractBeginNode) s, BranchProbabilityData.create(aggregatedProbabilities.get().get(s.getNodeSourcePosition().getBCI()), source)));
+        return new ConditionalApplication(aggregatedProbabilities.get().size(), matchingProfiles.size());
     }
 
     /**

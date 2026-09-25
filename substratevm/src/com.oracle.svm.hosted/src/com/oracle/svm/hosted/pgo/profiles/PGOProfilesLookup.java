@@ -121,6 +121,14 @@ public interface PGOProfilesLookup {
     Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext);
 
     /**
+     * Reports how many profiled successor probabilities were actually matched to successors in the
+     * current graph. Implementations may use this for per-entry application accounting.
+     */
+    default void recordConditionalProfileApplication(@SuppressWarnings("unused") BytecodePosition callingContext,
+                    @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
+    }
+
+    /**
      * Get the sum of all the conditional profile values associated with the given method. A
      * conditional profile is associated with the method if it is found in a context where the given
      * method is the head of the context, i.e. the innermost method in the calling context.

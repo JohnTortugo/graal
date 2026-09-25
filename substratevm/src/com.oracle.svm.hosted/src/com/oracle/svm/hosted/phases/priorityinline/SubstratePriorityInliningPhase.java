@@ -45,6 +45,7 @@ import com.oracle.svm.hosted.cai.PrefixTree;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.PGOBranchInstrumentationFeature;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.phases.OOMEExceptionEdgePolicy;
@@ -316,6 +317,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 HostedProviders providers = (HostedProviders) runtimeConfig.lookupBackend(targetMethod).getProviders();
                 HighTierContext highTierContext = new HighTierContext(providers, highTier, optimisticOpts);
                 applyPGOProfiles(graphCopy, highTierContext, replaceePosition);
+                PGOBranchInstrumentationFeature.instrumentExpandedGraph(graphCopy, replaceePosition);
 
                 ref = UseGraphCache.getValue(getOptions()) ? selectedGraphCache.createRef(targetMethod, graphCopy) : selectedGraphCache.createNonCounted(graphCopy);
             }

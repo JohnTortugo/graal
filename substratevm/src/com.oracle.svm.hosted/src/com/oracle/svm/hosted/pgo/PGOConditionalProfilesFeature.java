@@ -1,0 +1,239 @@
+/*
+ * Copyright (c) 2026, 2026, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+package com.oracle.svm.hosted.pgo;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ListIterator;
+
+import org.graalvm.collections.EconomicMap;
+import org.graalvm.nativeimage.ImageSingletons;
+
+import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.hosted.FeatureImpl;
+import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
+import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
+import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup;
+import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.shared.option.APIOption;
+import com.oracle.svm.shared.option.HostedOptionKey;
+
+import jdk.graal.compiler.core.common.GraalOptions;
+import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.options.Option;
+import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.phases.BasePhase;
+import jdk.graal.compiler.phases.PhaseSuite;
+import jdk.graal.compiler.phases.common.AbstractInliningPhase;
+import jdk.graal.compiler.phases.tiers.HighTierContext;
+import jdk.graal.compiler.phases.tiers.Suites;
+import jdk.graal.compiler.phases.util.Providers;
+
+/** Wires stage-qualified conditional-only iprof data into hosted Native Image compilation. */
+@AutomaticallyRegisteredFeature
+public final class PGOConditionalProfilesFeature implements InternalFeature {
+
+    public static final class Options {
+        // @formatter:off
+        @APIOption(name = "pgo")//
+        @Option(help = "Consume conditional branch profiles before root inlining and during priority-inliner expansion.")//
+        public static final HostedOptionKey<String> ConditionalProfilesUse = new ProfilePathOption();
+
+        @APIOption(name = "pgo-post-inlining")//
+        @Option(help = "Consume conditional branch profiles at the end of hosted HighTier, matching the post-inlining producer stage.")//
+        public static final HostedOptionKey<String> ConditionalProfilesPostInliningUse = new ProfilePathOption();
+        // @formatter:on
+
+        private static final class ProfilePathOption extends HostedOptionKey<String> {
+            private ProfilePathOption() {
+                super("");
+            }
+
+            @Override
+            protected void onValueUpdate(EconomicMap<OptionKey<?>, Object> values, String oldValue, String newValue) {
+                super.onValueUpdate(values, oldValue, newValue);
+                if (newValue != null && !newValue.isEmpty()) {
+                    GraalOptions.TrackNodeSourcePosition.update(values, true);
+                }
+            }
+        }
+    }
+
+    private ParsedProfile parsedEarlyProfile;
+    private ParsedProfile parsedPostInliningProfile;
+    private SimpleConditionalProfilesLookup earlyLookup;
+    private SimpleConditionalProfilesLookup postInliningLookup;
+    private HostedUniverse hostedUniverse;
+
+    private static String earlyProfilePath() {
+        return Options.ConditionalProfilesUse.getValue();
+    }
+
+    private static String postInliningProfilePath() {
+        return Options.ConditionalProfilesPostInliningUse.getValue();
+    }
+
+    private static boolean pathSet(String path) {
+        return path != null && !path.isEmpty();
+    }
+
+    public static boolean anyProfileEnabled() {
+        return pathSet(earlyProfilePath()) || pathSet(postInliningProfilePath());
+    }
+
+    @Override
+    public boolean isInConfiguration(IsInConfigurationAccess access) {
+        return anyProfileEnabled();
+    }
+
+    @Override
+    public void afterRegistration(AfterRegistrationAccess access) {
+        if (pathSet(earlyProfilePath())) {
+            parsedEarlyProfile = parseProfile(earlyProfilePath(), "--pgo");
+        }
+        if (pathSet(postInliningProfilePath())) {
+            parsedPostInliningProfile = parseProfile(postInliningProfilePath(), "--pgo-post-inlining");
+        }
+    }
+
+    private static ParsedProfile parseProfile(String profilePath, String optionName) {
+        Path path = Path.of(profilePath);
+        if (!Files.isReadable(path)) {
+            throw UserError.abort("The iprof file passed to %s is not readable: %s", optionName, path);
+        }
+        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            return new IprofConditionalParser().parse(reader);
+        } catch (IprofFormatException e) {
+            throw UserError.abort("The iprof file passed to %s is malformed: %s (%s)", optionName, path, e.getMessage());
+        } catch (IOException e) {
+            throw UserError.abort("Could not read the iprof file passed to %s: %s (%s)", optionName, path, e.getMessage());
+        }
+    }
+
+    @Override
+    public void beforeCompilation(BeforeCompilationAccess access) {
+        if (!anyProfileEnabled()) {
+            return;
+        }
+        hostedUniverse = ((FeatureImpl.BeforeCompilationAccessImpl) access).getUniverse();
+
+        if (parsedEarlyProfile != null && !ImageSingletons.contains(PGOProfilesLookup.class)) {
+            earlyLookup = ConditionalProfileContextResolver.resolve(parsedEarlyProfile, hostedUniverse);
+            ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
+            reportResolution("early", earlyLookup);
+        }
+        if (parsedPostInliningProfile != null) {
+            postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
+            reportResolution("post-inlining", postInliningLookup);
+        }
+        parsedEarlyProfile = null;
+        parsedPostInliningProfile = null;
+    }
+
+    private static void reportResolution(String stage, SimpleConditionalProfilesLookup lookup) {
+        // Checkstyle: stop
+        System.out.println("[PGO:" + stage + "] " + lookup.diagnostics().summary());
+        // Checkstyle: resume
+        if (!lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CONDITIONAL_PROFILES_CATEGORY)) {
+            // Checkstyle: stop
+            System.err.printf("[PGO:%s] WARNING: profile contains no applicable conditionalProfiles (%d entries, %d resolved)%n",
+                            stage, lookup.diagnostics().totalEntries(), lookup.diagnostics().resolvedEntries());
+            // Checkstyle: resume
+        }
+    }
+
+    @Override
+    public void registerGraalPhases(Providers providers, Suites suites, boolean hosted, boolean fallback) {
+        if (!hosted || fallback || hostedUniverse == null) {
+            return;
+        }
+        PhaseSuite<HighTierContext> highTier = suites.getHighTier();
+        if (earlyLookup != null) {
+            ApplyConditionalProfilesPhase earlyPhase = new ApplyConditionalProfilesPhase(hostedUniverse, earlyLookup);
+            ListIterator<BasePhase<? super HighTierContext>> inliner = highTier.findPhase(AbstractInliningPhase.class);
+            if (inliner != null) {
+                inliner.previous();
+                inliner.add(earlyPhase);
+            } else {
+                highTier.prependPhase(earlyPhase);
+            }
+        }
+        if (postInliningLookup != null) {
+            /* The post-inlining producer is appended at this same hosted HighTier boundary. */
+            highTier.appendPhase(new ApplyConditionalProfilesPhase(hostedUniverse, postInliningLookup));
+        }
+    }
+
+    /** Creates the single-use PGO subphase separately for every compilation graph. */
+    private static final class ApplyConditionalProfilesPhase extends BasePhase<HighTierContext> {
+        private final HostedUniverse universe;
+        private final SimpleConditionalProfilesLookup lookup;
+
+        private ApplyConditionalProfilesPhase(HostedUniverse universe, SimpleConditionalProfilesLookup lookup) {
+            this.universe = universe;
+            this.lookup = lookup;
+        }
+
+        @Override
+        protected void run(StructuredGraph graph, HighTierContext context) {
+            PGOApplyProfilesPhase.createContextInsensitive(universe, lookup).apply(graph, context);
+        }
+    }
+
+    @Override
+    public void afterCompilation(AfterCompilationAccess access) {
+        reportApplication("early", earlyLookup);
+        reportApplication("post-inlining", postInliningLookup);
+    }
+
+    private static void reportApplication(String stage, SimpleConditionalProfilesLookup lookup) {
+        if (lookup == null) {
+            return;
+        }
+        long hits = lookup.hitCount();
+        long misses = lookup.missCount();
+        long queries = hits + misses;
+        double hitRate = queries == 0 ? 0.0 : 100.0 * hits / queries;
+        int matchedContexts = lookup.matchedContextCount();
+        int availableContexts = lookup.availableContextCount();
+        double contextUseRate = availableContexts == 0 ? 0.0 : 100.0 * matchedContexts / availableContexts;
+        // Checkstyle: stop
+        System.out.printf("[PGO:%s] %d queries, %d hits (%.1f%%), %d misses; contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused%n",
+                        stage, queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
+                        lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
+        // Checkstyle: resume
+        if (PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue()) {
+            System.out.println("[PGO:" + stage + "] resolved context samples: " + lookup.contextKeySamples(10));
+        }
+    }
+}
