@@ -18,6 +18,7 @@ The current implementation intentionally covers one profile category only: iprof
 - [Architecture](Architecture.md)
 - [Conditional iprof subset](ProfileFormat.md)
 - [Experiments, evidence, decisions, and limitations](ExperimentsAndDecisions.md)
+- [Instrumentation overhead: finding, fix, and progress](InstrumentationOverhead.md)
 
 ## Basic workflow
 
