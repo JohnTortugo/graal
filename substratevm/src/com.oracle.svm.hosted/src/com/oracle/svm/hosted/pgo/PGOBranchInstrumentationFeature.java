@@ -35,6 +35,7 @@ import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
 import com.oracle.svm.shared.option.HostedOptionKey;
@@ -98,7 +99,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
     /** Called for every decoded priority-inliner cutoff graph under its exact caller context. */
     public static void instrumentExpandedGraph(StructuredGraph graph, NodeSourcePosition inliningContext) {
         if (alignedEnabled()) {
-            BranchProfileInstrumentationPhase.instrumentGraph(graph, inliningContext);
+            BranchProfileInstrumentationPhase.instrumentGraph(graph, Stage.INLINE_EXPANSION, inliningContext);
         }
     }
 
@@ -135,7 +136,8 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             return;
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
-        BranchProfileInstrumentationPhase phase = new BranchProfileInstrumentationPhase(null);
+        Stage stage = alignedEnabled() ? Stage.ROOT_PRE_INLINE : Stage.POST_HIGH_TIER;
+        BranchProfileInstrumentationPhase phase = new BranchProfileInstrumentationPhase(stage, null);
         if (alignedEnabled()) {
             ListIterator<BasePhase<? super HighTierContext>> inliner = highTier.findPhase(AbstractInliningPhase.class);
             if (inliner != null) {

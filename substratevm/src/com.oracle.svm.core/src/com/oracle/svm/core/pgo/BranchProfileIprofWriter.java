@@ -29,6 +29,9 @@ import java.io.Writer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -36,9 +39,10 @@ import java.util.TreeSet;
 
 import jdk.graal.compiler.util.json.JsonWriter;
 
-/** Writes the conditional-only subset of the public iprof 1.1.0 format. */
+/** Writes legacy conditional profiles plus a precise stage-qualified CE extension. */
 public final class BranchProfileIprofWriter {
 
+    public static final String PRECISE_CONDITIONAL_PROFILES_KEY = "ceConditionalProfilesV2";
     private static final String VERSION = "1.1.0";
 
     private BranchProfileIprofWriter() {
@@ -50,7 +54,6 @@ public final class BranchProfileIprofWriter {
         }
     }
 
-    /** Unit-testable entry point that writes to an already-open character stream. */
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
             return write(writer, counters);
@@ -61,17 +64,47 @@ public final class BranchProfileIprofWriter {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
-        Metadata metadata = Metadata.create(activeCounters);
+        Map<PreciseSiteKey, PreciseSiteData> preciseSites = aggregatePreciseSites(activeCounters);
+        Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> legacySites = unambiguousLegacySites(preciseSites);
+        Metadata metadata = Metadata.create(preciseSites.keySet());
 
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
         writeMethods(writer, metadata).appendSeparator();
-        writeConditionalProfiles(writer, metadata, activeCounters);
+        writeLegacyProfiles(writer, metadata, legacySites).appendSeparator();
+        writePreciseProfiles(writer, metadata, preciseSites);
         writer.appendObjectEnd();
 
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
-        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), activeCounters.size(), events);
+        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), events);
+    }
+
+    private static Map<PreciseSiteKey, PreciseSiteData> aggregatePreciseSites(List<BranchProfileCounter> counters) {
+        Map<PreciseSiteKey, PreciseSiteData> aggregate = new HashMap<>();
+        for (BranchProfileCounter counter : counters) {
+            PreciseSiteKey key = PreciseSiteKey.from(counter);
+            PreciseSiteData data = aggregate.computeIfAbsent(key, _ -> new PreciseSiteData(counter.getConditionFingerprint(), new long[2]));
+            data.counts()[0] += counter.getTrueCount();
+            data.counts()[1] += counter.getFalseCount();
+        }
+        return aggregate.entrySet().stream().sorted(Map.Entry.comparingByKey(PRECISE_SITE_COMPARATOR))
+                        .collect(LinkedHashMap::new, (map, entry) -> map.put(entry.getKey(), entry.getValue()), Map::putAll);
+    }
+
+    /** Legacy output is safe only when one context identifies exactly one precise branch site. */
+    private static Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> unambiguousLegacySites(Map<PreciseSiteKey, PreciseSiteData> preciseSites) {
+        Map<ContextKey, List<Map.Entry<PreciseSiteKey, PreciseSiteData>>> byContext = new HashMap<>();
+        for (Map.Entry<PreciseSiteKey, PreciseSiteData> entry : preciseSites.entrySet()) {
+            byContext.computeIfAbsent(entry.getKey().context, _ -> new ArrayList<>()).add(entry);
+        }
+        Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> result = new TreeMap<>(CONTEXT_COMPARATOR);
+        byContext.forEach((context, entries) -> {
+            if (entries.size() == 1) {
+                result.put(context, entries.getFirst());
+            }
+        });
+        return result;
     }
 
     private static JsonWriter writeTypes(JsonWriter writer, Metadata metadata) throws IOException {
@@ -110,41 +143,96 @@ public final class BranchProfileIprofWriter {
         return writer.appendArrayEnd();
     }
 
-    private static void writeConditionalProfiles(JsonWriter writer, Metadata metadata, List<BranchProfileCounter> counters) throws IOException {
+    private static JsonWriter writeLegacyProfiles(JsonWriter writer, Metadata metadata,
+                    Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> profiles) throws IOException {
         writer.quote("conditionalProfiles").appendFieldSeparator().appendArrayStart();
         boolean first = true;
-        for (BranchProfileCounter counter : counters) {
-            if (counter.getTrueCount() == 0 && counter.getFalseCount() == 0) {
-                continue;
-            }
+        for (Map.Entry<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> profile : profiles.entrySet()) {
             if (!first) {
                 writer.appendSeparator();
             }
             first = false;
-            writer.appendObjectStart().appendKeyValue("ctx", context(metadata, counter)).appendSeparator()
-                            .quote("records").appendFieldSeparator().appendArrayStart()
-                            .printValue(counter.getTrueSuccessorBci()).appendSeparator().printValue(0).appendSeparator().printValue(counter.getTrueCount()).appendSeparator()
-                            .printValue(counter.getFalseSuccessorBci()).appendSeparator().printValue(1).appendSeparator().printValue(counter.getFalseCount())
-                            .appendArrayEnd().appendObjectEnd();
+            writeProfileEntry(writer, metadata, profile.getKey(), profile.getValue().getKey(), profile.getValue().getValue(), false);
+        }
+        return writer.appendArrayEnd();
+    }
+
+    private static void writePreciseProfiles(JsonWriter writer, Metadata metadata, Map<PreciseSiteKey, PreciseSiteData> profiles) throws IOException {
+        writer.quote(PRECISE_CONDITIONAL_PROFILES_KEY).appendFieldSeparator().appendArrayStart();
+        boolean first = true;
+        for (Map.Entry<PreciseSiteKey, PreciseSiteData> profile : profiles.entrySet()) {
+            if (!first) {
+                writer.appendSeparator();
+            }
+            first = false;
+            writeProfileEntry(writer, metadata, profile.getKey().context, profile.getKey(), profile.getValue(), true);
         }
         writer.appendArrayEnd();
     }
 
-    private static String context(Metadata metadata, BranchProfileCounter counter) {
+    private static void writeProfileEntry(JsonWriter writer, Metadata metadata, ContextKey context, PreciseSiteKey site, PreciseSiteData data, boolean precise) throws IOException {
+        writer.appendObjectStart();
+        if (precise) {
+            writer.appendKeyValue("stage", site.stage).appendSeparator()
+                            .appendKeyValue("ctx", context(metadata, context)).appendSeparator()
+                            .quote("successors").appendFieldSeparator().appendArrayStart()
+                            .printValue(site.trueSuccessorBci).appendSeparator().printValue(site.falseSuccessorBci).appendArrayEnd().appendSeparator()
+                            .appendKeyValue("conditionKind", site.conditionKind).appendSeparator()
+                            .appendKeyValue("conditionFingerprint", Long.toUnsignedString(data.conditionFingerprint(), 16)).appendSeparator()
+                            .appendKeyValue("occurrence", site.occurrence).appendSeparator();
+        } else {
+            writer.appendKeyValue("ctx", context(metadata, context)).appendSeparator();
+        }
+        writer.quote("records").appendFieldSeparator().appendArrayStart()
+                        .printValue(site.trueSuccessorBci).appendSeparator().printValue(0).appendSeparator().printValue(data.counts()[0]).appendSeparator()
+                        .printValue(site.falseSuccessorBci).appendSeparator().printValue(1).appendSeparator().printValue(data.counts()[1])
+                        .appendArrayEnd().appendObjectEnd();
+    }
+
+    private static String context(Metadata metadata, ContextKey context) {
         StringBuilder result = new StringBuilder();
-        String[] descriptors = counter.getMethodDescriptors();
-        int[] bcis = counter.getContextBcis();
-        for (int i = 0; i < descriptors.length; i++) {
+        for (int i = 0; i < context.methodDescriptors.size(); i++) {
             if (i != 0) {
                 result.append('<');
             }
-            result.append(metadata.methodsByDescriptor.get(descriptors[i])).append(':').append(bcis[i]);
+            result.append(metadata.methodsByDescriptor.get(context.methodDescriptors.get(i))).append(':').append(context.bcis.get(i));
         }
         return result.toString();
     }
 
-    public record DumpStatistics(int types, int methods, int conditionalProfiles, long recordedEvents) {
+    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, long recordedEvents) {
     }
+
+    private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) {
+        private ContextKey {
+            methodDescriptors = List.copyOf(methodDescriptors);
+            bcis = List.copyOf(bcis);
+        }
+    }
+
+    private record PreciseSiteKey(String stage, ContextKey context, int trueSuccessorBci, int falseSuccessorBci,
+                    String conditionKind, int occurrence) {
+        private static PreciseSiteKey from(BranchProfileCounter counter) {
+            ContextKey context = new ContextKey(Arrays.asList(counter.getMethodDescriptors()), Arrays.stream(counter.getContextBcis()).boxed().toList());
+            return new PreciseSiteKey(counter.getStage(), context, counter.getTrueSuccessorBci(), counter.getFalseSuccessorBci(),
+                            counter.getConditionKind(), counter.getOccurrence());
+        }
+    }
+
+    private record PreciseSiteData(long conditionFingerprint, long[] counts) {
+    }
+
+    private static final Comparator<ContextKey> CONTEXT_COMPARATOR = Comparator
+                    .comparing((ContextKey key) -> String.join("\u0000", key.methodDescriptors))
+                    .thenComparing(key -> key.bcis.toString());
+
+    private static final Comparator<PreciseSiteKey> PRECISE_SITE_COMPARATOR = Comparator
+                    .comparing(PreciseSiteKey::stage)
+                    .thenComparing(PreciseSiteKey::context, CONTEXT_COMPARATOR)
+                    .thenComparingInt(PreciseSiteKey::trueSuccessorBci)
+                    .thenComparingInt(PreciseSiteKey::falseSuccessorBci)
+                    .thenComparing(PreciseSiteKey::conditionKind)
+                    .thenComparingInt(PreciseSiteKey::occurrence);
 
     private static final class Metadata {
         private final TreeMap<String, Integer> typesByName;
@@ -155,12 +243,11 @@ public final class BranchProfileIprofWriter {
             this.methodsByDescriptor = methodsByDescriptor;
         }
 
-        private static Metadata create(List<BranchProfileCounter> counters) {
+        private static Metadata create(Iterable<PreciseSiteKey> sites) {
             TreeSet<String> descriptors = new TreeSet<>();
-            for (BranchProfileCounter counter : counters) {
-                descriptors.addAll(Arrays.asList(counter.getMethodDescriptors()));
+            for (PreciseSiteKey site : sites) {
+                descriptors.addAll(site.context.methodDescriptors);
             }
-
             TreeSet<String> types = new TreeSet<>();
             for (String descriptor : descriptors) {
                 ParsedMethod method = ParsedMethod.parse(descriptor);
@@ -168,10 +255,7 @@ public final class BranchProfileIprofWriter {
                 types.add(method.returnType);
                 types.addAll(method.parameterTypes);
             }
-
-            TreeMap<String, Integer> typeIds = assignIds(types);
-            TreeMap<String, Integer> methodIds = assignIds(descriptors);
-            return new Metadata(typeIds, methodIds);
+            return new Metadata(assignIds(types), assignIds(descriptors));
         }
 
         private static TreeMap<String, Integer> assignIds(TreeSet<String> values) {
@@ -204,7 +288,6 @@ public final class BranchProfileIprofWriter {
             if (declaringEnd < 1 || parametersStart < declaringEnd + 3 || parametersEnd < parametersStart) {
                 throw new IllegalArgumentException("Malformed canonical method descriptor: " + methodDescriptor);
             }
-
             String declaring = typeName(methodDescriptor.substring(0, declaringEnd + 1));
             String name = methodDescriptor.substring(declaringEnd + 2, parametersStart);
             List<String> parameters = new ArrayList<>();
@@ -218,8 +301,7 @@ public final class BranchProfileIprofWriter {
             if (returnEnd != methodDescriptor.length()) {
                 throw new IllegalArgumentException("Trailing data in canonical method descriptor: " + methodDescriptor);
             }
-            String returnType = typeName(methodDescriptor.substring(parametersEnd + 1, returnEnd));
-            return new ParsedMethod(declaring, name, returnType, List.copyOf(parameters));
+            return new ParsedMethod(declaring, name, typeName(methodDescriptor.substring(parametersEnd + 1, returnEnd)), List.copyOf(parameters));
         }
 
         private static int typeDescriptorEnd(String descriptor, int start, int limit) {

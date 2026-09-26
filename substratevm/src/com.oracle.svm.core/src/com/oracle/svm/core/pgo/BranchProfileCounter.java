@@ -28,25 +28,38 @@ import com.oracle.svm.guest.staging.core.heap.UnknownObjectField;
 import com.oracle.svm.guest.staging.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.shared.BuildPhaseProvider.AfterCompilation;
 
-/** Immutable metadata and shared-storage index for one instrumented conditional branch. */
+/** Immutable identity metadata and shared-storage index for one physical conditional branch site. */
 public final class BranchProfileCounter {
 
+    @UnknownObjectField(availability = AfterCompilation.class) private final String stage;
     /** Calling context, innermost frame first, in canonical JVM descriptor form. */
     @UnknownObjectField(availability = AfterCompilation.class) private final String[] methodDescriptors;
     /** BCI for every frame in {@link #methodDescriptors}. */
     @UnknownObjectField(availability = AfterCompilation.class) private final int[] contextBcis;
-    /** Source BCI of the true and false successor respectively. */
+    /** Ordered BCI of the true and false successors respectively. */
     @UnknownPrimitiveField(availability = AfterCompilation.class) private final int trueSuccessorBci;
     @UnknownPrimitiveField(availability = AfterCompilation.class) private final int falseSuccessorBci;
+    @UnknownObjectField(availability = AfterCompilation.class) private final String conditionKind;
+    @UnknownPrimitiveField(availability = AfterCompilation.class) private final long conditionFingerprint;
+    @UnknownPrimitiveField(availability = AfterCompilation.class) private final int occurrence;
     /** Index into the relocation-safe shared runtime counter array. */
     @UnknownPrimitiveField(availability = AfterCompilation.class) private final int counterIndex;
 
-    BranchProfileCounter(String[] methodDescriptors, int[] contextBcis, int trueSuccessorBci, int falseSuccessorBci, int counterIndex) {
+    BranchProfileCounter(String stage, String[] methodDescriptors, int[] contextBcis, int trueSuccessorBci, int falseSuccessorBci,
+                    String conditionKind, long conditionFingerprint, int occurrence, int counterIndex) {
+        this.stage = stage;
         this.methodDescriptors = methodDescriptors;
         this.contextBcis = contextBcis;
         this.trueSuccessorBci = trueSuccessorBci;
         this.falseSuccessorBci = falseSuccessorBci;
+        this.conditionKind = conditionKind;
+        this.conditionFingerprint = conditionFingerprint;
+        this.occurrence = occurrence;
         this.counterIndex = counterIndex;
+    }
+
+    public String getStage() {
+        return stage;
     }
 
     public String[] getMethodDescriptors() {
@@ -63,6 +76,18 @@ public final class BranchProfileCounter {
 
     public int getFalseSuccessorBci() {
         return falseSuccessorBci;
+    }
+
+    public String getConditionKind() {
+        return conditionKind;
+    }
+
+    public long getConditionFingerprint() {
+        return conditionFingerprint;
+    }
+
+    public int getOccurrence() {
+        return occurrence;
     }
 
     public int getCounterIndex() {

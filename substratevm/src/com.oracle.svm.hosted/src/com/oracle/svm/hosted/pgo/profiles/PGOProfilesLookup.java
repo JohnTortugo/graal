@@ -120,12 +120,21 @@ public interface PGOProfilesLookup {
      */
     Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext);
 
+    default Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext, @SuppressWarnings("unused") ConditionalProfileSiteDescriptor site) {
+        return getConditionalProfile(callingContext);
+    }
+
     /**
      * Reports how many profiled successor probabilities were actually matched to successors in the
      * current graph. Implementations may use this for per-entry application accounting.
      */
     default void recordConditionalProfileApplication(@SuppressWarnings("unused") BytecodePosition callingContext,
                     @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
+    }
+
+    default void recordConditionalProfileApplication(BytecodePosition callingContext, @SuppressWarnings("unused") ConditionalProfileSiteDescriptor site,
+                    int profiledSuccessors, int appliedSuccessors) {
+        recordConditionalProfileApplication(callingContext, profiledSuccessors, appliedSuccessors);
     }
 
     /**

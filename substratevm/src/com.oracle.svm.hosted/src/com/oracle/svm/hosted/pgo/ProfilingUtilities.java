@@ -25,9 +25,15 @@
 package com.oracle.svm.hosted.pgo;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.graalvm.collections.EconomicMap;
+
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 
 import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.graph.NodeSourcePosition;
@@ -112,6 +118,79 @@ public class ProfilingUtilities {
 
     public static NodeIterable<Node> getConditionalNodesFromGraph(StructuredGraph graph) {
         return graph.getNodes().filter(n -> n instanceof IfNode || n instanceof SwitchNode);
+    }
+
+    public record ConditionalSite(ControlSplitNode node, NodeSourcePosition context, ConditionalProfileSiteDescriptor descriptor) {
+    }
+
+    /**
+     * Enumerates conditionals with a stage-qualified identity shared by producer and consumer.
+     * Occurrence ordinals are assigned in deterministic graph iteration order within equal
+     * context/successor/condition shapes; graph-local node ids are never serialized.
+     */
+    public static List<ConditionalSite> relevantConditionalSitesFromGraph(StructuredGraph graph, Stage stage, NodeSourcePosition inliningContext) {
+        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = relevantConditionalNodesFromGraph(graph);
+        Map<String, Integer> nextOccurrence = new HashMap<>();
+        List<ConditionalSite> result = new ArrayList<>();
+        for (List<ControlSplitNode> group : groups.getValues()) {
+            for (ControlSplitNode node : group) {
+                NodeSourcePosition context = node.getNodeSourcePosition();
+                if (inliningContext != null) {
+                    context = context.addCaller(inliningContext);
+                }
+                List<Integer> successorBcis = node.successors().snapshot().stream()
+                                .map(successor -> successor.getNodeSourcePosition() == null ? BytecodeFrame.UNKNOWN_BCI : successor.getNodeSourcePosition().getBCI()).toList();
+                String conditionKind = node instanceof IfNode ifNode ? ifNode.condition().getClass().getName() : node.getClass().getName();
+                long fingerprint = conditionFingerprint(node);
+                String occurrenceKey = canonicalContext(context) + '|' + successorBcis + '|' + conditionKind + '|' + Long.toUnsignedString(fingerprint, 16);
+                int occurrence = nextOccurrence.getOrDefault(occurrenceKey, 0);
+                nextOccurrence.put(occurrenceKey, occurrence + 1);
+                result.add(new ConditionalSite(node, context, new ConditionalProfileSiteDescriptor(stage, successorBcis, conditionKind, fingerprint, occurrence)));
+            }
+        }
+        return result;
+    }
+
+    private static String canonicalContext(NodeSourcePosition position) {
+        StringBuilder result = new StringBuilder();
+        for (NodeSourcePosition frame = position; frame != null; frame = frame.getCaller()) {
+            if (!result.isEmpty()) {
+                result.append('<');
+            }
+            result.append(ConditionalProfileContextResolver.methodDescriptor(frame.getMethod())).append(':').append(frame.getBCI());
+        }
+        return result.toString();
+    }
+
+    private static long conditionFingerprint(ControlSplitNode node) {
+        long hash = fingerprintText(0xcbf29ce484222325L, node.getClass().getName());
+        if (node instanceof IfNode ifNode) {
+            hash = fingerprintNode(hash, ifNode.condition(), 3);
+        }
+        return hash;
+    }
+
+    private static long fingerprintNode(long hash, Node node, int depth) {
+        hash = fingerprintText(hash, node.getClass().getName());
+        NodeSourcePosition position = node.getNodeSourcePosition();
+        if (position != null) {
+            hash = fingerprintText(hash, canonicalContext(position));
+        }
+        if (depth > 0) {
+            for (Node input : node.inputs()) {
+                hash = fingerprintNode(hash, input, depth - 1);
+            }
+        }
+        return hash;
+    }
+
+    private static long fingerprintText(long hash, String value) {
+        long result = hash;
+        for (int i = 0; i < value.length(); i++) {
+            result ^= value.charAt(i);
+            result *= 0x100000001b3L;
+        }
+        return result;
     }
 
     private static boolean hasNonDefaultProbability(ControlSplitNode n1) {

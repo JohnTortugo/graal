@@ -73,7 +73,25 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     public record FrameKey(String methodDescriptor, int bci) {
     }
 
+    public record PreciseKey(List<FrameKey> context, ConditionalProfileSiteDescriptor.Stage stage, List<Integer> successorBcis,
+                    String conditionKind, int occurrence) {
+        public PreciseKey {
+            context = List.copyOf(context);
+            successorBcis = List.copyOf(successorBcis);
+        }
+
+        public static PreciseKey from(List<FrameKey> context, ConditionalProfileSiteDescriptor site) {
+            return new PreciseKey(context, site.stage(), site.successorBcis(), site.conditionKind(), site.occurrence());
+        }
+    }
+
+    public record PreciseProfile(long conditionFingerprint, long[] records) {
+    }
+
     private final Map<List<FrameKey>, long[]> conditionalData;
+    private final Map<PreciseKey, PreciseProfile> preciseConditionalData;
+    private final Map<List<FrameKey>, List<PreciseKey>> preciseSitesByContext;
+    private final boolean preferPrecise;
     private final ConditionalProfileDiagnostics diagnostics;
     private volatile boolean cleared;
 
@@ -87,16 +105,36 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
      */
     private final AtomicLong hitCount = new AtomicLong();
     private final AtomicLong missCount = new AtomicLong();
+    private final AtomicLong preciseContextMissCount = new AtomicLong();
+    private final AtomicLong preciseStageMissCount = new AtomicLong();
+    private final AtomicLong preciseSuccessorMissCount = new AtomicLong();
+    private final AtomicLong preciseConditionKindMissCount = new AtomicLong();
+    private final AtomicLong preciseOccurrenceMissCount = new AtomicLong();
+    private final AtomicLong preciseFingerprintDriftCount = new AtomicLong();
+    private final AtomicLong preciseUnambiguousFallbackCount = new AtomicLong();
     /** Exact profile contexts that matched at least one compiler query. */
-    private final Set<List<FrameKey>> matchedContexts = ConcurrentHashMap.newKeySet();
+    private final Set<Object> matchedContexts = ConcurrentHashMap.newKeySet();
     /** Best successor-record coverage observed for every matched context. */
-    private final Map<List<FrameKey>, ApplicationCoverage> applicationCoverage = new ConcurrentHashMap<>();
+    private final Map<Object, ApplicationCoverage> applicationCoverage = new ConcurrentHashMap<>();
 
     private record ApplicationCoverage(int profiledSuccessors, int appliedSuccessors) {
     }
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, ConditionalProfileDiagnostics diagnostics) {
+        this(conditionalData, Map.of(), diagnostics);
+    }
+
+    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
+                    ConditionalProfileDiagnostics diagnostics) {
         this.conditionalData = Map.copyOf(conditionalData);
+        this.preciseConditionalData = Map.copyOf(preciseConditionalData);
+        Map<List<FrameKey>, List<PreciseKey>> byContext = new java.util.HashMap<>();
+        for (PreciseKey key : preciseConditionalData.keySet()) {
+            byContext.computeIfAbsent(key.context(), _ -> new ArrayList<>()).add(key);
+        }
+        byContext.replaceAll((_, sites) -> List.copyOf(sites));
+        this.preciseSitesByContext = Map.copyOf(byContext);
+        this.preferPrecise = !preciseConditionalData.isEmpty();
         this.diagnostics = diagnostics;
     }
 
@@ -107,6 +145,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     /** Returns deterministic context-key samples for profile compatibility diagnostics. */
     public List<String> contextKeySamples(int limit) {
+        if (preferPrecise) {
+            return preciseConditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
+        }
         return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
     }
 
@@ -127,7 +168,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     /** Number of resolved conditional contexts available to the compiler. */
     public int availableContextCount() {
-        return conditionalData.size();
+        return preferPrecise ? preciseConditionalData.size() : conditionalData.size();
     }
 
     /** Number of resolved contexts whose profile matched every successor at least once. */
@@ -147,7 +188,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     /** Number of resolved contexts never requested by this stage's compiler queries. */
     public long unusedResolvedContextCount() {
-        return conditionalData.size() - matchedContexts.size();
+        return availableContextCount() - matchedContexts.size();
     }
 
     /** Number of applied-lookup queries that did not match any installed conditional context. */
@@ -157,32 +198,93 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     @Override
     public boolean profileCategoryRecorded(String category) {
-        return CONDITIONAL_PROFILES_CATEGORY.equals(category) && !cleared && !conditionalData.isEmpty();
+        return CONDITIONAL_PROFILES_CATEGORY.equals(category) && !cleared && (!conditionalData.isEmpty() || !preciseConditionalData.isEmpty());
     }
 
     @Override
     public Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext) {
+        return getConditionalProfile(callingContext, null);
+    }
+
+    @Override
+    public Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext, ConditionalProfileSiteDescriptor site) {
         if (cleared || callingContext == null) {
             return Optional.empty();
         }
-        List<FrameKey> key = canonicalize(callingContext);
-        long[] records = conditionalData.get(key);
+        Object queryKey = rawProfileKey(callingContext, site);
+        Object key = selectProfileKey(queryKey);
+        PreciseProfile preciseProfile = key instanceof PreciseKey preciseKey ? preciseConditionalData.get(preciseKey) : null;
+        long[] records = preciseProfile != null ? preciseProfile.records() : conditionalData.get(key);
         if (records == null) {
             missCount.incrementAndGet();
+            if (queryKey instanceof PreciseKey preciseKey) {
+                classifyPreciseMiss(preciseKey);
+            }
             return Optional.empty();
+        }
+        boolean exactPreciseMatch = queryKey.equals(key);
+        if (!exactPreciseMatch && queryKey instanceof PreciseKey) {
+            preciseUnambiguousFallbackCount.incrementAndGet();
+        }
+        if (exactPreciseMatch && preciseProfile != null && site != null && preciseProfile.conditionFingerprint() != site.conditionFingerprint()) {
+            preciseFingerprintDriftCount.incrementAndGet();
         }
         matchedContexts.add(key);
         hitCount.incrementAndGet();
         return Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, records));
     }
 
+    private void classifyPreciseMiss(PreciseKey query) {
+        List<PreciseKey> candidates = preciseSitesByContext.get(query.context());
+        if (candidates == null) {
+            preciseContextMissCount.incrementAndGet();
+            return;
+        }
+        candidates = candidates.stream().filter(candidate -> candidate.stage() == query.stage()).toList();
+        if (candidates.isEmpty()) {
+            preciseStageMissCount.incrementAndGet();
+            return;
+        }
+        candidates = candidates.stream().filter(candidate -> candidate.successorBcis().equals(query.successorBcis())).toList();
+        if (candidates.isEmpty()) {
+            preciseSuccessorMissCount.incrementAndGet();
+            return;
+        }
+        candidates = candidates.stream().filter(candidate -> candidate.conditionKind().equals(query.conditionKind())).toList();
+        if (candidates.isEmpty()) {
+            preciseConditionKindMissCount.incrementAndGet();
+            return;
+        }
+        preciseOccurrenceMissCount.incrementAndGet();
+    }
+
+    public boolean usesPreciseProfiles() {
+        return preferPrecise;
+    }
+
+    public PreciseMissDiagnostics preciseMissDiagnostics() {
+        return new PreciseMissDiagnostics(preciseContextMissCount.get(), preciseStageMissCount.get(), preciseSuccessorMissCount.get(),
+                        preciseConditionKindMissCount.get(), preciseOccurrenceMissCount.get(), preciseFingerprintDriftCount.get(), preciseUnambiguousFallbackCount.get());
+    }
+
+    public record PreciseMissDiagnostics(long context, long stage, long successors, long conditionKind, long occurrence, long fingerprintDrift,
+                    long unambiguousFallback) {
+    }
+
     @Override
     public void recordConditionalProfileApplication(BytecodePosition callingContext, int profiledSuccessors, int appliedSuccessors) {
+        recordConditionalProfileApplication(callingContext, null, profiledSuccessors, appliedSuccessors);
+    }
+
+    @Override
+    public void recordConditionalProfileApplication(BytecodePosition callingContext, ConditionalProfileSiteDescriptor site,
+                    int profiledSuccessors, int appliedSuccessors) {
         if (cleared || callingContext == null) {
             return;
         }
-        List<FrameKey> key = canonicalize(callingContext);
-        if (!conditionalData.containsKey(key)) {
+        Object key = selectProfileKey(rawProfileKey(callingContext, site));
+        boolean present = key instanceof PreciseKey preciseKey ? preciseConditionalData.containsKey(preciseKey) : conditionalData.containsKey(key);
+        if (!present) {
             return;
         }
         applicationCoverage.compute(key, (_, previous) -> {
@@ -192,6 +294,29 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
             return new ApplicationCoverage(Math.max(previous.profiledSuccessors(), profiledSuccessors), Math.max(previous.appliedSuccessors(), appliedSuccessors));
         });
     }
+
+    private Object rawProfileKey(BytecodePosition callingContext, ConditionalProfileSiteDescriptor site) {
+        List<FrameKey> context = canonicalize(callingContext);
+        if (preferPrecise) {
+            return site == null ? PreciseKey.from(context, MISSING_SITE) : PreciseKey.from(context, site);
+        }
+        return context;
+    }
+
+    /** Selects exact v2 first, then a legacy context only when it maps to one precise site. */
+    private Object selectProfileKey(Object queryKey) {
+        if (!(queryKey instanceof PreciseKey preciseQuery) || preciseConditionalData.containsKey(preciseQuery)) {
+            return queryKey;
+        }
+        List<PreciseKey> contextSites = preciseSitesByContext.get(preciseQuery.context());
+        if (contextSites != null && contextSites.size() == 1 && conditionalData.containsKey(preciseQuery.context())) {
+            return contextSites.getFirst();
+        }
+        return queryKey;
+    }
+
+    private static final ConditionalProfileSiteDescriptor MISSING_SITE = new ConditionalProfileSiteDescriptor(
+                    ConditionalProfileSiteDescriptor.Stage.ROOT_PRE_INLINE, List.of(), "missing", 0L, -1);
 
     /**
      * Builds the canonical, innermost-first {@link FrameKey} chain for a query context. This mirrors

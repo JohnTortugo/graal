@@ -72,6 +72,12 @@ public final class IprofConditionalParser {
     private static final String KEY_TYPES = "types";
     private static final String KEY_METHODS = "methods";
     private static final String KEY_CONDITIONAL_PROFILES = "conditionalProfiles";
+    private static final String KEY_PRECISE_CONDITIONAL_PROFILES = "ceConditionalProfilesV2";
+    private static final String KEY_STAGE = "stage";
+    private static final String KEY_SUCCESSORS = "successors";
+    private static final String KEY_CONDITION_KIND = "conditionKind";
+    private static final String KEY_CONDITION_FINGERPRINT = "conditionFingerprint";
+    private static final String KEY_OCCURRENCE = "occurrence";
     private static final String KEY_ID = "id";
     private static final String KEY_NAME = "name";
     private static final String KEY_SIGNATURE = "signature";
@@ -102,6 +108,11 @@ public final class IprofConditionalParser {
     public record ConditionalEntry(List<ContextFrame> context, long[] records) {
     }
 
+    /** One precise CE branch-site entry with explicit stage and graph-site discriminator. */
+    public record PreciseConditionalEntry(String stage, List<ContextFrame> context, int[] successorBcis,
+                    String conditionKind, long conditionFingerprint, int occurrence, long[] records) {
+    }
+
     /** Descriptor of a method as declared in the iprof {@code methods} table. */
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
@@ -112,12 +123,15 @@ public final class IprofConditionalParser {
         private final Map<Integer, String> typeNamesById;
         private final Map<Integer, MethodDescriptor> methodsById;
         private final List<ConditionalEntry> conditionalEntries;
+        private final List<PreciseConditionalEntry> preciseConditionalEntries;
 
-        ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById, List<ConditionalEntry> conditionalEntries) {
+        ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
+                        List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
             this.conditionalEntries = Collections.unmodifiableList(conditionalEntries);
+            this.preciseConditionalEntries = Collections.unmodifiableList(preciseConditionalEntries);
         }
 
         public String version() {
@@ -134,6 +148,10 @@ public final class IprofConditionalParser {
 
         public List<ConditionalEntry> conditionalEntries() {
             return conditionalEntries;
+        }
+
+        public List<PreciseConditionalEntry> preciseConditionalEntries() {
+            return preciseConditionalEntries;
         }
     }
 
@@ -170,8 +188,9 @@ public final class IprofConditionalParser {
          * JSON array and every entry must be structurally valid.
          */
         List<ConditionalEntry> conditionalEntries = optionalConditionalProfiles(top);
+        List<PreciseConditionalEntry> preciseConditionalEntries = optionalPreciseConditionalProfiles(top);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -229,6 +248,46 @@ public final class IprofConditionalParser {
         @SuppressWarnings("unchecked")
         List<Object> conditionalProfiles = (List<Object>) value;
         return parseConditionalProfiles(conditionalProfiles);
+    }
+
+    private static List<PreciseConditionalEntry> optionalPreciseConditionalProfiles(EconomicMap<String, Object> top) {
+        Object value = top.get(KEY_PRECISE_CONDITIONAL_PROFILES);
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + KEY_PRECISE_CONDITIONAL_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> preciseProfiles = (List<Object>) value;
+        List<PreciseConditionalEntry> result = new ArrayList<>(preciseProfiles.size());
+        for (Object element : preciseProfiles) {
+            EconomicMap<String, Object> entry = asObject(element, KEY_PRECISE_CONDITIONAL_PROFILES);
+            String stage = requireString(entry, KEY_STAGE);
+            String ctx = requireString(entry, KEY_CTX);
+            List<Object> rawSuccessors = requireList(entry, KEY_SUCCESSORS);
+            if (rawSuccessors.size() != 2) {
+                throw new IprofFormatException("Precise conditional context '" + ctx + "' must contain exactly two successor BCIs");
+            }
+            int[] successorBcis = {asInt(rawSuccessors.get(0), KEY_SUCCESSORS), asInt(rawSuccessors.get(1), KEY_SUCCESSORS)};
+            String conditionKind = requireString(entry, KEY_CONDITION_KIND);
+            if (conditionKind.isEmpty()) {
+                throw new IprofFormatException("Empty condition kind for precise conditional context '" + ctx + "'");
+            }
+            long fingerprint;
+            try {
+                fingerprint = Long.parseUnsignedLong(requireString(entry, KEY_CONDITION_FINGERPRINT), 16);
+            } catch (NumberFormatException exception) {
+                throw new IprofFormatException("Invalid condition fingerprint for precise conditional context '" + ctx + "'");
+            }
+            int occurrence = requireInt(entry, KEY_OCCURRENCE);
+            if (occurrence < 0) {
+                throw new IprofFormatException("Negative occurrence for precise conditional context '" + ctx + "'");
+            }
+            long[] records = parseRecords(requireList(entry, KEY_RECORDS), ctx);
+            result.add(new PreciseConditionalEntry(stage, parseContext(ctx), successorBcis, conditionKind, fingerprint, occurrence, records));
+        }
+        return result;
     }
 
     private static List<ConditionalEntry> parseConditionalProfiles(List<Object> conditionalProfiles) {

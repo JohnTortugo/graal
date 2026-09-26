@@ -27,7 +27,6 @@ package com.oracle.svm.core.pgo;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,7 +39,7 @@ import com.oracle.svm.guest.staging.option.RuntimeOptionKey;
 
 import jdk.graal.compiler.options.Option;
 
-/** Build-time registry and relocation-safe runtime storage for conditional branch counters. */
+/** Build-time physical-site registry and relocation-safe runtime conditional counter storage. */
 public final class BranchProfileRecorder {
 
     public static final class Options {
@@ -53,39 +52,39 @@ public final class BranchProfileRecorder {
     private static final int TRUE_OFFSET = 0;
     private static final int FALSE_OFFSET = 1;
 
-    /** Populated concurrently while hosted compilation processes graphs. */
-    private static final ConcurrentMap<BranchKey, BranchProfileCounter> counters = new ConcurrentHashMap<>();
+    /** Every selected physical graph site owns a counter; identity aggregation happens at dump. */
+    private static final ConcurrentMap<Integer, BranchProfileCounter> counters = new ConcurrentHashMap<>();
     private static final AtomicInteger nextCounterIndex = new AtomicInteger();
 
-    /*
-     * Generated code embeds only an integer index into this analysis-visible array. This avoids
-     * embedding hosted-created counter objects as unrelocated image-heap constants.
-     */
     private static final long[] runtimeCounts = new long[MAX_BRANCHES * COUNTERS_PER_BRANCH];
 
-    /*
-     * Real metadata objects are created only during compilation, after static analysis. This
-     * placeholder ensures all registry, key, counter, String-array, and int-array types are
-     * reachable. It also makes the shared array writes runtime-reachable from the teardown hook.
-     */
-    private static final BranchProfileCounter unusedCounter = lookup(
-                    new String[]{"Lcom/oracle/svm/core/pgo/BranchProfileRecorder;.__unused__()V"},
-                    new int[]{-1}, -1, -1);
+    /* Makes all late-created metadata types and the runtime array write reachable to analysis. */
+    private static final BranchProfileCounter unusedCounter = create(
+                    "POST_HIGH_TIER", new String[]{"Lcom/oracle/svm/core/pgo/BranchProfileRecorder;.__unused__()V"},
+                    new int[]{-1}, -1, -1, "unused", 0L, 0);
 
     private BranchProfileRecorder() {
     }
 
-    public static BranchProfileCounter lookup(String[] methodDescriptors, int[] contextBcis, int trueSuccessorBci, int falseSuccessorBci) {
-        BranchKey key = new BranchKey(methodDescriptors, contextBcis, trueSuccessorBci, falseSuccessorBci);
-        return counters.computeIfAbsent(key, BranchProfileRecorder::createCounter);
-    }
-
-    private static BranchProfileCounter createCounter(BranchKey key) {
+    /** Creates a distinct counter for one physical selected graph site. */
+    public static BranchProfileCounter create(String stage, String[] methodDescriptors, int[] contextBcis,
+                    int trueSuccessorBci, int falseSuccessorBci, String conditionKind, long conditionFingerprint, int occurrence) {
+        if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length) {
+            throw new IllegalArgumentException("Branch profile context must contain matching non-empty method and BCI arrays");
+        }
         int index = nextCounterIndex.getAndIncrement();
         if (index >= MAX_BRANCHES) {
             throw new IllegalStateException("Conditional branch instrumentation exceeds the " + MAX_BRANCHES + "-site capacity");
         }
-        return new BranchProfileCounter(key.methodDescriptors, key.contextBcis, key.trueSuccessorBci, key.falseSuccessorBci, index);
+        BranchProfileCounter counter = new BranchProfileCounter(stage, methodDescriptors.clone(), contextBcis.clone(), trueSuccessorBci, falseSuccessorBci,
+                        conditionKind, conditionFingerprint, occurrence, index);
+        counters.put(index, counter);
+        return counter;
+    }
+
+    /** Compatibility helper for unit tests and callers without a v2 site descriptor. */
+    public static BranchProfileCounter lookup(String[] methodDescriptors, int[] contextBcis, int trueSuccessorBci, int falseSuccessorBci) {
+        return create("POST_HIGH_TIER", methodDescriptors, contextBcis, trueSuccessorBci, falseSuccessorBci, "legacy", 0L, 0);
     }
 
     /** Called by generated code. Counts are intentionally relaxed: profiles are approximate. */
@@ -102,7 +101,7 @@ public final class BranchProfileRecorder {
         return runtimeCounts[counterIndex * COUNTERS_PER_BRANCH + FALSE_OFFSET];
     }
 
-    /** Deterministic snapshot used first by the smoke summary and later by the iprof serializer. */
+    /** Deterministic physical-site snapshot used by the iprof serializer. */
     public static List<BranchProfileCounter> getCounters() {
         List<BranchProfileCounter> result = new ArrayList<>();
         for (BranchProfileCounter counter : counters.values()) {
@@ -118,9 +117,8 @@ public final class BranchProfileRecorder {
         return _ -> dumpProfile();
     }
 
-    /** Writes the iprof file and reports a concise deterministic summary. */
     public static void dumpProfile() {
-        /* Keep the shared array write runtime-reachable; this placeholder is excluded below. */
+        /* Keep the shared array write runtime-reachable; this placeholder is excluded from output. */
         increment(unusedCounter.getCounterIndex(), true);
         increment(unusedCounter.getCounterIndex(), false);
 
@@ -130,7 +128,8 @@ public final class BranchProfileRecorder {
         }
         try {
             BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters());
-            Log.log().string("[PGO] wrote conditional profile '").string(fileName).string("': sites=").signed(statistics.conditionalProfiles())
+            Log.log().string("[PGO] wrote conditional profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
+                            .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();
@@ -139,7 +138,6 @@ public final class BranchProfileRecorder {
         }
     }
 
-    /** Diagnostic helper retained for targeted runtime checks. */
     public static void dumpSummary() {
         long trueCount = 0;
         long falseCount = 0;
@@ -148,14 +146,17 @@ public final class BranchProfileRecorder {
             trueCount += counter.getTrueCount();
             falseCount += counter.getFalseCount();
         }
-        Log.log().string("[PGO] recorded conditional branches: sites=").signed(snapshot.size())
+        Log.log().string("[PGO] recorded conditional branches: physical sites=").signed(snapshot.size())
                         .string(", true=").signed(trueCount)
                         .string(", false=").signed(falseCount)
                         .string(", total=").signed(trueCount + falseCount).newline();
     }
 
     private static final Comparator<BranchProfileCounter> COUNTER_COMPARATOR = (left, right) -> {
-        int result = compare(left.getMethodDescriptors(), right.getMethodDescriptors());
+        int result = left.getStage().compareTo(right.getStage());
+        if (result == 0) {
+            result = compare(left.getMethodDescriptors(), right.getMethodDescriptors());
+        }
         if (result == 0) {
             result = compare(left.getContextBcis(), right.getContextBcis());
         }
@@ -164,6 +165,15 @@ public final class BranchProfileRecorder {
         }
         if (result == 0) {
             result = Integer.compare(left.getFalseSuccessorBci(), right.getFalseSuccessorBci());
+        }
+        if (result == 0) {
+            result = left.getConditionKind().compareTo(right.getConditionKind());
+        }
+        if (result == 0) {
+            result = Long.compareUnsigned(left.getConditionFingerprint(), right.getConditionFingerprint());
+        }
+        if (result == 0) {
+            result = Integer.compare(left.getOccurrence(), right.getOccurrence());
         }
         return result;
     };
@@ -188,41 +198,5 @@ public final class BranchProfileRecorder {
             }
         }
         return Integer.compare(left.length, right.length);
-    }
-
-    private static final class BranchKey {
-        private final String[] methodDescriptors;
-        private final int[] contextBcis;
-        private final int trueSuccessorBci;
-        private final int falseSuccessorBci;
-        private final int hashCode;
-
-        private BranchKey(String[] methodDescriptors, int[] contextBcis, int trueSuccessorBci, int falseSuccessorBci) {
-            if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length) {
-                throw new IllegalArgumentException("Branch profile context must contain matching non-empty method and BCI arrays");
-            }
-            this.methodDescriptors = methodDescriptors.clone();
-            this.contextBcis = contextBcis.clone();
-            this.trueSuccessorBci = trueSuccessorBci;
-            this.falseSuccessorBci = falseSuccessorBci;
-            int hash = Arrays.hashCode(this.methodDescriptors);
-            this.hashCode = 31 * hash + Arrays.hashCode(this.contextBcis);
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) {
-                return true;
-            }
-            if (!(other instanceof BranchKey key)) {
-                return false;
-            }
-            return Arrays.equals(methodDescriptors, key.methodDescriptors) && Arrays.equals(contextBcis, key.contextBcis);
-        }
-
-        @Override
-        public int hashCode() {
-            return hashCode;
-        }
     }
 }

@@ -41,7 +41,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
-import org.graalvm.collections.EconomicMap;
 
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
@@ -51,6 +50,9 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.PGOUtils;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
+import com.oracle.svm.hosted.pgo.ProfilingUtilities.ConditionalSite;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.shared.option.HostedOptionKey;
 
@@ -100,6 +102,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     public static final int CONDITIONAL_RECORD_COUNTER_POSITION = 2;
     private final PGOProfilesLookup pgoProfiles;
     private final NodeSourcePosition inliningContext;
+    private final Stage conditionalStage;
     private final HostedUniverse hUniverse;
     private final PrefixTree.Cursor compilationRootContext;
     /**
@@ -123,19 +126,22 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     public static PGOApplyProfilesPhase createForExpandingHotCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
                     PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(inliningContext, hUniverse, compilationRootContext, pgoProfiles, true, ProfileQuality.Level.NOT_TRACKING);
+        return new PGOApplyProfilesPhase(inliningContext, Stage.INLINE_EXPANSION, hUniverse, compilationRootContext, pgoProfiles, true, ProfileQuality.Level.NOT_TRACKING);
     }
 
     public static PGOApplyProfilesPhase createForExpandingCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(inliningContext, hUniverse, null, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
+        return new PGOApplyProfilesPhase(inliningContext, Stage.INLINE_EXPANSION, hUniverse, null, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
     public static PGOApplyProfilesPhase createForBeforeHotCompilationPhase(HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext, PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(null, hUniverse, compilationRootContext, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
+        return new PGOApplyProfilesPhase(null, Stage.ROOT_PRE_INLINE, hUniverse, compilationRootContext, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
     public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles) {
+        return createContextInsensitive(hUniverse, pgoProfiles, Stage.ROOT_PRE_INLINE);
+    }
 
+    public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles, Stage stage) {
         ProfileQuality.Level level = ProfileQuality.Level.NOT_TRACKING;
         if (PGOPrintProfileQuality.getValue()) {
             level = ProfileQuality.Level.TRACKING;
@@ -143,13 +149,14 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
                 level = ProfileQuality.Level.TRACKING_DETAILS;
             }
         }
-        return new PGOApplyProfilesPhase(null, hUniverse, null, pgoProfiles, false, level);
+        return new PGOApplyProfilesPhase(null, stage, hUniverse, null, pgoProfiles, false, level);
     }
 
-    private PGOApplyProfilesPhase(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
+    private PGOApplyProfilesPhase(NodeSourcePosition inliningContext, Stage conditionalStage, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
                     PGOProfilesLookup pgoProfiles, boolean forceHot, ProfileQuality.Level level) {
         this.pgoProfiles = pgoProfiles;
         this.inliningContext = inliningContext;
+        this.conditionalStage = conditionalStage;
         this.hUniverse = hUniverse;
         this.compilationRootContext = compilationRootContext;
         this.forceHot = forceHot;
@@ -275,8 +282,12 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         if (!pgoProfiles.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
             return;
         }
-        forEachRelevantControlSplitNode(graph, this::updateConditionalProbabilitiesBasedOnSamples);
-        forEachRelevantControlSplitNode(graph, this::updateConditionalProbabilities);
+        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, conditionalStage, inliningContext)) {
+            updateConditionalProbabilitiesBasedOnSamples(site.node());
+        }
+        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, conditionalStage, inliningContext)) {
+            updateConditionalProbabilities(site);
+        }
     }
 
     private void updateProfilesForInvokes(StructuredGraph graph) {
@@ -493,26 +504,19 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         }
     }
 
-    private static void forEachRelevantControlSplitNode(StructuredGraph graph, Consumer<ControlSplitNode> nodeConsumer) {
-        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> conditionalNodes = ProfilingUtilities.relevantConditionalNodesFromGraph(graph);
-        for (List<ControlSplitNode> nodes : conditionalNodes.getValues()) {
-            for (ControlSplitNode node : nodes) {
-                nodeConsumer.accept(node);
-            }
-        }
-    }
-
     @SuppressWarnings("unused")
     private void updateConditionalProbabilitiesBasedOnSamples(ControlSplitNode controlSplitNode) {
         // TODO GR-51733 BS Infer conditional based on samples.
     }
 
-    private void updateConditionalProbabilities(ControlSplitNode conditionalNode) {
-        NodeSourcePosition context = createPointContext(conditionalNode.getNodeSourcePosition(), inliningContext);
-        Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context);
+    private void updateConditionalProbabilities(ConditionalSite site) {
+        NodeSourcePosition context = site.context();
+        ConditionalProfileSiteDescriptor descriptor = site.descriptor();
+        ControlSplitNode conditionalNode = site.node();
+        Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context, descriptor);
         conditionalSuccessors.ifPresentOrElse(s -> {
             ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode);
-            pgoProfiles.recordConditionalProfileApplication(context, application.profiledSuccessors(), application.appliedSuccessors());
+            pgoProfiles.recordConditionalProfileApplication(context, descriptor, application.profiledSuccessors(), application.appliedSuccessors());
             countSuccess();
         }, () -> countFailure(context));
     }

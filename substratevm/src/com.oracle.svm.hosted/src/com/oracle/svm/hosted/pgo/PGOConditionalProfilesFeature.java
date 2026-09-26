@@ -42,6 +42,7 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
@@ -179,7 +180,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
         if (earlyLookup != null) {
-            ApplyConditionalProfilesPhase earlyPhase = new ApplyConditionalProfilesPhase(hostedUniverse, earlyLookup);
+            ApplyConditionalProfilesPhase earlyPhase = new ApplyConditionalProfilesPhase(hostedUniverse, earlyLookup, Stage.ROOT_PRE_INLINE);
             ListIterator<BasePhase<? super HighTierContext>> inliner = highTier.findPhase(AbstractInliningPhase.class);
             if (inliner != null) {
                 inliner.previous();
@@ -190,7 +191,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         if (postInliningLookup != null) {
             /* The post-inlining producer is appended at this same hosted HighTier boundary. */
-            highTier.appendPhase(new ApplyConditionalProfilesPhase(hostedUniverse, postInliningLookup));
+            highTier.appendPhase(new ApplyConditionalProfilesPhase(hostedUniverse, postInliningLookup, Stage.POST_HIGH_TIER));
         }
     }
 
@@ -198,15 +199,17 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private static final class ApplyConditionalProfilesPhase extends BasePhase<HighTierContext> {
         private final HostedUniverse universe;
         private final SimpleConditionalProfilesLookup lookup;
+        private final Stage stage;
 
-        private ApplyConditionalProfilesPhase(HostedUniverse universe, SimpleConditionalProfilesLookup lookup) {
+        private ApplyConditionalProfilesPhase(HostedUniverse universe, SimpleConditionalProfilesLookup lookup, Stage stage) {
             this.universe = universe;
             this.lookup = lookup;
+            this.stage = stage;
         }
 
         @Override
         protected void run(StructuredGraph graph, HighTierContext context) {
-            PGOApplyProfilesPhase.createContextInsensitive(universe, lookup).apply(graph, context);
+            PGOApplyProfilesPhase.createContextInsensitive(universe, lookup, stage).apply(graph, context);
         }
     }
 
@@ -231,6 +234,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         System.out.printf("[PGO:%s] %d queries, %d hits (%.1f%%), %d misses; contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused%n",
                         stage, queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
                         lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
+        if (lookup.usesPreciseProfiles()) {
+            SimpleConditionalProfilesLookup.PreciseMissDiagnostics precise = lookup.preciseMissDiagnostics();
+            System.out.printf("[PGO:%s] precise misses by first mismatch: context=%d, stage=%d, successors=%d, condition-kind=%d, occurrence=%d; matched fingerprint drift=%d, unambiguous legacy fallback=%d%n",
+                            stage, precise.context(), precise.stage(), precise.successors(), precise.conditionKind(), precise.occurrence(), precise.fingerprintDrift(), precise.unambiguousFallback());
+        }
         // Checkstyle: resume
         if (PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue()) {
             System.out.println("[PGO:" + stage + "] resolved context samples: " + lookup.contextKeySamples(10));

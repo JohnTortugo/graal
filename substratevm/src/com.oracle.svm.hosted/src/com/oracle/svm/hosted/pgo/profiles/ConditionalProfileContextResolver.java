@@ -25,6 +25,7 @@
 package com.oracle.svm.hosted.pgo.profiles;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +37,11 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.PreciseConditionalEntry;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
+import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.PreciseKey;
+import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.PreciseProfile;
 
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
@@ -193,35 +198,72 @@ public final class ConditionalProfileContextResolver {
      */
     static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
+        Map<List<FrameKey>, long[]> legacyTable = new HashMap<>();
+        for (ConditionalEntry entry : profile.conditionalEntries()) {
+            List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
+            if (key != null) {
+                legacyTable.putIfAbsent(key, entry.records());
+            }
+        }
 
-        Map<List<FrameKey>, long[]> table = new HashMap<>();
+        Map<PreciseKey, PreciseProfile> preciseTable = new HashMap<>();
         int resolved = 0;
         int unresolved = 0;
         int duplicates = 0;
         int singleFrame = 0;
         int inlined = 0;
 
-        for (ConditionalEntry entry : profile.conditionalEntries()) {
-            List<FrameKey> key = canonicalKey(entry, descriptorByMethodId, presentDescriptors);
-            if (key == null) {
-                unresolved++;
-                continue;
+        if (!profile.preciseConditionalEntries().isEmpty()) {
+            for (PreciseConditionalEntry entry : profile.preciseConditionalEntries()) {
+                List<FrameKey> context = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
+                Stage stage;
+                try {
+                    stage = Stage.valueOf(entry.stage());
+                } catch (IllegalArgumentException exception) {
+                    unresolved++;
+                    continue;
+                }
+                if (context == null) {
+                    unresolved++;
+                    continue;
+                }
+                ConditionalProfileSiteDescriptor site = new ConditionalProfileSiteDescriptor(stage, Arrays.stream(entry.successorBcis()).boxed().toList(),
+                                entry.conditionKind(), entry.conditionFingerprint(), entry.occurrence());
+                if (preciseTable.putIfAbsent(PreciseKey.from(context, site), new PreciseProfile(entry.conditionFingerprint(), entry.records())) != null) {
+                    duplicates++;
+                    continue;
+                }
+                resolved++;
+                if (context.size() == 1) {
+                    singleFrame++;
+                } else {
+                    inlined++;
+                }
             }
-            if (table.putIfAbsent(key, entry.records()) != null) {
-                duplicates++;
-                continue;
-            }
-            resolved++;
-            if (key.size() == 1) {
-                singleFrame++;
-            } else {
-                inlined++;
+        } else {
+            for (ConditionalEntry entry : profile.conditionalEntries()) {
+                List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
+                if (key == null) {
+                    unresolved++;
+                    continue;
+                }
+                if (legacyTable.get(key) != entry.records()) {
+                    duplicates++;
+                    continue;
+                }
+                resolved++;
+                if (key.size() == 1) {
+                    singleFrame++;
+                } else {
+                    inlined++;
+                }
             }
         }
 
+        int totalEntries = profile.preciseConditionalEntries().isEmpty() ? profile.conditionalEntries().size() : profile.preciseConditionalEntries().size();
         ConditionalProfileDiagnostics diagnostics = new ConditionalProfileDiagnostics(
-                        profile.version(), profile.conditionalEntries().size(), resolved, unresolved, duplicates, singleFrame, inlined);
-        return new SimpleConditionalProfilesLookup(table, diagnostics);
+                        profile.version(), totalEntries, resolved, unresolved, duplicates, singleFrame, inlined);
+        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics);
     }
 
     /**
@@ -229,9 +271,9 @@ public final class ConditionalProfileContextResolver {
      * {@code null} if any frame's method is absent from the image. Each frame's method identity is
      * confirmed present so that only contexts fully present in this image are stored.
      */
-    private static List<FrameKey> canonicalKey(ConditionalEntry entry, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
-        List<FrameKey> key = new ArrayList<>(entry.context().size());
-        for (ContextFrame frame : entry.context()) {
+    private static List<FrameKey> canonicalKey(List<ContextFrame> entryContext, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
+        List<FrameKey> key = new ArrayList<>(entryContext.size());
+        for (ContextFrame frame : entryContext) {
             String descriptor = descriptorByMethodId.get(frame.methodId());
             if (descriptor == null || !presentDescriptors.contains(descriptor)) {
                 return null;

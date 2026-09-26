@@ -35,6 +35,7 @@ import org.junit.Test;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.JavaType;
@@ -69,6 +70,11 @@ public class ConditionalProfileContextResolverTest {
 
     private static ParsedProfile parse(String conditionalProfiles) throws IOException {
         String json = "{\"version\":\"1.0.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
+        return new IprofConditionalParser().parse(new StringReader(json));
+    }
+
+    private static ParsedProfile parsePrecise(String preciseProfiles) throws IOException {
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"ceConditionalProfilesV2\":[" + preciseProfiles + "]}";
         return new IprofConditionalParser().parse(new StringReader(json));
     }
 
@@ -220,6 +226,42 @@ public class ConditionalProfileContextResolverTest {
     }
 
     // --- applied hit/miss counters --------------------------------------------------------------
+
+    @Test
+    public void preciseLookupUsesOnlyUnambiguousLegacyFallbackAcrossStages() throws IOException {
+        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,10,53,1,1]}";
+        String precise = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + legacy + "],\"ceConditionalProfilesV2\":[" + precise + "]}";
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(json));
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
+        ConditionalProfileSiteDescriptor earlySite = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+
+        Assert.assertTrue(lookup.getConditionalProfile(context, earlySite).isPresent());
+        Assert.assertEquals(1, lookup.preciseMissDiagnostics().unambiguousFallback());
+    }
+
+    @Test
+    public void preciseLookupRequiresExactStageAndSiteIdentity() throws IOException {
+        ParsedProfile parsed = parsePrecise("{\"stage\":\"ROOT_PRE_INLINE\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}");
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
+        ConditionalProfileSiteDescriptor exact = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+        ConditionalProfileSiteDescriptor wrongFingerprint = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 99L, 0);
+        ConditionalProfileSiteDescriptor wrongOccurrence = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 1);
+        ConditionalProfileSiteDescriptor wrongStage = new ConditionalProfileSiteDescriptor(Stage.POST_HIGH_TIER, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+
+        Assert.assertEquals(1, lookup.availableContextCount());
+        Assert.assertTrue(lookup.getConditionalProfile(context, exact).isPresent());
+        Assert.assertTrue(lookup.getConditionalProfile(context, wrongFingerprint).isPresent());
+        Assert.assertTrue(lookup.getConditionalProfile(context, wrongOccurrence).isEmpty());
+        Assert.assertTrue(lookup.getConditionalProfile(context, wrongStage).isEmpty());
+        Assert.assertEquals(2, lookup.hitCount());
+        Assert.assertEquals(2, lookup.missCount());
+        Assert.assertEquals(1, lookup.preciseMissDiagnostics().fingerprintDrift());
+    }
 
     @Test
     public void tracksDistinctSuccessorApplicationCoverage() throws IOException {

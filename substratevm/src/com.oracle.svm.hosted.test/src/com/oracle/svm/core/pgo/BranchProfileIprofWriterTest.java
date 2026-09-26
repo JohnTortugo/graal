@@ -34,6 +34,7 @@ import org.junit.Test;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.PreciseConditionalEntry;
 
 public class BranchProfileIprofWriterTest {
 
@@ -59,7 +60,52 @@ public class BranchProfileIprofWriterTest {
         Assert.assertEquals(2, entry.context().size());
         Assert.assertArrayEquals(new long[]{17, 0, 3, 23, 1, 1}, entry.records());
         Assert.assertEquals(1, statistics.conditionalProfiles());
+        Assert.assertEquals(1, statistics.preciseConditionalProfiles());
+        Assert.assertEquals(1, parsed.preciseConditionalEntries().size());
+        PreciseConditionalEntry precise = parsed.preciseConditionalEntries().getFirst();
+        Assert.assertEquals("POST_HIGH_TIER", precise.stage());
+        Assert.assertArrayEquals(new int[]{17, 23}, precise.successorBcis());
         Assert.assertEquals(4, statistics.recordedEvents());
+    }
+
+    @Test
+    public void conflictingPhysicalSitesRemainDistinctAndAreOmittedFromLegacyOutput() throws Exception {
+        String[] methods = {"Lexample/CollisionTest;.branch()V"};
+        int[] bcis = {12};
+        BranchProfileCounter first = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 20, 40, "IntegerEqualsNode", 11L, 0);
+        BranchProfileCounter second = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 30, 50, "IntegerEqualsNode", 22L, 0);
+        BranchProfileRecorder.increment(first.getCounterIndex(), true);
+        BranchProfileRecorder.increment(second.getCounterIndex(), false);
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(first, second));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(0, statistics.conditionalProfiles());
+        Assert.assertEquals(2, statistics.preciseConditionalProfiles());
+        Assert.assertTrue(parsed.conditionalEntries().isEmpty());
+        Assert.assertEquals(2, parsed.preciseConditionalEntries().size());
+        Assert.assertArrayEquals(new int[]{20, 40}, parsed.preciseConditionalEntries().get(0).successorBcis());
+        Assert.assertArrayEquals(new int[]{30, 50}, parsed.preciseConditionalEntries().get(1).successorBcis());
+    }
+
+    @Test
+    public void identicalPhysicalSiteIdentitiesAggregateDeterministically() throws Exception {
+        String[] methods = {"Lexample/AggregateTest;.branch()V"};
+        int[] bcis = {7};
+        BranchProfileCounter first = BranchProfileRecorder.create("ROOT_PRE_INLINE", methods, bcis, 10, 20, "IntegerLessThanNode", 33L, 0);
+        BranchProfileCounter second = BranchProfileRecorder.create("ROOT_PRE_INLINE", methods, bcis, 10, 20, "IntegerLessThanNode", 33L, 0);
+        BranchProfileRecorder.increment(first.getCounterIndex(), true);
+        BranchProfileRecorder.increment(second.getCounterIndex(), true);
+        BranchProfileRecorder.increment(second.getCounterIndex(), false);
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(first, second));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.conditionalProfiles());
+        Assert.assertEquals(1, statistics.preciseConditionalProfiles());
+        Assert.assertArrayEquals(new long[]{10, 0, 2, 20, 1, 1}, parsed.preciseConditionalEntries().getFirst().records());
     }
 
     @Test

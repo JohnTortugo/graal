@@ -28,55 +28,52 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.graalvm.collections.EconomicMap;
-
 import com.oracle.svm.core.pgo.BranchProfileCounter;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
-import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
+import com.oracle.svm.hosted.pgo.ProfilingUtilities.ConditionalSite;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.AbstractBeginNode;
-import jdk.graal.compiler.nodes.ControlSplitNode;
 import jdk.graal.compiler.nodes.IfNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.tiers.HighTierContext;
 
-/** Instruments profile-relevant {@link IfNode}s, optionally under an explicit inlining context. */
+/** Instruments profile-relevant {@link IfNode}s with precise stage-qualified physical-site ids. */
 final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext> {
 
     private static final AtomicLong INSTRUMENTED_BRANCHES = new AtomicLong();
     private static final AtomicLong SKIPPED_BRANCHES = new AtomicLong();
 
+    private final Stage stage;
     private final NodeSourcePosition inliningContext;
 
-    BranchProfileInstrumentationPhase(NodeSourcePosition inliningContext) {
+    BranchProfileInstrumentationPhase(Stage stage, NodeSourcePosition inliningContext) {
+        this.stage = stage;
         this.inliningContext = inliningContext;
     }
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
-        instrumentGraph(graph, inliningContext);
+        instrumentGraph(graph, stage, inliningContext);
     }
 
-    static void instrumentGraph(StructuredGraph graph, NodeSourcePosition explicitInliningContext) {
+    static void instrumentGraph(StructuredGraph graph, Stage stage, NodeSourcePosition explicitInliningContext) {
         if (graph.method() == null || isNativeImageRuntimeMethod(graph.method().getDeclaringClass().getName())) {
             return;
         }
 
-        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> conditionalGroups = ProfilingUtilities.relevantConditionalNodesFromGraph(graph);
-        for (List<ControlSplitNode> group : conditionalGroups.getValues()) {
-            for (ControlSplitNode candidate : group) {
-                if (candidate instanceof IfNode conditional) {
-                    instrument(graph, conditional, explicitInliningContext);
-                }
+        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, stage, explicitInliningContext)) {
+            if (site.node() instanceof IfNode conditional) {
+                instrument(graph, conditional, site.context(), site.descriptor());
             }
         }
     }
 
-    private static void instrument(StructuredGraph graph, IfNode conditional, NodeSourcePosition explicitInliningContext) {
-        NodeSourcePosition position = PGOApplyProfilesPhase.createPointContext(conditional.getNodeSourcePosition(), explicitInliningContext);
+    private static void instrument(StructuredGraph graph, IfNode conditional, NodeSourcePosition position, ConditionalProfileSiteDescriptor siteDescriptor) {
         AbstractBeginNode trueSuccessor = conditional.trueSuccessor();
         AbstractBeginNode falseSuccessor = conditional.falseSuccessor();
         NodeSourcePosition truePosition = trueSuccessor.getNodeSourcePosition();
@@ -92,9 +89,9 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
             descriptors.add(ConditionalProfileContextResolver.methodDescriptor(frame.getMethod()));
             bcis.add(frame.getBCI());
         }
-        BranchProfileCounter counter = BranchProfileRecorder.lookup(
-                        descriptors.toArray(String[]::new), bcis.stream().mapToInt(Integer::intValue).toArray(),
-                        truePosition.getBCI(), falsePosition.getBCI());
+        BranchProfileCounter counter = BranchProfileRecorder.create(
+                        siteDescriptor.stage().name(), descriptors.toArray(String[]::new), bcis.stream().mapToInt(Integer::intValue).toArray(),
+                        truePosition.getBCI(), falsePosition.getBCI(), siteDescriptor.conditionKind(), siteDescriptor.conditionFingerprint(), siteDescriptor.occurrence());
         insertCounter(graph, trueSuccessor, counter, true);
         insertCounter(graph, falseSuccessor, counter, false);
         INSTRUMENTED_BRANCHES.incrementAndGet();
