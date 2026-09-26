@@ -228,6 +228,39 @@ public class ConditionalProfileContextResolverTest {
     // --- applied hit/miss counters --------------------------------------------------------------
 
     @Test
+    public void ambiguousLegacyContextDoesNotFallback() throws IOException {
+        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,10,53,1,1]}";
+        String first = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}";
+        String second = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":1,\"records\":[20,0,1,53,1,10]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + legacy + "],\"ceConditionalProfilesV2\":[" + first + ',' + second + "]}";
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(
+                        new IprofConditionalParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
+        ConditionalProfileSiteDescriptor earlySite = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+
+        Assert.assertTrue(lookup.getConditionalProfile(context, earlySite).isEmpty());
+        Assert.assertEquals(0, lookup.preciseMissDiagnostics().unambiguousFallback());
+    }
+
+    @Test
+    public void exactPreciseSiteOverridesContradictoryLegacyData() throws IOException {
+        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,1,53,1,10]}";
+        String precise = "{\"stage\":\"ROOT_PRE_INLINE\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + legacy + "],\"ceConditionalProfilesV2\":[" + precise + "]}";
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(
+                        new IprofConditionalParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
+        ConditionalProfileSiteDescriptor exact = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+
+        long[] records = lookup.getConditionalProfile(context, exact).orElseThrow().value();
+        Assert.assertArrayEquals(new long[]{20, 0, 10, 53, 1, 1}, records);
+        Assert.assertEquals(0, lookup.preciseMissDiagnostics().unambiguousFallback());
+    }
+
+    @Test
     public void preciseLookupUsesOnlyUnambiguousLegacyFallbackAcrossStages() throws IOException {
         String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,10,53,1,1]}";
         String precise = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +

@@ -1744,6 +1744,14 @@ class NativeImageVM(StageAwareGraalVm):
         if not self.is_llvm and not self.jdk_profiles_collect:
             with open(profile_path, encoding='utf-8') as profile_file:
                 parsed = json.load(profile_file)
+                precise_conditionals = parsed.get("ceConditionalProfilesV2")
+                if precise_conditionals is not None:
+                    assert len(precise_conditionals) != 0, f"No precise conditional profiles in iprof file {profile_path}"
+                    for conditional in precise_conditionals:
+                        assert conditional.get("stage"), f"Precise conditional profile is missing stage in file {profile_path}"
+                        assert conditional.get("ctx"), f"Precise conditional profile is missing context in file {profile_path}"
+                        assert len(conditional.get("records", [])) >= 6, f"Precise conditional profile is missing branch records in file {profile_path}"
+                    return
                 samples = parsed["samplingProfiles"]
                 assert len(samples) != 0, f"No sampling profiles in iprof file {profile_path}"
                 for sample in samples:
