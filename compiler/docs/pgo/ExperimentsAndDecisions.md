@@ -186,6 +186,35 @@ than one precise site shares that context.
 
 A held-out workload is still required before claiming generalization.
 
+## Public mx benchmark validation
+
+The stock Native Image `mx benchmark` PGO pipeline was validated with Renaissance 0.16.1
+`scala-doku`, `scrabble`, and `fj-kmeans`, plus DaCapo 23.11-MR2 `sunflow`. The benchmark harness now
+accepts a non-empty `ceConditionalProfilesV2` profile as an intentional conditional-only profile;
+profiles without the CE extension retain the existing sampling-profile assertion.
+
+Longer run-only samples produced:
+
+| Benchmark | Primary statistic | PGO delta | Classification |
+|---|---|---:|---|
+| scala-doku | 9-iteration steady median | -0.46% | near noise |
+| scrabble | 3-fork all-steady mean | +0.68% | no win; high variability |
+| fj-kmeans | 9-iteration steady median | +0.43% | near noise |
+| sunflow | 3-fork all-iteration median | +0.13% | neutral; high variability |
+
+Profiles resolved 96.6–99.9% of precise sites. Safe cross-stage fallback used 50.9–57.2% of resolved
+sites, and every matched site fully applied its successor records. Between 4.6% and 5.5% of active
+precise sites were excluded from legacy fallback because more than one site owned the context.
+
+Instrumentation overhead was workload-sensitive: approximately 1.23x for scala-doku, 4.2x for
+scrabble, 21x for fj-kmeans, and 16x for sunflow. Parallel workloads expose substantial shared-counter
+cache traffic even though increments are non-atomic.
+
+Decision: branch identity v2 and safe fallback are validated across unrelated applications, but
+conditional-only PGO is workload-selective. Do not infer broad performance improvement from one
+application. Reduce instrumentation overhead and add profile-usefulness filtering before expanding to
+a new profile category.
+
 ## Validation standard
 
 Each accepted iteration requires:

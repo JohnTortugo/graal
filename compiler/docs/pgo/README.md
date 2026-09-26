@@ -106,6 +106,19 @@ Graph-local node IDs are not used because they are not stable across builds.
 
 External legacy profiles remain context-only and retain the original ambiguity risk.
 
+## mx benchmark integration
+
+The existing Native Image PGO configuration drives the CE conditional pipeline:
+
+```bash
+mx benchmark renaissance-native-image:<benchmark> -- \
+    --jvm=native-image --jvm-config=pgo -- <benchmark-arguments>
+```
+
+It builds a post-inlining instrumented image, runs one training iteration, builds the final image with
+`--pgo`, and runs the requested evaluation iterations. The harness accepts precise CE conditional
+profiles without requiring an unrelated sampling section.
+
 ## Validation
 
 The focused tests can be run from the `substratevm` suite:
