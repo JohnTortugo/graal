@@ -99,7 +99,8 @@ The producer uses:
 - `BranchProfileCounterNode`, lowered through an SVM snippet template;
 - one physical counter for every selected graph site;
 - integer indexes embedded in generated code;
-- one shared, analysis-visible `long[]` for runtime counts;
+- a private native counter block per thread, plus shared global counters that exited threads fold
+  into;
 - immutable metadata containing stage, context, successors, condition kind, structural fingerprint,
   and occurrence ordinal.
 
@@ -109,12 +110,36 @@ remain separate in `ceConditionalProfilesV2`; ambiguous contexts are omitted fro
 Embedding hosted-created counter objects directly produced unrelocated compressed image-heap offsets.
 The indexed array avoids late object constants in generated code.
 
-Counter increments are deliberately relaxed and non-atomic. This minimizes training overhead but can
-lose increments under contention. Atomic behavior should be considered only after measuring whether
-contention changes useful probabilities.
+#### Per-thread counter blocks
 
-The current array reserves two counters for up to one million branch contexts. This is provisional
-and adds approximately 15.3 MiB to an instrumentation image.
+The first producer incremented a shared image-heap `long[]` directly. That was cheap in isolation
+(five instructions per successor on AArch64, no bounds check) but every core wrote the same cache
+lines, so parallel workloads slowed 16–21x and racing non-atomic increments silently lost most events.
+
+`BranchProfileThreadCounters` is a `ThreadListener` that owns a `FastThreadLocalWord<Pointer>`:
+
+- `afterThreadAttach` (a new listener callback invoked at the end of `VMThreads.attachThread`,
+  before the thread can run any Java code or even has a `Thread` object) callocs a block of
+  `2 * sites` longs and stores its address in the thread-local. The site count is sealed in
+  `afterCompilation` and kept in an `AfterCompilation` primitive field, so blocks are exactly sized;
+  untouched pages stay unmapped. If calloc fails the thread-local points at the shared counters.
+- Generated code loads the thread-local pointer and increments `block[slot]` with a private
+  `LocationIdentity`, so the load is hoisted out of loops. There is no null check and no base
+  arithmetic: the per-site code is the same load/add/store with a constant offset as before.
+- `afterThreadExit` folds the block into the shared counters with atomic adds and frees it.
+- The shared counters are a zero-initialized `CGlobalData` byte region sized after compilation
+  (replacing the fixed 15.3 MiB image-heap array; instrumentation images shrank 14–20 MB).
+- Dumping takes a snapshot: the shared counters plus, in a safepoint `JavaVMOperation`, every live
+  thread's block. Serialization reads the frozen snapshot, so profile-writing code is not counted.
+
+Increments within a block are single-writer, so per-thread counts are exact; only the exit-time
+merge needs atomics. Overhead is flat in thread count and single-threaded training is no slower than
+the shared-array producer (see ExperimentsAndDecisions).
+
+Why the attach callback: the thread-start listener runs after a foreign thread has constructed its
+`Thread` object, and that constructor is instrumented JDK code. Without a block at that point the
+alternatives were a null check per site (measured +5.4% training time) or a displacement add per
+site (+4.2%). The attach callback is the only point that precedes every Java execution on a thread.
 
 ### Reachability and initialization constraints
 
@@ -132,7 +157,8 @@ A runtime teardown hook writes the deterministic conditional-only iprof file sel
 -XX:ProfilesDumpFile=<path>
 ```
 
-The default path is `default.iprof`. Never-executed contexts are omitted.
+The default path is `default.iprof`. Never-executed contexts are omitted. Counts are frozen in a
+snapshot before serialization begins.
 
 ## Build lifecycle
 

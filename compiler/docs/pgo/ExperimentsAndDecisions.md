@@ -215,6 +215,52 @@ conditional-only PGO is workload-selective. Do not infer broad performance impro
 application. Reduce instrumentation overhead and add profile-usefulness filtering before expanding to
 a new profile category.
 
+## Instrumentation overhead: per-thread counters
+
+A microbenchmark (hot loop, five data-dependent branches per iteration, identical work per thread)
+isolated the cost of the first producer. Single-threaded slowdown was 1.15x; at 16 threads it was
+11x. The generated per-successor code was already minimal (constant offset plus load/add/store, no
+bounds check), so the growth came from every core writing the same cache lines of the shared
+counter array. The same racy increments also lost most events: a 4-thread run recorded 26% of the
+exact expected count.
+
+The producer now gives each thread a private native counter block (see Architecture, "Per-thread
+counter blocks"). Getting there took three variants, each measured on the fixed single-worker
+application training run (old shared array: 183.7 s and 184.6 s in two rounds):
+
+| Variant | Per-site code | Training run | Notes |
+|---|---|---:|---|
+| thread-local + null check, shared-array fallback | load TL, `cbz`, load/add/store | 194.6 s, 193.6 s (+5.4%) | correct; the diamond at every site is the cost, not the extra load |
+| thread-local, no null check | load TL, load/add/store | 183.3 s | as fast as before, but crashed a public benchmark: a foreign thread constructs its `Thread` object (instrumented JDK code) before the thread-start listener runs |
+| displacement from shared base, no check | load TL, `add`, load/add/store | 191.3 s (+4.2%) | branch-free and safe, but the extra add on the address path is not free in call-heavy code |
+| block allocated at thread attach (final) | load TL, load/add/store | 180.4 s (−1.8%) | requires a listener callback at the end of `VMThreads.attachThread`, the only point that precedes every Java execution on a thread |
+
+Results with the final variant on the same host:
+
+| Workload | Old slowdown | New slowdown |
+|---|---:|---:|
+| microbenchmark, 1 thread | 1.15x | 1.14x |
+| microbenchmark, 16 threads | 10.6x | 1.14x |
+| microbenchmark, 64 threads | 48x | 1.22x |
+| fj-kmeans instrument-run | 21x | 1.15x |
+| sunflow instrument-run | 16x | 1.19x |
+| application training (single worker) | 1.41x | 1.38x |
+
+Counts are now exact under concurrency (the 4-thread microbenchmark records precisely the expected
+value). Old parallel-benchmark profiles had lost 72–79% of events; dominant-successor agreement
+between old and new profiles was still 99.6–99.7%, so ratios had mostly survived, but the absolute
+counts any usefulness filter would depend on had not. On the fixed single-worker application
+workload the new producer recorded the same event total within 0.012% and the resulting PGO image
+was performance-neutral versus the previous profile (+0.8% median, overlapping ranges).
+
+Snapshotting counts before serialization also removed a few hundred one-event sites per profile
+that the old producer had recorded from its own file-writing code. Replacing the fixed image-heap
+array with global data sized after compilation shrank instrumentation images by 14–20 MB.
+
+Decision: per-thread blocks allocated at attach are the producer baseline. Instrument-image memory
+rises by 16 bytes per instrumented site per live thread, calloc-backed, and was not measurable in
+run RSS.
+
 ## Validation standard
 
 Each accepted iteration requires:
