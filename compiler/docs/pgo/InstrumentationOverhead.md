@@ -93,7 +93,7 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 3. Branch identity v2 | done | fixed context-only counter collisions; −15.6% time, +18.5% throughput vs no PGO on the fixed workload |
 | 3b. Public mx benchmark validation | done | no robust general win (−0.5% to +0.7%); v2 safety confirmed across unrelated apps; overhead problem exposed |
 | 4a. Per-thread counters | done | parallel overhead 16–21x → 1.15–1.19x; exact counts; smaller instrument images |
-| 4b. Profile usefulness / confidence filter | next | keep cold or near-even profiles from overriding static heuristics |
+| 4b. Profile usefulness / confidence filter | implemented, opt-in | low-count sites carry most prior contradictions; −1.8% suggestive on the fixed workload; tuning deferred to a separate phase-behaviour investigation |
 
 Standing caveats: only `IfNode` conditionals are profiled (no switches); the application result is
 same-input specialization until a held-out input is measured; the north-star gap to a full

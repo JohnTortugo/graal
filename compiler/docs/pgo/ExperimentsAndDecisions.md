@@ -261,6 +261,40 @@ Decision: per-thread blocks allocated at attach are the producer baseline. Instr
 rises by 16 bytes per instrumented site per live thread, calloc-backed, and was not measurable in
 run RSS.
 
+## Profile usefulness filter (opt-in; tuning deferred)
+
+With exact counts available, the consumer gained telemetry on how each applied profile relates to
+the probability the node already carried. On the fixed application workload, 47% of applied sites
+had ten or fewer recorded events, and contradictions of the compiler's prior concentrated there: of
+56 contradictions in the lowest decade, 49 overrode an *injected* probability (domain knowledge such
+as "exception path unlikely"). Above ten thousand events, contradictions were almost absent. Across
+four unrelated profiles, 47–62% of sites had fewer than ten events while sites with at least one
+hundred events carried 100.00% of all events.
+
+Two opt-in hosted options let a matched site keep its static probability instead:
+`-H:PGOConditionalMinEvents=<n>` withholds sites below an absolute event count and
+`-H:PGOConditionalMinBias=<share>` withholds sites whose dominant successor share is below the
+threshold. Withheld sites are reported separately from misses.
+
+Measured on the fixed application workload (same profile, three interleaved rounds):
+
+| Setting | Applied sites | Median time vs unfiltered |
+|---|---:|---:|
+| none | 9,575 | — |
+| minimum 100 events | 2,769 | −1.8% (one outlier round; suggestive, not established) |
+| minimum 10,000 events | 862 | +0.3% (withholds useful mid-count sites) |
+| minimum 0.6 dominant share | 9,228 | −0.6% (neutral) |
+
+Public suites moved in the favorable direction by 0.2–0.7%, within noise.
+
+Decision: the filter stays opt-in with both thresholds defaulting to off. Tuning is deferred to a
+separate investigation rather than continued inside the implementation track: a single aggregate
+count per site is likely the wrong lens, because a branch may behave differently in different
+phases of the program (startup versus steady state), and the mechanism behind the small gain —
+restoring injected priors, layout side effects, or noise — has not been isolated. Candidate
+follow-ups are per-phase profile snapshots, relative rather than absolute thresholds, and shrinkage
+toward the prior instead of a hard cut.
+
 ## Validation standard
 
 Each accepted iteration requires:

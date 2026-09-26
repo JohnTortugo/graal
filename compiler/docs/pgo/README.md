@@ -87,9 +87,24 @@ reports:
 - distinct resolved contexts used and unused;
 - contexts whose successor probabilities were fully applied;
 - partially applied contexts;
-- matched contexts for which no successor probability was applied.
+- matched contexts for which no successor probability was applied;
+- a prior-comparison table: applied sites bucketed by recorded event count, split into those whose
+  dominant successor agrees with the probability the node already had and those that contradict it,
+  with contradictions of compiler-injected probabilities called out separately.
 
 A lookup hit alone is not treated as proof that profile records were applied.
+
+## Usefulness filter (opt-in)
+
+Two hosted options let a matched site keep its static probability when the profile says little:
+
+```text
+-H:PGOConditionalMinEvents=<n>      withhold sites with fewer than n recorded events
+-H:PGOConditionalMinBias=<share>    withhold sites whose dominant successor share is below <share>
+```
+
+Both default to off. Withheld sites are reported separately from misses. See
+[Experiments and decisions](ExperimentsAndDecisions.md) for why the defaults are off.
 
 ## Branch identity
 
