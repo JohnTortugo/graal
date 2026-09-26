@@ -24,7 +24,6 @@
  */
 package com.oracle.svm.core.pgo;
 
-import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.IsolateThread;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
@@ -43,13 +42,16 @@ import com.oracle.svm.shared.Uninterruptible;
  *
  * Instrumented code increments a private native block owned by the executing thread, so hot
  * branches executed concurrently on many cores never write the same cache line. The block is
- * allocated when the thread is attached, folded into the shared totals when the thread exits, and
- * read in place for still-running threads when a profile snapshot is taken.
+ * allocated in {@link #afterThreadAttach}, which runs before the thread can execute any Java code
+ * (including constructing a foreign thread's {@code Thread} object), folded into the shared totals
+ * when the thread exits, and read in place for still-running threads when a profile snapshot is
+ * taken. Generated code therefore dereferences the thread-local without a null check. If the
+ * allocation fails the thread-local points at the shared counters instead.
  */
 public final class BranchProfileThreadCounters implements ThreadListener {
 
-    /** Native block of {@code registeredSlots} longs, or null when the fallback array is used. */
-    static final FastThreadLocalWord<Pointer> COUNTERS = FastThreadLocalFactory.createWord("BranchProfileThreadCounters.counters");
+    /** The thread's private block, or the shared counters if none could be allocated. */
+    static final FastThreadLocalWord<Pointer> BLOCK = FastThreadLocalFactory.createWord("BranchProfileThreadCounters.block");
 
     private BranchProfileThreadCounters() {
     }
@@ -59,40 +61,45 @@ public final class BranchProfileThreadCounters implements ThreadListener {
     }
 
     @Override
-    @Uninterruptible(reason = "Only uninterruptible code may be executed before the thread is fully started.")
-    public void afterThreadStart(IsolateThread isolateThread, Thread javaThread) {
+    @Uninterruptible(reason = "Thread state not set up.")
+    public void afterThreadAttach(IsolateThread isolateThread) {
         allocate(isolateThread);
-    }
-
-    @Override
-    public void beforeThreadRun() {
-        /* Covers threads whose IsolateThread changed after afterThreadStart (main thread handoff). */
-        allocate(CurrentIsolate.getCurrentThread());
     }
 
     @Override
     @Uninterruptible(reason = "Only uninterruptible code may be executed after Thread.exit.")
     public void afterThreadExit(IsolateThread isolateThread, Thread javaThread) {
-        Pointer block = COUNTERS.get(isolateThread);
+        Pointer block = blockOf(isolateThread);
         if (block.isNonNull()) {
             BranchProfileRecorder.mergeIntoShared(block);
-            COUNTERS.set(isolateThread, Word.nullPointer());
+            BLOCK.set(isolateThread, BranchProfileRecorder.sharedCounts());
             UntrackedNullableNativeMemory.free(block);
         }
     }
 
+    /** The thread's private block, or null if it counts into the shared memory. */
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    private static Pointer blockOf(IsolateThread isolateThread) {
+        Pointer block = BLOCK.get(isolateThread);
+        if (block.equal(BranchProfileRecorder.sharedCounts())) {
+            return Word.nullPointer();
+        }
+        return block;
+    }
+
     @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
     private static void allocate(IsolateThread isolateThread) {
-        if (COUNTERS.get(isolateThread).isNonNull()) {
+        if (BLOCK.get(isolateThread).isNonNull()) {
             return;
         }
         int slots = BranchProfileRecorder.registeredSlots();
-        if (slots <= 0) {
-            return;
-        }
         /* calloc keeps untouched pages unmapped, so sparse counter use costs little memory. */
         Pointer block = UntrackedNullableNativeMemory.calloc(Word.unsigned(slots).multiply(Long.BYTES));
-        COUNTERS.set(isolateThread, block);
+        if (block.isNull()) {
+            /* Degrade to the shared counters rather than crash. */
+            block = BranchProfileRecorder.sharedCounts();
+        }
+        BLOCK.set(isolateThread, block);
     }
 
     /** Adds every live thread's private counters into {@code target} at a safepoint. */
@@ -113,7 +120,7 @@ public final class BranchProfileThreadCounters implements ThreadListener {
         protected void operate() {
             int slots = BranchProfileRecorder.registeredSlots();
             for (IsolateThread thread = VMThreads.firstThread(); thread.isNonNull(); thread = VMThreads.nextThread(thread)) {
-                Pointer block = COUNTERS.get(thread);
+                Pointer block = blockOf(thread);
                 if (block.isNull()) {
                     continue;
                 }
