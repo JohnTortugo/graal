@@ -33,11 +33,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.graalvm.word.LocationIdentity;
+import org.graalvm.word.Pointer;
+
+import com.oracle.svm.guest.staging.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
 import com.oracle.svm.guest.staging.log.Log;
 import com.oracle.svm.guest.staging.option.RuntimeOptionKey;
+import com.oracle.svm.shared.BuildPhaseProvider.AfterCompilation;
+import com.oracle.svm.shared.Uninterruptible;
+import com.oracle.svm.shared.util.SubstrateUtil;
 
+import jdk.graal.compiler.nodes.NamedLocationIdentity;
 import jdk.graal.compiler.options.Option;
+import jdk.internal.misc.Unsafe;
 
 /** Build-time physical-site registry and relocation-safe runtime conditional counter storage. */
 public final class BranchProfileRecorder {
@@ -52,11 +61,26 @@ public final class BranchProfileRecorder {
     private static final int TRUE_OFFSET = 0;
     private static final int FALSE_OFFSET = 1;
 
+    private static final Unsafe UNSAFE = Unsafe.getUnsafe();
+    /** Private counter blocks are never aliased with Java heap memory, so reads can be hoisted. */
+    private static final LocationIdentity COUNTER_LOCATION = NamedLocationIdentity.mutable("PGOBranchCounters");
+
     /** Every selected physical graph site owns a counter; identity aggregation happens at dump. */
     private static final ConcurrentMap<Integer, BranchProfileCounter> counters = new ConcurrentHashMap<>();
     private static final AtomicInteger nextCounterIndex = new AtomicInteger();
 
+    /**
+     * Shared totals: fallback target for code running on a thread without a private block, and the
+     * accumulator that exited threads fold their private counts into.
+     */
     private static final long[] runtimeCounts = new long[MAX_BRANCHES * COUNTERS_PER_BRANCH];
+
+    /** Number of long slots in a per-thread block; final once compilation has registered all sites. */
+    @UnknownPrimitiveField(availability = AfterCompilation.class) //
+    private static int registeredSlots;
+
+    /** Merged view (shared + live threads) that the serializer reads; null outside a dump. */
+    private static long[] snapshot;
 
     /* Makes all late-created metadata types and the runtime array write reachable to analysis. */
     private static final BranchProfileCounter unusedCounter = create(
@@ -89,16 +113,61 @@ public final class BranchProfileRecorder {
 
     /** Called by generated code. Counts are intentionally relaxed: profiles are approximate. */
     public static void increment(int counterIndex, boolean trueSuccessor) {
-        int offset = trueSuccessor ? TRUE_OFFSET : FALSE_OFFSET;
-        runtimeCounts[counterIndex * COUNTERS_PER_BRANCH + offset]++;
+        int slot = counterIndex * COUNTERS_PER_BRANCH + (trueSuccessor ? TRUE_OFFSET : FALSE_OFFSET);
+        if (!SubstrateUtil.HOSTED) {
+            Pointer block = BranchProfileThreadCounters.COUNTERS.get();
+            if (block.isNonNull()) {
+                int offset = slot * Long.BYTES;
+                block.writeLong(offset, block.readLong(offset, COUNTER_LOCATION) + 1, COUNTER_LOCATION);
+                return;
+            }
+        }
+        runtimeCounts[slot]++;
+    }
+
+    /** Seals the site registry once compilation has created every counter. */
+    public static void sealRegistry() {
+        registeredSlots = nextCounterIndex.get() * COUNTERS_PER_BRANCH;
+    }
+
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    static int registeredSlots() {
+        return registeredSlots;
+    }
+
+    /** Folds an exiting thread's private block into the shared totals. */
+    @Uninterruptible(reason = "Called after Thread.exit; touches only image-heap and native memory.")
+    static void mergeIntoShared(Pointer block) {
+        int slots = registeredSlots;
+        for (int slot = 0; slot < slots; slot++) {
+            long value = block.readLong(slot * Long.BYTES);
+            if (value != 0) {
+                UNSAFE.getAndAddLong(runtimeCounts, Unsafe.ARRAY_LONG_BASE_OFFSET + (long) slot * Long.BYTES, value);
+            }
+        }
+    }
+
+    /** Builds the merged view used while serializing; live threads are read at a safepoint. */
+    private static void takeSnapshot() {
+        int slots = SubstrateUtil.HOSTED ? nextCounterIndex.get() * COUNTERS_PER_BRANCH : registeredSlots;
+        long[] merged = new long[slots];
+        System.arraycopy(runtimeCounts, 0, merged, 0, slots);
+        if (!SubstrateUtil.HOSTED) {
+            BranchProfileThreadCounters.collectLiveThreads(merged);
+        }
+        snapshot = merged;
+    }
+
+    private static long[] readableCounts() {
+        return snapshot != null ? snapshot : runtimeCounts;
     }
 
     static long getTrueCount(int counterIndex) {
-        return runtimeCounts[counterIndex * COUNTERS_PER_BRANCH + TRUE_OFFSET];
+        return readableCounts()[counterIndex * COUNTERS_PER_BRANCH + TRUE_OFFSET];
     }
 
     static long getFalseCount(int counterIndex) {
-        return runtimeCounts[counterIndex * COUNTERS_PER_BRANCH + FALSE_OFFSET];
+        return readableCounts()[counterIndex * COUNTERS_PER_BRANCH + FALSE_OFFSET];
     }
 
     /** Deterministic physical-site snapshot used by the iprof serializer. */
@@ -121,6 +190,7 @@ public final class BranchProfileRecorder {
         /* Keep the shared array write runtime-reachable; this placeholder is excluded from output. */
         increment(unusedCounter.getCounterIndex(), true);
         increment(unusedCounter.getCounterIndex(), false);
+        takeSnapshot();
 
         String fileName = Options.ProfilesDumpFile.getValue();
         if (fileName == null || fileName.isEmpty()) {
@@ -139,6 +209,7 @@ public final class BranchProfileRecorder {
     }
 
     public static void dumpSummary() {
+        takeSnapshot();
         long trueCount = 0;
         long falseCount = 0;
         List<BranchProfileCounter> snapshot = getCounters();

@@ -33,6 +33,8 @@ import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
+import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
+import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
@@ -120,6 +122,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             throw UserError.abort("Profile instrumentation and profile consumption cannot be used in the same image build");
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
+        ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
     }
 
     @Override
@@ -157,6 +160,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         if (!enabled()) {
             return;
         }
+        BranchProfileRecorder.sealRegistry();
         // Checkstyle: stop
         System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",
