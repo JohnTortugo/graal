@@ -135,22 +135,42 @@ The parser rejects:
 - non-array conditional sections;
 - record arrays whose lengths are not multiples of three.
 
-## Known identity limitation
+## Precise CE branch-site extension
 
-The context identifies a bytecode source location and caller chain, not necessarily one transformed
-graph branch. Multiple `ControlSplitNode`s can share a context. The current CE producer also stores one
-fixed successor pair per context, so conflicting sites can be merged incorrectly.
+CE-produced files also contain:
 
-A future precise CE extension should include:
-
-```text
-stage
-context
-normalized successor-BCI signature
-deterministic occurrence discriminator
-condition-shape validation fingerprint
+```json
+"ceConditionalProfilesV2": [
+  {
+    "stage": "POST_HIGH_TIER",
+    "ctx": "17:42<29:15",
+    "successors": [50, 70],
+    "conditionKind": "jdk.graal.compiler.nodes.calc.IntegerEqualsNode",
+    "conditionFingerprint": "8f3a2c1d",
+    "occurrence": 0,
+    "records": [50, 0, 9900, 70, 1, 100]
+  }
+]
 ```
 
-Graph-local node IDs must not be serialized because they are not stable across builds. Legacy
-context-only entries should be used only when unambiguous; ambiguous entries should be skipped rather
-than selected first.
+The exact identity is:
+
+```text
+stage + context + ordered successor BCIs + condition kind + occurrence
+```
+
+The fingerprint is advisory validation telemetry and does not reject an otherwise exact identity.
+Occurrence is assigned deterministically among equal context/successor/condition shapes; graph-local
+node IDs are never serialized.
+
+Every selected physical site owns a counter. Serialization aggregates counters only when their exact
+v2 identities match. The legacy section includes only contexts with exactly one precise identity.
+
+The consumer tries exact v2 first. A legacy fallback is permitted only when the context maps to one
+precise site, preventing ambiguous first-wins behavior.
+
+## Legacy identity limitation
+
+External legacy files identify only bytecode context. Multiple `ControlSplitNode`s can share a
+context, so legacy data cannot distinguish every transformed graph site. CE v2 resolves this for
+CE-produced profiles while preserving legacy input compatibility.

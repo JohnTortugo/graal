@@ -8,9 +8,9 @@ The current implementation intentionally covers one profile category only: iprof
 `instanceof`, switch, code-layout, and image-heap profiles are outside the current scope.
 
 > [!WARNING]
-> This implementation is experimental. Method/BCI calling context does not uniquely identify every
-> transformed graph branch. The current producer can merge distinct branch sites that share a
-> context. See [Known branch-identity limitation](#known-branch-identity-limitation) and
+> This implementation is experimental. Precise CE profiles use stage, context, successor signature,
+> condition kind, and occurrence to distinguish transformed graph sites. Legacy external profiles
+> remain context-only and cannot distinguish every transformed branch. See
 > [Experiments and decisions](ExperimentsAndDecisions.md).
 
 ## Documentation
@@ -90,17 +90,21 @@ reports:
 
 A lookup hit alone is not treated as proof that profile records were applied.
 
-## Known branch-identity limitation
+## Branch identity
 
-The legacy key is a method/BCI calling-context chain. Graal can retain several `ControlSplitNode`s
-with the same `NodeSourcePosition`, including nodes with different successor BCIs. The current CE
-producer stores one true/false successor pair per context. A later same-context site can therefore be
-merged into the first site's counter.
+CE-produced profiles contain a `ceConditionalProfilesV2` section. Its site identity combines stage,
+full method/BCI context, ordered successor BCIs, condition kind, and an occurrence ordinal. A
+structural fingerprint is retained as advisory drift telemetry rather than a hard key.
 
-The measured performance results are useful experimental evidence, but the producer should not be
-considered semantically complete until branch identity includes stage, context, successor signature,
-and a deterministic occurrence discriminator. The proposed direction is documented in
-[ExperimentsAndDecisions.md](ExperimentsAndDecisions.md#branch-identity-v2-direction).
+The producer gives each selected physical graph site its own counter and aggregates only identical
+v2 identities at dump time. The legacy `conditionalProfiles` section includes only contexts that map
+to one unambiguous v2 site.
+
+The consumer tries exact v2 identity first. If the requested stage does not match, it may use the
+legacy context only when that context maps to exactly one v2 site. Ambiguous contexts never fall back.
+Graph-local node IDs are not used because they are not stable across builds.
+
+External legacy profiles remain context-only and retain the original ambiguity risk.
 
 ## Validation
 

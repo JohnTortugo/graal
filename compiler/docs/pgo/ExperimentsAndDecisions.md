@@ -119,35 +119,72 @@ Mechanisms include:
 - instrumentation changing inlining decisions;
 - post-inlining collection observing only surviving branches.
 
-Decision: context-only counter deduplication is a known correctness defect when successor pairs
-conflict. Current speedups must not be presented as proof of semantically complete PGO.
+Decision: context-only counter deduplication is a correctness defect when successor pairs
+conflict. It is retained only for external legacy input compatibility.
 
-## Branch identity v2 direction
+## Branch identity v2 implementation and result
 
-A precise site identity should include:
+The implemented precise identity is:
 
 ```text
 stage
 + full method/BCI caller context
-+ normalized successor-BCI signature
-+ deterministic occurrence discriminator
++ ordered successor-BCI signature
++ condition kind
++ deterministic occurrence ordinal
 ```
 
-For same-context sites with the same successor signature, evaluate a deterministic CFG traversal
-ordinal. A condition-shape fingerprint can validate the match, but should not be the sole identity.
-Graph-local node IDs are rejected because they are not stable across builds.
+A bounded condition-shape fingerprint is serialized as advisory validation telemetry. It is not part
+of the hard identity: repeated-build testing showed stable ordinals for every common site, while some
+otherwise matching sites exhibited fingerprint drift. Graph-local node IDs remain rejected.
 
-A future format should use a separate CE extension section while preserving legacy iprof
-compatibility. The consumer should resolve entries to individual graph branches and skip ambiguous
-legacy matches rather than using first-wins behavior.
+Each selected physical branch site now owns a counter. The serializer aggregates only identical v2
+identities and emits them in `ceConditionalProfilesV2`. A legacy entry is emitted only when one
+context maps to one precise identity. Exact v2 lookup has priority; cross-stage legacy fallback is
+allowed only for such unambiguous contexts.
 
-Before adopting this design:
+A large post-inlining training run produced:
 
-1. Prove discriminator stability across repeated builds.
-2. Give each physical selected site its own counter.
-3. Add tests for same-context/different-successor and same-successor/multiple-occurrence cases.
-4. Retrain and benchmark as an isolated milestone.
-5. Evaluate a representative held-out workload to test generalization.
+```text
+552,664 physical counters
+19,260 active precise sites
+18,095 safe legacy contexts
+1,165 precise sites excluded from legacy ambiguity
+0 duplicate v2 identities after resolution
+```
+
+At the matching post-inlining consumer stage:
+
+```text
+18,931/18,961 resolved sites used (99.8%)
+18,931 fully applied
+0 partial or matched-not-applied
+30 unused
+0 occurrence mismatches
+```
+
+Stage-correct v2 performance was effectively neutral versus context-only late consumption; their
+three-run ranges overlapped. This is expected for a correctness fix that changes only ambiguous
+sites.
+
+The important result came from safe cross-stage adoption. Applying only the v2 file's unambiguous
+legacy subset early improved every paired run:
+
+| Early profile policy | Normalized time | Normalized throughput |
+|---|---:|---:|
+| Context-merged post profile | 0.865 | 1.156 |
+| **v2 safe unambiguous post profile** | **0.844** | **1.185** |
+
+The safe policy improved median time by 2.43% and throughput by 2.49% relative to the previous winner,
+while reducing GC time by 2.72%. Relative to no PGO it improved time by 15.60% and throughput by
+18.49%. Therefore ambiguous context aggregation was harmful; removing it strengthened rather than
+explained away the earlier speedup.
+
+Decision: use v2 exact identity whenever stage matches. When adopting a profile across stages, allow
+only the serializer-proven unambiguous context subset. Never apply a context-only fallback when more
+than one precise site shares that context.
+
+A held-out workload is still required before claiming generalization.
 
 ## Validation standard
 

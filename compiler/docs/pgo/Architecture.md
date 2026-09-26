@@ -18,7 +18,10 @@ conditional record triples.
 descriptor representation. Profile entries are resolved against `HostedUniverse` before compilation.
 
 `SimpleConditionalProfilesLookup` implements `PGOProfilesLookup` for conditional data only. Every
-other profile category remains absent.
+other profile category remains absent. When `ceConditionalProfilesV2` is present, exact site identity
+has priority. If an exact stage-qualified site is absent, the lookup may adopt the legacy context only
+when that context maps to one precise site; ambiguous contexts never fall back. Fingerprint drift is
+reported but does not reject an otherwise exact identity.
 
 ### Early consumption
 
@@ -94,9 +97,14 @@ benchmark-counter LIR operation.
 The producer uses:
 
 - `BranchProfileCounterNode`, lowered through an SVM snippet template;
+- one physical counter for every selected graph site;
 - integer indexes embedded in generated code;
 - one shared, analysis-visible `long[]` for runtime counts;
-- immutable metadata objects for context and successor BCIs.
+- immutable metadata containing stage, context, successors, condition kind, structural fingerprint,
+  and occurrence ordinal.
+
+Identical precise identities are aggregated only while serializing. Conflicting same-context sites
+remain separate in `ceConditionalProfilesV2`; ambiguous contexts are omitted from legacy output.
 
 Embedding hosted-created counter objects directly produced unrelocated compressed image-heap offsets.
 The indexed array avoids late object constants in generated code.
