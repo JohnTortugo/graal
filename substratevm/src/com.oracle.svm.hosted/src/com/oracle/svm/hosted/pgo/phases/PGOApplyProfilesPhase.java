@@ -51,6 +51,7 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.PGOUtils;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities.ConditionalSite;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileFilter;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
@@ -515,7 +516,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         ControlSplitNode conditionalNode = site.node();
         Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context, descriptor);
         conditionalSuccessors.ifPresentOrElse(s -> {
-            ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode);
+            ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode, pgoProfiles);
             pgoProfiles.recordConditionalProfileApplication(context, descriptor, application.profiledSuccessors(), application.appliedSuccessors());
             countSuccess();
         }, () -> countFailure(context));
@@ -524,7 +525,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private record ConditionalApplication(int profiledSuccessors, int appliedSuccessors) {
     }
 
-    private static ConditionalApplication setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode) {
+    private static ConditionalApplication setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode,
+                    PGOProfilesLookup telemetry) {
         List<Node> successors = conditionalNode.successors().snapshot();
         List<Node> aliveSuccessors = successors.stream().filter(Node::isAlive).collect(Collectors.toList());
         Optional<Map<Integer, Double>> aggregatedProbabilities = aggregatedProbabilities(conditionalSuccessors);
@@ -532,9 +534,35 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             return new ConditionalApplication(0, 0);
         }
         List<Node> matchingProfiles = successorsMatchingProfiles(aliveSuccessors, aggregatedProbabilities.get());
+        recordPriorComparison(telemetry, conditionalSuccessors, conditionalNode, matchingProfiles, aggregatedProbabilities.get());
         matchingProfiles.forEach(
                         s -> conditionalNode.setProbability((AbstractBeginNode) s, BranchProbabilityData.create(aggregatedProbabilities.get().get(s.getNodeSourcePosition().getBCI()), source)));
         return new ConditionalApplication(aggregatedProbabilities.get().size(), matchingProfiles.size());
+    }
+
+    /**
+     * Telemetry only: does the profile's dominant successor agree with the probability the node
+     * already carries (static heuristic or injected knowledge)? Recorded with the event count so the
+     * usefulness filter can be tuned from evidence.
+     */
+    private static void recordPriorComparison(PGOProfilesLookup telemetry, long[] records, ControlSplitNode conditionalNode, List<Node> matchingProfiles,
+                    Map<Integer, Double> profiled) {
+        if (matchingProfiles.size() < 2) {
+            return;
+        }
+        Node dominant = null;
+        double dominantProbability = -1;
+        for (Node successor : matchingProfiles) {
+            double probability = profiled.get(successor.getNodeSourcePosition().getBCI());
+            if (probability > dominantProbability) {
+                dominantProbability = probability;
+                dominant = successor;
+            }
+        }
+        double prior = conditionalNode.probability((AbstractBeginNode) dominant);
+        boolean flipped = prior < 0.5 && dominantProbability > 0.5;
+        boolean priorInjected = conditionalNode.getProfileData().getProfileSource().isInjected();
+        telemetry.recordPriorComparison(ConditionalProfileFilter.totalEvents(records), flipped, priorInjected);
     }
 
     /**

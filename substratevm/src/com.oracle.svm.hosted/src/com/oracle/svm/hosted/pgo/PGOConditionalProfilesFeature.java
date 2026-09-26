@@ -42,6 +42,7 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
+import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileFilter;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup;
@@ -73,6 +74,12 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         @APIOption(name = "pgo-post-inlining")//
         @Option(help = "Consume conditional branch profiles at the end of hosted HighTier, matching the post-inlining producer stage.")//
         public static final HostedOptionKey<String> ConditionalProfilesPostInliningUse = new ProfilePathOption();
+
+        @Option(help = "Ignore matched conditional profiles with fewer than this many recorded successor events; the site keeps its static probability. 0 disables.")//
+        public static final HostedOptionKey<Long> PGOConditionalMinEvents = new HostedOptionKey<>(0L);
+
+        @Option(help = "Ignore matched conditional profiles whose dominant successor share is below this value in [0,1]; the site keeps its static probability. 0 disables.")//
+        public static final HostedOptionKey<Double> PGOConditionalMinBias = new HostedOptionKey<>(0.0);
         // @formatter:on
 
         private static final class ProfilePathOption extends HostedOptionKey<String> {
@@ -148,13 +155,16 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         hostedUniverse = ((FeatureImpl.BeforeCompilationAccessImpl) access).getUniverse();
 
+        ConditionalProfileFilter filter = new ConditionalProfileFilter(Options.PGOConditionalMinEvents.getValue(), Options.PGOConditionalMinBias.getValue());
         if (parsedEarlyProfile != null && !ImageSingletons.contains(PGOProfilesLookup.class)) {
             earlyLookup = ConditionalProfileContextResolver.resolve(parsedEarlyProfile, hostedUniverse);
+            earlyLookup.setFilter(filter);
             ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
             reportResolution("early", earlyLookup);
         }
         if (parsedPostInliningProfile != null) {
             postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
+            postInliningLookup.setFilter(filter);
             reportResolution("post-inlining", postInliningLookup);
         }
         parsedEarlyProfile = null;
@@ -234,6 +244,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         System.out.printf("[PGO:%s] %d queries, %d hits (%.1f%%), %d misses; contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused%n",
                         stage, queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
                         lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
+        System.out.printf("[PGO:%s] prior comparison by events (agree/flip(injected-prior flips)): %s%n", stage, lookup.priorComparisonSummary());
+        if (lookup.filter().isActive()) {
+            System.out.printf("[PGO:%s] usefulness filter minEvents=%d minBias=%.2f withheld %d distinct sites: %d queries too few events, %d queries too even%n",
+                            stage, lookup.filter().minEvents(), lookup.filter().minBias(), lookup.filteredContextCount(), lookup.filteredFewEventsCount(), lookup.filteredEvenCount());
+        }
         if (lookup.usesPreciseProfiles()) {
             SimpleConditionalProfilesLookup.PreciseMissDiagnostics precise = lookup.preciseMissDiagnostics();
             System.out.printf("[PGO:%s] precise misses by first mismatch: context=%d, stage=%d, successors=%d, condition-kind=%d, occurrence=%d; matched fingerprint drift=%d, unambiguous legacy fallback=%d%n",

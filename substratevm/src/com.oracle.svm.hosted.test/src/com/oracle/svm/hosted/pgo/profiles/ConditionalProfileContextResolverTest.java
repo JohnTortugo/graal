@@ -53,7 +53,7 @@ public class ConditionalProfileContextResolverTest {
     // Descriptors that match the TYPES_AND_METHODS table below.
     private static final String FOO = "Lcom/example/Foo;";
     // com.example.Foo.bar(int)void
-    private static final String BAR_DESC = FOO + ".bar(I)V";
+    static final String BAR_DESC = FOO + ".bar(I)V";
     // com.example.Foo.baz(int)java.lang.String
     private static final String BAZ_DESC = FOO + ".baz(I)Ljava/lang/String;";
 
@@ -318,7 +318,7 @@ public class ConditionalProfileContextResolverTest {
         Assert.assertEquals(0, lookup.unappliedMatchedContextCount());
     }
 
-    private static ResolvedJavaMethod mockBarMethod() {
+    static ResolvedJavaMethod mockBarMethod() {
         JavaType intType = proxy(JavaType.class, "I");
         JavaType voidType = proxy(JavaType.class, "V");
         ResolvedJavaType declaringType = proxy(ResolvedJavaType.class, FOO);

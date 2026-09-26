@@ -93,6 +93,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final Map<List<FrameKey>, List<PreciseKey>> preciseSitesByContext;
     private final boolean preferPrecise;
     private final ConditionalProfileDiagnostics diagnostics;
+    private volatile ConditionalProfileFilter filter = ConditionalProfileFilter.NONE;
     private volatile boolean cleared;
 
     /**
@@ -112,6 +113,24 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final AtomicLong preciseOccurrenceMissCount = new AtomicLong();
     private final AtomicLong preciseFingerprintDriftCount = new AtomicLong();
     private final AtomicLong preciseUnambiguousFallbackCount = new AtomicLong();
+    private final AtomicLong filteredFewEventsCount = new AtomicLong();
+    private final AtomicLong filteredEvenCount = new AtomicLong();
+    /** Distinct matched sites withheld by the usefulness filter. */
+    private final Set<Object> filteredContexts = ConcurrentHashMap.newKeySet();
+    /** Applied sites whose profiled dominant successor contradicts the prior, by log10(events) bucket. */
+    private final AtomicLong[] priorFlipsByDecade = newDecadeCounters();
+    private final AtomicLong[] priorAgreementsByDecade = newDecadeCounters();
+    private final AtomicLong[] injectedPriorFlipsByDecade = newDecadeCounters();
+
+    private static final int DECADES = 12;
+
+    private static AtomicLong[] newDecadeCounters() {
+        AtomicLong[] counters = new AtomicLong[DECADES];
+        for (int i = 0; i < DECADES; i++) {
+            counters[i] = new AtomicLong();
+        }
+        return counters;
+    }
     /** Exact profile contexts that matched at least one compiler query. */
     private final Set<Object> matchedContexts = ConcurrentHashMap.newKeySet();
     /** Best successor-record coverage observed for every matched context. */
@@ -136,6 +155,60 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         this.preciseSitesByContext = Map.copyOf(byContext);
         this.preferPrecise = !preciseConditionalData.isEmpty();
         this.diagnostics = diagnostics;
+    }
+
+    public void setFilter(ConditionalProfileFilter newFilter) {
+        this.filter = newFilter == null ? ConditionalProfileFilter.NONE : newFilter;
+    }
+
+    public ConditionalProfileFilter filter() {
+        return filter;
+    }
+
+    public long filteredFewEventsCount() {
+        return filteredFewEventsCount.get();
+    }
+
+    public long filteredEvenCount() {
+        return filteredEvenCount.get();
+    }
+
+    public int filteredContextCount() {
+        return filteredContexts.size();
+    }
+
+    /**
+     * Records how an applied profile related to the probability already on the node. {@code flipped}
+     * means the profiled dominant successor was not the prior's dominant successor.
+     */
+    public void recordPriorComparison(long events, boolean flipped, boolean priorInjected) {
+        int decade = events <= 0 ? 0 : Math.min(DECADES - 1, (int) Math.floor(Math.log10(events)) + 1);
+        if (flipped) {
+            priorFlipsByDecade[decade].incrementAndGet();
+            if (priorInjected) {
+                injectedPriorFlipsByDecade[decade].incrementAndGet();
+            }
+        } else {
+            priorAgreementsByDecade[decade].incrementAndGet();
+        }
+    }
+
+    /** Human-readable "decade: agree/flip(injected)" table for the summary line. */
+    public String priorComparisonSummary() {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < DECADES; i++) {
+            long agree = priorAgreementsByDecade[i].get();
+            long flip = priorFlipsByDecade[i].get();
+            if (agree == 0 && flip == 0) {
+                continue;
+            }
+            if (!builder.isEmpty()) {
+                builder.append(", ");
+            }
+            String range = i == 0 ? "0" : i == DECADES - 1 ? ">=1e" + (i - 1) : "1e" + (i - 1) + "-1e" + i;
+            builder.append(range).append(": ").append(agree).append('/').append(flip).append('(').append(injectedPriorFlipsByDecade[i].get()).append(')');
+        }
+        return builder.isEmpty() ? "none" : builder.toString();
     }
 
     /** Deterministic quality/summary information gathered while building the table. */
@@ -228,6 +301,20 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         }
         if (exactPreciseMatch && preciseProfile != null && site != null && preciseProfile.conditionFingerprint() != site.conditionFingerprint()) {
             preciseFingerprintDriftCount.incrementAndGet();
+        }
+        switch (filter.classify(records)) {
+            case TOO_FEW_EVENTS -> {
+                filteredFewEventsCount.incrementAndGet();
+                filteredContexts.add(key);
+                return Optional.empty();
+            }
+            case TOO_EVEN -> {
+                filteredEvenCount.incrementAndGet();
+                filteredContexts.add(key);
+                return Optional.empty();
+            }
+            default -> {
+            }
         }
         matchedContexts.add(key);
         hitCount.incrementAndGet();
