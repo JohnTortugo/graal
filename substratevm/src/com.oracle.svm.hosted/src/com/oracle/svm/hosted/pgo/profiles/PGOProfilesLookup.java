@@ -132,6 +132,10 @@ public interface PGOProfilesLookup {
                     @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
     }
 
+    /** Telemetry: an observed receiver type that closed-world analysis proved impossible at the site. */
+    default void recordImpossibleReceiver(@SuppressWarnings("unused") long events) {
+    }
+
     /** Telemetry: how an applied conditional profile related to the node's prior probability. */
     default void recordPriorComparison(@SuppressWarnings("unused") long events, @SuppressWarnings("unused") boolean flipped,
                     @SuppressWarnings("unused") boolean priorInjected) {

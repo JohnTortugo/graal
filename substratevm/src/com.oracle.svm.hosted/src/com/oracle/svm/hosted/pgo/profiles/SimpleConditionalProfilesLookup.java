@@ -62,6 +62,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     /** The profile category this consumer supports; must match the phase's constant. */
     public static final String CONDITIONAL_PROFILES_CATEGORY = "conditionalProfiles";
+    public static final String VIRTUAL_INVOKE_PROFILES_CATEGORY = "virtualInvokeProfiles";
 
     /**
      * A single canonical frame of a calling context: a JVM-descriptor method identity and a
@@ -91,6 +92,13 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final Map<List<FrameKey>, long[]> conditionalData;
     private final Map<PreciseKey, PreciseProfile> preciseConditionalData;
     private final Map<List<FrameKey>, List<PreciseKey>> preciseSitesByContext;
+    private final Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData;
+    private final ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
+    private final AtomicLong virtualInvokeHitCount = new AtomicLong();
+    private final AtomicLong virtualInvokeMissCount = new AtomicLong();
+    private final Set<List<FrameKey>> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
+    private final AtomicLong impossibleReceiverRecords = new AtomicLong();
+    private final AtomicLong impossibleReceiverEvents = new AtomicLong();
     private final boolean preferPrecise;
     private final ConditionalProfileDiagnostics diagnostics;
     private volatile ConditionalProfileFilter filter = ConditionalProfileFilter.NONE;
@@ -145,6 +153,14 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics) {
+        this(conditionalData, preciseConditionalData, diagnostics, Map.of(), null);
+    }
+
+    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
+                    ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
+                    ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
+        this.virtualInvokeData = Map.copyOf(virtualInvokeData);
+        this.virtualInvokeDiagnostics = virtualInvokeDiagnostics;
         this.conditionalData = Map.copyOf(conditionalData);
         this.preciseConditionalData = Map.copyOf(preciseConditionalData);
         Map<List<FrameKey>, List<PreciseKey>> byContext = new java.util.HashMap<>();
@@ -271,7 +287,13 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     @Override
     public boolean profileCategoryRecorded(String category) {
-        return CONDITIONAL_PROFILES_CATEGORY.equals(category) && !cleared && (!conditionalData.isEmpty() || !preciseConditionalData.isEmpty());
+        if (cleared) {
+            return false;
+        }
+        if (VIRTUAL_INVOKE_PROFILES_CATEGORY.equals(category)) {
+            return !virtualInvokeData.isEmpty();
+        }
+        return CONDITIONAL_PROFILES_CATEGORY.equals(category) && (!conditionalData.isEmpty() || !preciseConditionalData.isEmpty());
     }
 
     @Override
@@ -443,7 +465,52 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     @Override
     public Optional<Map<AnalysisType, Long>> getVirtualInvokeProfile(BytecodePosition callingContext) {
-        return Optional.empty();
+        if (cleared || callingContext == null || virtualInvokeData.isEmpty()) {
+            return Optional.empty();
+        }
+        List<FrameKey> key = canonicalize(callingContext);
+        Map<AnalysisType, Long> receivers = virtualInvokeData.get(key);
+        if (receivers == null) {
+            virtualInvokeMissCount.incrementAndGet();
+            return Optional.empty();
+        }
+        virtualInvokeHitCount.incrementAndGet();
+        matchedVirtualInvokeContexts.add(key);
+        return Optional.of(receivers);
+    }
+
+    public ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics() {
+        return virtualInvokeDiagnostics;
+    }
+
+    public long virtualInvokeHitCount() {
+        return virtualInvokeHitCount.get();
+    }
+
+    public long virtualInvokeMissCount() {
+        return virtualInvokeMissCount.get();
+    }
+
+    public int matchedVirtualInvokeContextCount() {
+        return matchedVirtualInvokeContexts.size();
+    }
+
+    public int availableVirtualInvokeContextCount() {
+        return virtualInvokeData.size();
+    }
+
+    @Override
+    public void recordImpossibleReceiver(long events) {
+        impossibleReceiverRecords.incrementAndGet();
+        impossibleReceiverEvents.addAndGet(events);
+    }
+
+    public long impossibleReceiverRecords() {
+        return impossibleReceiverRecords.get();
+    }
+
+    public long impossibleReceiverEvents() {
+        return impossibleReceiverEvents.get();
     }
 
     @Override

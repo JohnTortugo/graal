@@ -78,6 +78,7 @@ import jdk.vm.ci.meta.JavaMethodProfile;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.JavaTypeProfile;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
 
 public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierContext> {
 
@@ -476,11 +477,27 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         }
         if (typeOccurrences.isPresent()) {
             SubstrateMethodCallTargetNode substrateCallTarget = (SubstrateMethodCallTargetNode) callTarget;
-            JavaTypeProfile javaTypeProfile = PGOUtils.updateJavaTypeProfile(substrateCallTarget.getTypeProfile(), typeOccurrences, hUniverse, true);
-            JavaMethodProfile javaMethodProfile = PGOUtils.updateJavaMethodProfile(substrateCallTarget.getMethodProfile(), javaTypeProfile);
-            callTarget.graph().getDebug().log("Inferred method profile for context:%n%s%nProfile: %s", context, formatJavaMethodProfile(javaMethodProfile));
-            substrateCallTarget.setDynamicProfiles(javaTypeProfile, javaMethodProfile);
-            appliedProfile = true;
+            JavaTypeProfile staticTypeProfile = substrateCallTarget.getTypeProfile();
+            /*
+             * A closed-world static type profile is exact: it lists every receiver type that can
+             * reach this call and has no not-recorded probability, which is what lets the inliner
+             * emit a complete type switch without a fallback invoke. Observed receivers must then be
+             * restricted to the analysed set (a profile from another build may name types this image
+             * proved impossible) and the profile must stay exact. Only an open-world profile gets a
+             * not-recorded probability injected.
+             */
+            boolean exactStaticProfile = staticTypeProfile != null && staticTypeProfile.getNotRecordedProbability() == 0.0;
+            Optional<Map<AnalysisType, Long>> admissible = exactStaticProfile ? restrictToStaticTypes(typeOccurrences.get(), staticTypeProfile) : typeOccurrences;
+            if (admissible.isPresent()) {
+                JavaTypeProfile javaTypeProfile = PGOUtils.updateJavaTypeProfile(staticTypeProfile, admissible, hUniverse, !exactStaticProfile);
+                if (exactStaticProfile) {
+                    javaTypeProfile = withoutZeroProbabilities(javaTypeProfile);
+                }
+                JavaMethodProfile javaMethodProfile = PGOUtils.updateJavaMethodProfile(substrateCallTarget.getMethodProfile(), javaTypeProfile);
+                callTarget.graph().getDebug().log("Inferred method profile for context:%n%s%nProfile: %s", context, formatJavaMethodProfile(javaMethodProfile));
+                substrateCallTarget.setDynamicProfiles(javaTypeProfile, javaMethodProfile);
+                appliedProfile = true;
+            }
         }
         if (appliedProfile) {
             countSuccess();
@@ -488,6 +505,54 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             callTarget.graph().getDebug().log("Failed to obtain method profile for context:%n%s", context);
             countFailure(context);
         }
+    }
+
+    /**
+     * An exact profile must not contain zero-probability types. Inline-cache construction folds a
+     * type whose target cannot be resolved into the not-recorded probability and only emits a
+     * fallback invoke when that probability is positive; a zero entry would be dropped silently and
+     * the type switch would no longer cover every possible receiver. Unobserved analysed types keep
+     * an extremely small probability instead.
+     */
+    static JavaTypeProfile withoutZeroProbabilities(JavaTypeProfile profile) {
+        JavaTypeProfile.ProfiledType[] types = profile.getTypes();
+        int zeros = 0;
+        for (JavaTypeProfile.ProfiledType type : types) {
+            if (type.getProbability() == 0.0) {
+                zeros++;
+            }
+        }
+        if (zeros == 0) {
+            return profile;
+        }
+        double floor = EXTREMELY_SLOW_PATH_PROBABILITY;
+        double scale = 1.0 - zeros * floor;
+        JavaTypeProfile.ProfiledType[] adjusted = new JavaTypeProfile.ProfiledType[types.length];
+        for (int i = 0; i < types.length; i++) {
+            double probability = types[i].getProbability();
+            adjusted[i] = new JavaTypeProfile.ProfiledType(types[i].getType(), probability == 0.0 ? floor : probability * scale);
+        }
+        return new JavaTypeProfile(profile.getNullSeen(), profile.getNotRecordedProbability(), adjusted);
+    }
+
+    /**
+     * Keeps only observed receivers that the exact static profile admits. Returns empty when none of
+     * the observed receivers is possible here, so the static profile is left untouched.
+     */
+    private Optional<Map<AnalysisType, Long>> restrictToStaticTypes(Map<AnalysisType, Long> observed, JavaTypeProfile staticTypeProfile) {
+        Set<ResolvedJavaType> admitted = new HashSet<>();
+        for (JavaTypeProfile.ProfiledType profiledType : staticTypeProfile.getTypes()) {
+            admitted.add(profiledType.getType());
+        }
+        Map<AnalysisType, Long> result = new HashMap<>();
+        for (Map.Entry<AnalysisType, Long> entry : observed.entrySet()) {
+            if (admitted.contains(hUniverse.lookup(entry.getKey()))) {
+                result.put(entry.getKey(), entry.getValue());
+            } else {
+                pgoProfiles.recordImpossibleReceiver(entry.getValue());
+            }
+        }
+        return result.isEmpty() ? Optional.empty() : Optional.of(result);
     }
 
     private void countSuccess() {

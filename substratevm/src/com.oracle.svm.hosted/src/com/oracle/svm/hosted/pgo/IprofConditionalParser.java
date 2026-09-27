@@ -73,6 +73,7 @@ public final class IprofConditionalParser {
     private static final String KEY_METHODS = "methods";
     private static final String KEY_CONDITIONAL_PROFILES = "conditionalProfiles";
     private static final String KEY_PRECISE_CONDITIONAL_PROFILES = "ceConditionalProfilesV2";
+    private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
     private static final String KEY_STAGE = "stage";
     private static final String KEY_SUCCESSORS = "successors";
     private static final String KEY_CONDITION_KIND = "conditionKind";
@@ -114,6 +115,13 @@ public final class IprofConditionalParser {
     }
 
     /** Descriptor of a method as declared in the iprof {@code methods} table. */
+    /**
+     * One parsed {@code virtualInvokeProfiles} entry: the calling context of an indirect call and
+     * its records as {@code [typeId, count, typeId, count, ...]} receiver-type pairs.
+     */
+    public record VirtualInvokeEntry(List<ContextFrame> context, long[] records) {
+    }
+
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
@@ -124,14 +132,22 @@ public final class IprofConditionalParser {
         private final Map<Integer, MethodDescriptor> methodsById;
         private final List<ConditionalEntry> conditionalEntries;
         private final List<PreciseConditionalEntry> preciseConditionalEntries;
+        private final List<VirtualInvokeEntry> virtualInvokeEntries;
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries) {
+            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList());
+        }
+
+        ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
+                        List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries,
+                        List<VirtualInvokeEntry> virtualInvokeEntries) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
             this.conditionalEntries = Collections.unmodifiableList(conditionalEntries);
             this.preciseConditionalEntries = Collections.unmodifiableList(preciseConditionalEntries);
+            this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
         }
 
         public String version() {
@@ -152,6 +168,10 @@ public final class IprofConditionalParser {
 
         public List<PreciseConditionalEntry> preciseConditionalEntries() {
             return preciseConditionalEntries;
+        }
+
+        public List<VirtualInvokeEntry> virtualInvokeEntries() {
+            return virtualInvokeEntries;
         }
     }
 
@@ -189,8 +209,9 @@ public final class IprofConditionalParser {
          */
         List<ConditionalEntry> conditionalEntries = optionalConditionalProfiles(top);
         List<PreciseConditionalEntry> preciseConditionalEntries = optionalPreciseConditionalProfiles(top);
+        List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, virtualInvokeEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -289,6 +310,48 @@ public final class IprofConditionalParser {
         }
         return result;
     }
+
+    /**
+     * Returns the parsed {@code virtualInvokeProfiles} entries, or an empty list when the section
+     * is absent. Records are {@code [typeId, count]} pairs; every type id must be declared in the
+     * {@code types} section.
+     */
+    private static List<VirtualInvokeEntry> optionalVirtualInvokeProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
+        Object value = top.get(KEY_VIRTUAL_INVOKE_PROFILES);
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + KEY_VIRTUAL_INVOKE_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> profiles = (List<Object>) value;
+        List<VirtualInvokeEntry> result = new ArrayList<>(profiles.size());
+        for (Object element : profiles) {
+            EconomicMap<String, Object> entry = asObject(element, KEY_VIRTUAL_INVOKE_PROFILES);
+            String ctx = requireString(entry, KEY_CTX);
+            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            if (rawRecords.isEmpty() || rawRecords.size() % VIRTUAL_INVOKE_RECORD_SIZE != 0) {
+                throw new IprofFormatException("Virtual invoke records length " + rawRecords.size() + " for context '" + ctx + "' is not a positive multiple of " + VIRTUAL_INVOKE_RECORD_SIZE);
+            }
+            long[] records = new long[rawRecords.size()];
+            for (int i = 0; i < rawRecords.size(); i++) {
+                records[i] = asLong(rawRecords.get(i), KEY_RECORDS);
+            }
+            for (int i = 0; i < records.length; i += VIRTUAL_INVOKE_RECORD_SIZE) {
+                if (records[i] < 0 || records[i] > Integer.MAX_VALUE || !typeNamesById.containsKey((int) records[i])) {
+                    throw new IprofFormatException("Virtual invoke context '" + ctx + "' references undeclared type id " + records[i]);
+                }
+                if (records[i + 1] < 0) {
+                    throw new IprofFormatException("Negative receiver count for virtual invoke context '" + ctx + "'");
+                }
+            }
+            result.add(new VirtualInvokeEntry(parseContext(ctx), records));
+        }
+        return result;
+    }
+
+    public static final int VIRTUAL_INVOKE_RECORD_SIZE = 2;
 
     private static List<ConditionalEntry> parseConditionalProfiles(List<Object> conditionalProfiles) {
         List<ConditionalEntry> result = new ArrayList<>(conditionalProfiles.size());

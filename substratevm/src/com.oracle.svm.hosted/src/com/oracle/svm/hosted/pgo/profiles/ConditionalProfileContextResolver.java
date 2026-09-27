@@ -32,12 +32,16 @@ import java.util.Map;
 import java.util.Set;
 
 import com.oracle.svm.hosted.meta.HostedMethod;
+import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.PreciseConditionalEntry;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.PreciseKey;
@@ -184,7 +188,11 @@ public final class ConditionalProfileContextResolver {
      * @return a fully constructed, immutable lookup.
      */
     public static SimpleConditionalProfilesLookup resolve(ParsedProfile profile, HostedUniverse universe) {
-        return buildLookup(profile, indexUniverseMethods(universe).keySet());
+        return buildLookup(profile, indexUniverseMethods(universe).keySet(), indexUniverseTypes(universe));
+    }
+
+    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
+        return buildLookup(profile, presentDescriptors, Map.of());
     }
 
     /**
@@ -196,7 +204,7 @@ public final class ConditionalProfileContextResolver {
      * @param presentDescriptors canonical descriptors (see {@link #methodDescriptor}) of methods
      *            available in the image.
      */
-    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
+    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
         Map<List<FrameKey>, long[]> legacyTable = new HashMap<>();
         for (ConditionalEntry entry : profile.conditionalEntries()) {
@@ -263,7 +271,81 @@ public final class ConditionalProfileContextResolver {
         int totalEntries = profile.preciseConditionalEntries().isEmpty() ? profile.conditionalEntries().size() : profile.preciseConditionalEntries().size();
         ConditionalProfileDiagnostics diagnostics = new ConditionalProfileDiagnostics(
                         profile.version(), totalEntries, resolved, unresolved, duplicates, singleFrame, inlined);
-        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics);
+
+        Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeTable = new HashMap<>();
+        VirtualInvokeDiagnostics virtualDiagnostics = resolveVirtualInvokes(profile, descriptorByMethodId, presentDescriptors, typesByDescriptor, virtualInvokeTable);
+        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics, virtualInvokeTable, virtualDiagnostics);
+    }
+
+    /** Resolution statistics for the {@code virtualInvokeProfiles} section. */
+    public record VirtualInvokeDiagnostics(int totalEntries, int resolvedEntries, int unresolvedContextEntries, int duplicateContextEntries,
+                    int noKnownReceiverEntries, long receiverRecords, long droppedReceiverRecords, long receiverEvents, long droppedReceiverEvents) {
+        public String summary() {
+            return String.format("iprof virtualInvokeProfiles: %d entries, %d resolved, %d unresolved-context, %d duplicate-context, %d without image-present receiver; " +
+                            "receiver records %d (%d dropped), receiver events %d (%d dropped)",
+                            totalEntries, resolvedEntries, unresolvedContextEntries, duplicateContextEntries, noKnownReceiverEntries,
+                            receiverRecords, droppedReceiverRecords, receiverEvents, droppedReceiverEvents);
+        }
+    }
+
+    /**
+     * Resolves {@code virtualInvokeProfiles}: the context must be fully present (as for conditional
+     * entries) and each receiver type is mapped through its JVM descriptor to the image type.
+     * Receiver types absent from the image are dropped record by record so that a site keeps its
+     * remaining observed receivers.
+     */
+    private static VirtualInvokeDiagnostics resolveVirtualInvokes(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
+                    Map<String, AnalysisType> typesByDescriptor, Map<List<FrameKey>, Map<AnalysisType, Long>> table) {
+        int resolved = 0;
+        int unresolvedContext = 0;
+        int duplicates = 0;
+        int noReceiver = 0;
+        long records = 0;
+        long droppedRecords = 0;
+        long events = 0;
+        long droppedEvents = 0;
+        for (VirtualInvokeEntry entry : profile.virtualInvokeEntries()) {
+            List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
+            if (key == null) {
+                unresolvedContext++;
+                continue;
+            }
+            Map<AnalysisType, Long> receivers = new HashMap<>();
+            long[] raw = entry.records();
+            for (int i = 0; i < raw.length; i += IprofConditionalParser.VIRTUAL_INVOKE_RECORD_SIZE) {
+                records++;
+                long count = raw[i + 1];
+                events += count;
+                String descriptor = descriptorForTypeId((int) raw[i], profile.typeNamesById());
+                AnalysisType type = descriptor == null ? null : typesByDescriptor.get(descriptor);
+                if (type == null) {
+                    droppedRecords++;
+                    droppedEvents += count;
+                    continue;
+                }
+                receivers.merge(type, count, Long::sum);
+            }
+            if (receivers.isEmpty()) {
+                noReceiver++;
+                continue;
+            }
+            if (table.putIfAbsent(key, Map.copyOf(receivers)) != null) {
+                duplicates++;
+                continue;
+            }
+            resolved++;
+        }
+        return new VirtualInvokeDiagnostics(profile.virtualInvokeEntries().size(), resolved, unresolvedContext, duplicates, noReceiver,
+                        records, droppedRecords, events, droppedEvents);
+    }
+
+    /** Indexes image types by JVM descriptor so profile type names resolve to analysis types. */
+    private static Map<String, AnalysisType> indexUniverseTypes(HostedUniverse universe) {
+        Map<String, AnalysisType> typesByDescriptor = new HashMap<>();
+        for (HostedType type : universe.getTypes()) {
+            typesByDescriptor.putIfAbsent(type.getName(), type.getWrapped());
+        }
+        return typesByDescriptor;
     }
 
     /**

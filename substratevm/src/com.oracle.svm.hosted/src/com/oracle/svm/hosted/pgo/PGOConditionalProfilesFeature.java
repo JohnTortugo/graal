@@ -174,6 +174,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private static void reportResolution(String stage, SimpleConditionalProfilesLookup lookup) {
         // Checkstyle: stop
         System.out.println("[PGO:" + stage + "] " + lookup.diagnostics().summary());
+        if (lookup.virtualInvokeDiagnostics() != null && lookup.virtualInvokeDiagnostics().totalEntries() > 0) {
+            System.out.println("[PGO:" + stage + "] " + lookup.virtualInvokeDiagnostics().summary());
+        }
         // Checkstyle: resume
         if (!lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CONDITIONAL_PROFILES_CATEGORY)) {
             // Checkstyle: stop
@@ -244,6 +247,12 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         System.out.printf("[PGO:%s] %d queries, %d hits (%.1f%%), %d misses; contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused%n",
                         stage, queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
                         lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
+        if (lookup.availableVirtualInvokeContextCount() > 0) {
+            System.out.printf("[PGO:%s] virtual invokes: %d queries, %d hits, %d misses; contexts: %d/%d used; impossible receivers dropped: %d records, %d events%n", stage,
+                            lookup.virtualInvokeHitCount() + lookup.virtualInvokeMissCount(), lookup.virtualInvokeHitCount(), lookup.virtualInvokeMissCount(),
+                            lookup.matchedVirtualInvokeContextCount(), lookup.availableVirtualInvokeContextCount(),
+                            lookup.impossibleReceiverRecords(), lookup.impossibleReceiverEvents());
+        }
         System.out.printf("[PGO:%s] prior comparison by events (agree/flip(injected-prior flips)): %s%n", stage, lookup.priorComparisonSummary());
         if (lookup.filter().isActive()) {
             System.out.printf("[PGO:%s] usefulness filter minEvents=%d minBias=%.2f withheld %d distinct sites: %d queries too few events, %d queries too even%n",
