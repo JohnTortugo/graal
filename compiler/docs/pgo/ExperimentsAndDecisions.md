@@ -295,6 +295,37 @@ restoring injected priors, layout side effects, or noise — has not been isolat
 follow-ups are per-phase profile snapshots, relative rather than absolute thresholds, and shrinkage
 toward the prior instead of a hard cut.
 
+## Second category: receiver-type profiles (consumer-first)
+
+The open-source tree already contains consumers for several further iprof sections, all inert in
+CE because nothing supplies the data: `virtualInvokeProfiles` (receiver-type histograms per indirect
+call) feed the priority inliner's inline-cache construction, and `samplingProfiles` feed call-tree
+hotness, the hot-caller inliner bonuses, hot-callee devirtualization, and duplication prioritization.
+
+Receiver-type profiles were taken first, consumer-first as in the first milestone: the section is
+parsed and resolved, and an external reference profile's receiver histograms were grafted onto the
+CE conditional profile for the fixed workload so the delta isolates the new category. 1,656 of 1,993
+entries resolved and 82% were consumed at indirect call sites.
+
+The stock application path made the image **1.3% slower** (paired, three rounds, same sign). Cause:
+closed-world analysis already devirtualizes every monomorphic call and gives the remaining indirect
+calls an exact type profile with zero not-recorded probability, which is what lets the inliner emit a
+complete type switch with no fallback invoke. The apply path injected a not-recorded probability
+unconditionally, so every profiled site gained a fallback call it did not need; it could also admit
+receiver types the analysis had proved impossible.
+
+Fix: when the static profile is exact, keep it exact — restrict observed receivers to the analysed
+set and do not inject a not-recorded probability. Unobserved analysed types keep an extremely small
+probability rather than zero: inline-cache construction folds a type whose target cannot be resolved
+into the not-recorded probability and only emits a fallback when that is positive, so a zero entry
+would leave a receiver uncovered (one build with exact zeros faulted on a cold path). With the fix
+the same profiles gave −0.18/−0.37/−0.56% in three paired rounds.
+
+Decision: keep the exactness fix (any receiver source, including sampling-derived method profiles,
+passes through the same path), but do not build a CE receiver-type producer now. The ceiling is
+structurally low in a closed world — only polymorphic inline caches can be re-ordered — so the next
+category is sampling-based hotness, which gates far more of the dormant machinery.
+
 ## Validation standard
 
 Each accepted iteration requires:

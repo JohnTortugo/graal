@@ -3,9 +3,10 @@
 This directory documents the experimental conditional-branch profile-guided optimization (PGO)
 producer and consumer implemented in public GraalVM Community Edition Native Image.
 
-The current implementation intentionally covers one profile category only: iprof
-`conditionalProfiles` for `IfNode` branches. Call counts, virtual calls, sampling, monitor,
-`instanceof`, switch, code-layout, and image-heap profiles are outside the current scope.
+The producer covers one profile category: iprof `conditionalProfiles` for `IfNode` branches. The
+consumer additionally accepts `virtualInvokeProfiles` (receiver-type histograms for indirect calls)
+from an external profile. Call counts, sampling, monitor, `instanceof`, switch, code-layout, and
+image-heap profiles are outside the current scope.
 
 > [!WARNING]
 > This implementation is experimental. Precise CE profiles use stage, context, successor signature,

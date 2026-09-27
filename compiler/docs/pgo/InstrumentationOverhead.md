@@ -94,6 +94,8 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 3b. Public mx benchmark validation | done | no robust general win (−0.5% to +0.7%); v2 safety confirmed across unrelated apps; overhead problem exposed |
 | 4a. Per-thread counters | done | parallel overhead 16–21x → 1.15–1.19x; exact counts; smaller instrument images |
 | 4b. Profile usefulness / confidence filter | implemented, opt-in | low-count sites carry most prior contradictions; −1.8% suggestive on the fixed workload; tuning deferred to a separate phase-behaviour investigation |
+| 5. Receiver-type profiles, consumer | done (consumer only) | stock path −1.3% regression traced to lost closed-world exactness; fixed → −0.4%; producer deferred (low ceiling) |
+| 6. Sampling / hotness profiles, consumer | next | unlock hot-caller inliner bonuses, hot-callee devirtualization, duplication prioritization |
 
 Standing caveats: only `IfNode` conditionals are profiled (no switches); the application result is
 same-input specialization until a held-out input is measured; the north-star gap to a full
