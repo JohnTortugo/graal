@@ -96,6 +96,7 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 4b. Profile usefulness / confidence filter | implemented, opt-in | low-count sites carry most prior contradictions; −1.8% suggestive on the fixed workload; tuning deferred to a separate phase-behaviour investigation |
 | 5. Receiver-type profiles, consumer | done (consumer only) | stock path −1.3% regression traced to lost closed-world exactness; fixed → −0.4%; producer deferred (low ceiling) |
 | 6. Sampling / hotness profiles, consumer | done (consumer only) | plumbing neutral by default; external samples too mismatched to evaluate; naive inlining bonus +5% regression; needs a same-build CE sampler |
+| 7. Loop-header profiling + shortened-context fallback | done | two producer/consumer defects fixed; −8.8% on the fixed workload (now −21% vs no-PGO, 16.5% behind commercial PGO); public suites at noise |
 
 Standing caveats: only `IfNode` conditionals are profiled (no switches); the application result is
 same-input specialization until a held-out input is measured; the north-star gap to a full

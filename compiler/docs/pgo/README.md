@@ -95,6 +95,13 @@ reports:
 
 A lookup hit alone is not treated as proof that profile records were applied.
 
+## Context fallback
+
+When a conditional site's full inlining context has no profile entry, the consumer falls back to the
+same branch under progressively shorter contexts (outermost callers dropped). This covers callees that
+the profile changed inlining for. `-H:-PGOContextFallback` disables it; the number of such fallbacks
+is reported per stage.
+
 ## Usefulness filter (opt-in)
 
 Two hosted options let a matched site keep its static probability when the profile says little:

@@ -365,6 +365,36 @@ context-insensitive root approximation differs from the commercial design, and t
 values are unknown. A same-build sampler producing `samplingProfiles` in the CE instrumentation
 image is the prerequisite for an honest measurement and is the next producer candidate.
 
+## Loop headers and profile-induced inlining shapes
+
+Reading the priority inliner's decision for a hot cutoff (a trivial `String.charAt` call left out of
+line in the fixed workload's hottest per-character loop, 7% of run time) exposed two defects.
+
+Producer: the site selector kept one `IfNode` per source position, preferring the copy with default
+probability. After loop transformations a loop header's bytecode branch exists as a peeled guard
+(default probability) and as the in-loop exit condition (compiler-assigned probability). The selector
+kept the guard and dropped the copy carrying the iteration count, so every counted loop read as "runs
+once, never exits". The producer now instruments every physical copy (precise identities keep them
+distinct) and the legacy context entry is the sum over copies that route to the same successor BCIs,
+negated conditions included; rewired copies stay ambiguous.
+
+Consumer: lookups answered only for the exact inlining context. Profiles change inlining, so a callee
+the training build compiled standalone becomes inlined into a caller the profile never saw, and all
+branches of that inlined copy fell back to default probabilities — the loop appeared to iterate twice,
+and the inliner would not spend on its body. The consumer now falls back to the same branch under
+progressively shorter contexts (`-H:PGOContextFallback`, default on), reported separately.
+
+Fixed workload, paired against the previous best image: **−8.8%** (102.9 s vs 112.6 s), query hit
+rate 1.4% → 29%, the `charAt` call inlined. The new producer without the fallback was **+9.8%**:
+correct loop counts alone pull more code into hot roots and then starve the unseen contexts, so the
+two changes are only sound together. Public suites stayed at noise level (scala-doku +0.5%,
+fj-kmeans +1.1%, scrabble −0.8% over three forks, sunflow −0.6%); their shortened-context fallback
+counts were tiny because their training and final inlining shapes already agreed. Instrumentation
+overhead rose modestly with the extra sites (fj-kmeans 1.15x → 1.29x).
+
+Versus the no-PGO baseline the fixed workload is now −21%, and 16.5% behind the commercial PGO
+result (was 25%).
+
 ## Validation standard
 
 Each accepted iteration requires:

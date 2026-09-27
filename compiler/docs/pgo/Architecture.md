@@ -89,6 +89,15 @@ priority inlining decisions are made.
 Both aligned instrumentation and the consumer construct full contexts with
 `PGOApplyProfilesPhase.createPointContext`.
 
+### Site selection
+
+Every `IfNode` with a source position is instrumented, except branches guarding implicit exceptions
+and positions with unknown BCIs. Multiple physical copies of one bytecode branch (loop guard and
+in-loop exit, peeled iterations) each get their own counter and precise identity; the legacy
+context entry is their sum when they route to the same successor BCIs. Selecting a single
+representative per position, as the consumer-side helper does, would drop the copy that carries a
+loop's iteration count.
+
 ### Runtime counters
 
 `DynamicCounterNode` cannot be used because the Native Image AArch64 backend does not implement its
