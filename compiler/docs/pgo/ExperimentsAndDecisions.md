@@ -326,6 +326,45 @@ passes through the same path), but do not build a CE receiver-type producer now.
 structurally low in a closed world — only polymorphic inline caches can be re-ordered — so the next
 category is sampling-based hotness, which gates far more of the dormant machinery.
 
+## Third category: sampling-based hotness (consumer-first)
+
+The tree's remaining dormant machinery is gated on hotness: a per-compilation-root calling-context
+cursor for the priority inliner (cutoff hotness, sampled callee profiles), and a per-graph
+`GlobalProfileProvider` (hot caller, self time) consulted by hot-callee devirtualization, profile
+application while expanding, and duplication budgets. The per-context compilation-root selection
+that drives this in the commercial implementation is not in the tree, so the consumer builds a
+method-rooted approximation: every frame of every sampled stack roots a suffix, giving each method a
+merged calling-context tree below it.
+
+External sampling profiles are structurally hard to consume: 98% of the reference profile's samples
+passed through two hidden-lambda thread-entry frames that cannot exist under the same name in
+another build. Resolving stacks from the leaf outward and truncating at the first unresolvable
+frame retained 99.4% of samples (614 of 642 stacks truncated, 2 complete).
+
+Measured on the fixed workload against the conditional-only image (paired, three rounds each; a
+first run was discarded because image builds were running concurrently on the host):
+
+| Configuration | Mean paired delta |
+|---|---:|
+| all hotness mechanisms on, bonuses 0 | +0.06% / +0.70% (two runs) |
+| without sampled callee method profiles | +1.05% |
+| without hot-caller gating | +0.02% |
+| without self time | +1.24% |
+| everything gated off (inliner swap only) | −0.43% |
+| hot-inlining bonus 1 | **+5.43%** |
+| hot-inlining bonus 3 | +4.84% |
+| expansion bonus 1 + inlining bonus 1 | +1.41% |
+
+Hot-caller gating, self-time duplication budgets and sampled callee profiles are indistinguishable
+from noise here; the hot-inlining bonus, which multiplies a callee's local benefit by
+`1 + bonus × hotness`, is clearly harmful with these inputs.
+
+Decision: the plumbing is committed, neutral by default (bonuses 0) and fully option-gated, but this
+category cannot be evaluated consumer-first. Cross-build samples lose their outer contexts, the
+context-insensitive root approximation differs from the commercial design, and the tuned bonus
+values are unknown. A same-build sampler producing `samplingProfiles` in the CE instrumentation
+image is the prerequisite for an honest measurement and is the next producer candidate.
+
 ## Validation standard
 
 Each accepted iteration requires:
