@@ -41,6 +41,7 @@ import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
 import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 
 import jdk.graal.compiler.nodes.ProfileData.ProfileSource;
+import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.JavaType;
 
@@ -63,6 +64,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     /** The profile category this consumer supports; must match the phase's constant. */
     public static final String CONDITIONAL_PROFILES_CATEGORY = "conditionalProfiles";
     public static final String VIRTUAL_INVOKE_PROFILES_CATEGORY = "virtualInvokeProfiles";
+    public static final String SAMPLING_PROFILES_CATEGORY = "samplingProfiles";
 
     /**
      * A single canonical frame of a calling context: a JVM-descriptor method identity and a
@@ -92,6 +94,8 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final Map<List<FrameKey>, long[]> conditionalData;
     private final Map<PreciseKey, PreciseProfile> preciseConditionalData;
     private final Map<List<FrameKey>, List<PreciseKey>> preciseSitesByContext;
+    private final Map<NodeSourcePosition, Long> sampleCounts;
+    private final ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics;
     private final Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData;
     private final ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
     private final AtomicLong virtualInvokeHitCount = new AtomicLong();
@@ -153,12 +157,21 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics) {
-        this(conditionalData, preciseConditionalData, diagnostics, Map.of(), null);
+        this(conditionalData, preciseConditionalData, diagnostics, Map.of(), null, Map.of(), null);
     }
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
                     ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
+        this(conditionalData, preciseConditionalData, diagnostics, virtualInvokeData, virtualInvokeDiagnostics, Map.of(), null);
+    }
+
+    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
+                    ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
+                    ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,
+                    Map<NodeSourcePosition, Long> sampleCounts, ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics) {
+        this.sampleCounts = Map.copyOf(sampleCounts);
+        this.samplingDiagnostics = samplingDiagnostics;
         this.virtualInvokeData = Map.copyOf(virtualInvokeData);
         this.virtualInvokeDiagnostics = virtualInvokeDiagnostics;
         this.conditionalData = Map.copyOf(conditionalData);
@@ -292,6 +305,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         }
         if (VIRTUAL_INVOKE_PROFILES_CATEGORY.equals(category)) {
             return !virtualInvokeData.isEmpty();
+        }
+        if (SAMPLING_PROFILES_CATEGORY.equals(category)) {
+            return !sampleCounts.isEmpty();
         }
         return CONDITIONAL_PROFILES_CATEGORY.equals(category) && (!conditionalData.isEmpty() || !preciseConditionalData.isEmpty());
     }
@@ -477,6 +493,15 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         virtualInvokeHitCount.incrementAndGet();
         matchedVirtualInvokeContexts.add(key);
         return Optional.of(receivers);
+    }
+
+    @Override
+    public Optional<Map<NodeSourcePosition, Long>> getSampleCounts() {
+        return cleared || sampleCounts.isEmpty() ? Optional.empty() : Optional.of(sampleCounts);
+    }
+
+    public ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics() {
+        return samplingDiagnostics;
     }
 
     public ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics() {

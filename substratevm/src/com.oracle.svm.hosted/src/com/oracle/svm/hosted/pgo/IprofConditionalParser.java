@@ -74,6 +74,7 @@ public final class IprofConditionalParser {
     private static final String KEY_CONDITIONAL_PROFILES = "conditionalProfiles";
     private static final String KEY_PRECISE_CONDITIONAL_PROFILES = "ceConditionalProfilesV2";
     private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
+    private static final String KEY_SAMPLING_PROFILES = "samplingProfiles";
     private static final String KEY_STAGE = "stage";
     private static final String KEY_SUCCESSORS = "successors";
     private static final String KEY_CONDITION_KIND = "conditionKind";
@@ -122,6 +123,13 @@ public final class IprofConditionalParser {
     public record VirtualInvokeEntry(List<ContextFrame> context, long[] records) {
     }
 
+    /**
+     * One parsed {@code samplingProfiles} entry: a sampled call stack (innermost frame first, the
+     * innermost BCI being the sampled position) and how often it was observed.
+     */
+    public record SamplingEntry(List<ContextFrame> context, long count) {
+    }
+
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
@@ -133,21 +141,23 @@ public final class IprofConditionalParser {
         private final List<ConditionalEntry> conditionalEntries;
         private final List<PreciseConditionalEntry> preciseConditionalEntries;
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
+        private final List<SamplingEntry> samplingEntries;
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries) {
-            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList());
+            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList(), Collections.emptyList());
         }
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries,
-                        List<VirtualInvokeEntry> virtualInvokeEntries) {
+                        List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
             this.conditionalEntries = Collections.unmodifiableList(conditionalEntries);
             this.preciseConditionalEntries = Collections.unmodifiableList(preciseConditionalEntries);
             this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
+            this.samplingEntries = Collections.unmodifiableList(samplingEntries);
         }
 
         public String version() {
@@ -172,6 +182,10 @@ public final class IprofConditionalParser {
 
         public List<VirtualInvokeEntry> virtualInvokeEntries() {
             return virtualInvokeEntries;
+        }
+
+        public List<SamplingEntry> samplingEntries() {
+            return samplingEntries;
         }
     }
 
@@ -210,8 +224,9 @@ public final class IprofConditionalParser {
         List<ConditionalEntry> conditionalEntries = optionalConditionalProfiles(top);
         List<PreciseConditionalEntry> preciseConditionalEntries = optionalPreciseConditionalProfiles(top);
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
+        List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, virtualInvokeEntries);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, virtualInvokeEntries, samplingEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -352,6 +367,34 @@ public final class IprofConditionalParser {
     }
 
     public static final int VIRTUAL_INVOKE_RECORD_SIZE = 2;
+
+    /** Returns the parsed {@code samplingProfiles} entries; each has exactly one record, the sample count. */
+    private static List<SamplingEntry> optionalSamplingProfiles(EconomicMap<String, Object> top) {
+        Object value = top.get(KEY_SAMPLING_PROFILES);
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + KEY_SAMPLING_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> profiles = (List<Object>) value;
+        List<SamplingEntry> result = new ArrayList<>(profiles.size());
+        for (Object element : profiles) {
+            EconomicMap<String, Object> entry = asObject(element, KEY_SAMPLING_PROFILES);
+            String ctx = requireString(entry, KEY_CTX);
+            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            if (rawRecords.size() != 1) {
+                throw new IprofFormatException("Sampling records for context '" + ctx + "' must contain exactly one count");
+            }
+            long count = asLong(rawRecords.get(0), KEY_RECORDS);
+            if (count < 0) {
+                throw new IprofFormatException("Negative sample count for context '" + ctx + "'");
+            }
+            result.add(new SamplingEntry(parseContext(ctx), count));
+        }
+        return result;
+    }
 
     private static List<ConditionalEntry> parseConditionalProfiles(List<Object> conditionalProfiles) {
         List<ConditionalEntry> result = new ArrayList<>(conditionalProfiles.size());

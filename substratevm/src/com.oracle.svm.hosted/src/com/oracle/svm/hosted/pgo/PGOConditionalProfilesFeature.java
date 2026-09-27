@@ -37,6 +37,7 @@ import org.graalvm.nativeimage.ImageSingletons;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.FeatureImpl;
+import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
@@ -45,7 +46,10 @@ import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileFilter;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
+import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
+import com.oracle.svm.hosted.pgo.profiles.SamplingInliningProvider;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup;
+import com.oracle.svm.hosted.phases.priorityinline.SubstratePriorityInliningPhase;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
 import com.oracle.svm.shared.option.HostedOptionKey;
@@ -100,6 +104,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private ParsedProfile parsedEarlyProfile;
     private ParsedProfile parsedPostInliningProfile;
     private SimpleConditionalProfilesLookup earlyLookup;
+    private SamplingHotness samplingHotness;
     private SimpleConditionalProfilesLookup postInliningLookup;
     private HostedUniverse hostedUniverse;
 
@@ -161,6 +166,12 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             earlyLookup.setFilter(filter);
             ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
             reportResolution("early", earlyLookup);
+            if (earlyLookup.getSampleCounts().isPresent()) {
+                samplingHotness = new SamplingHotness(earlyLookup.getSampleCounts().get());
+                // Checkstyle: stop
+                System.out.printf("[PGO:early] sampling hotness: %d samples over %d sampled methods%n", samplingHotness.totalSamples(), samplingHotness.sampledMethodCount());
+                // Checkstyle: resume
+            }
         }
         if (parsedPostInliningProfile != null) {
             postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
@@ -177,6 +188,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         if (lookup.virtualInvokeDiagnostics() != null && lookup.virtualInvokeDiagnostics().totalEntries() > 0) {
             System.out.println("[PGO:" + stage + "] " + lookup.virtualInvokeDiagnostics().summary());
         }
+        if (lookup.samplingDiagnostics() != null && lookup.samplingDiagnostics().totalEntries() > 0) {
+            System.out.println("[PGO:" + stage + "] " + lookup.samplingDiagnostics().summary());
+        }
         // Checkstyle: resume
         if (!lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CONDITIONAL_PROFILES_CATEGORY)) {
             // Checkstyle: stop
@@ -192,8 +206,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             return;
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
+        if (samplingHotness != null) {
+            installSamplingInliner(highTier);
+        }
         if (earlyLookup != null) {
-            ApplyConditionalProfilesPhase earlyPhase = new ApplyConditionalProfilesPhase(hostedUniverse, earlyLookup, Stage.ROOT_PRE_INLINE);
+            ApplyConditionalProfilesPhase earlyPhase = new ApplyConditionalProfilesPhase(hostedUniverse, earlyLookup, Stage.ROOT_PRE_INLINE, samplingHotness);
             ListIterator<BasePhase<? super HighTierContext>> inliner = highTier.findPhase(AbstractInliningPhase.class);
             if (inliner != null) {
                 inliner.previous();
@@ -204,8 +221,21 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         if (postInliningLookup != null) {
             /* The post-inlining producer is appended at this same hosted HighTier boundary. */
-            highTier.appendPhase(new ApplyConditionalProfilesPhase(hostedUniverse, postInliningLookup, Stage.POST_HIGH_TIER));
+            highTier.appendPhase(new ApplyConditionalProfilesPhase(hostedUniverse, postInliningLookup, Stage.POST_HIGH_TIER, null));
         }
+    }
+
+    /**
+     * Replaces the priority inliner with a copy whose inlining provider knows sampled hotness. The
+     * copy constructor exists for exactly this purpose; the phase keeps its position in the suite.
+     */
+    private void installSamplingInliner(PhaseSuite<HighTierContext> highTier) {
+        ListIterator<BasePhase<? super HighTierContext>> position = highTier.findPhase(SubstratePriorityInliningPhase.class);
+        if (position == null) {
+            return;
+        }
+        SubstratePriorityInliningPhase current = (SubstratePriorityInliningPhase) position.previous();
+        position.set(new SubstratePriorityInliningPhase(current, new SamplingInliningProvider(hostedUniverse, samplingHotness), earlyLookup));
     }
 
     /** Creates the single-use PGO subphase separately for every compilation graph. */
@@ -213,15 +243,21 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         private final HostedUniverse universe;
         private final SimpleConditionalProfilesLookup lookup;
         private final Stage stage;
+        private final SamplingHotness hotness;
 
-        private ApplyConditionalProfilesPhase(HostedUniverse universe, SimpleConditionalProfilesLookup lookup, Stage stage) {
+        private ApplyConditionalProfilesPhase(HostedUniverse universe, SimpleConditionalProfilesLookup lookup, Stage stage, SamplingHotness hotness) {
             this.universe = universe;
             this.lookup = lookup;
             this.stage = stage;
+            this.hotness = hotness;
         }
 
         @Override
         protected void run(StructuredGraph graph, HighTierContext context) {
+            if (hotness != null && graph.method() instanceof HostedMethod method) {
+                /* Runs before the inliner and duplication, which read the provider from the root graph. */
+                graph.setGlobalProfileProvider(hotness.providerFor(method));
+            }
             PGOApplyProfilesPhase.createContextInsensitive(universe, lookup, stage).apply(graph, context);
         }
     }
@@ -230,6 +266,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     public void afterCompilation(AfterCompilationAccess access) {
         reportApplication("early", earlyLookup);
         reportApplication("post-inlining", postInliningLookup);
+        if (samplingHotness != null) {
+            // Checkstyle: stop
+            System.out.printf("[PGO:early] sampling hotness: %d hot compilation roots, %d cold%n", samplingHotness.hotCompilationUnits(), samplingHotness.coldCompilationUnits());
+            // Checkstyle: resume
+        }
     }
 
     private static void reportApplication(String stage, SimpleConditionalProfilesLookup lookup) {

@@ -27,11 +27,13 @@ package com.oracle.svm.hosted.pgo.profiles;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import com.oracle.svm.hosted.meta.HostedMethod;
+import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
@@ -41,6 +43,7 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.PreciseConditionalEntry;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.SamplingEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
@@ -48,6 +51,7 @@ import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.Precis
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.PreciseProfile;
 
 import jdk.vm.ci.meta.JavaType;
+import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.Signature;
 
@@ -188,11 +192,19 @@ public final class ConditionalProfileContextResolver {
      * @return a fully constructed, immutable lookup.
      */
     public static SimpleConditionalProfilesLookup resolve(ParsedProfile profile, HostedUniverse universe) {
-        return buildLookup(profile, indexUniverseMethods(universe).keySet(), indexUniverseTypes(universe));
+        return buildLookup(profile, indexUniverseMethods(universe), indexUniverseTypes(universe));
     }
 
     static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
         return buildLookup(profile, presentDescriptors, Map.of());
+    }
+
+    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
+        Map<String, HostedMethod> methods = new HashMap<>();
+        for (String descriptor : presentDescriptors) {
+            methods.put(descriptor, null);
+        }
+        return buildLookup(profile, methods, typesByDescriptor);
     }
 
     /**
@@ -204,7 +216,8 @@ public final class ConditionalProfileContextResolver {
      * @param presentDescriptors canonical descriptors (see {@link #methodDescriptor}) of methods
      *            available in the image.
      */
-    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
+    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
+        Set<String> presentDescriptors = methodsByDescriptor.keySet();
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
         Map<List<FrameKey>, long[]> legacyTable = new HashMap<>();
         for (ConditionalEntry entry : profile.conditionalEntries()) {
@@ -274,7 +287,9 @@ public final class ConditionalProfileContextResolver {
 
         Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeTable = new HashMap<>();
         VirtualInvokeDiagnostics virtualDiagnostics = resolveVirtualInvokes(profile, descriptorByMethodId, presentDescriptors, typesByDescriptor, virtualInvokeTable);
-        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics, virtualInvokeTable, virtualDiagnostics);
+        Map<NodeSourcePosition, Long> sampleCounts = new HashMap<>();
+        SamplingDiagnostics samplingDiagnostics = resolveSamples(profile, descriptorByMethodId, methodsByDescriptor, sampleCounts);
+        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics);
     }
 
     /** Resolution statistics for the {@code virtualInvokeProfiles} section. */
@@ -337,6 +352,73 @@ public final class ConditionalProfileContextResolver {
         }
         return new VirtualInvokeDiagnostics(profile.virtualInvokeEntries().size(), resolved, unresolvedContext, duplicates, noReceiver,
                         records, droppedRecords, events, droppedEvents);
+    }
+
+    /** Resolution statistics for the {@code samplingProfiles} section. */
+    public record SamplingDiagnostics(int totalEntries, int resolvedEntries, int truncatedEntries, int unresolvedEntries, long samples, long droppedSamples,
+                    int distinctMethods, Map<String, Long> missingFrameSamples) {
+        public String summary() {
+            StringBuilder missing = new StringBuilder();
+            missingFrameSamples.entrySet().stream().sorted((a, b) -> Long.compare(b.getValue(), a.getValue())).limit(8)
+                            .forEach(e -> missing.append(missing.isEmpty() ? "" : ", ").append(e.getKey()).append('=').append(e.getValue()));
+            return String.format("iprof samplingProfiles: %d stacks, %d fully resolved, %d truncated at an unresolvable outer frame, %d unresolved; " +
+                            "samples %d (%d dropped); %d distinct methods; top unresolvable frames by samples: %s",
+                            totalEntries, resolvedEntries, truncatedEntries, unresolvedEntries, samples, droppedSamples, distinctMethods, missing);
+        }
+    }
+
+    /**
+     * Resolves sampled stacks into the {@link NodeSourcePosition} chains {@code PrefixTree} expects:
+     * the position itself is the outermost frame and the caller chain walks inward to the sampled
+     * leaf.
+     *
+     * Frames are resolved from the leaf outward and the stack is truncated at the first frame whose
+     * method is absent from the image. Profiles recorded on another build contain synthetic frames
+     * (hidden lambda classes, generated factory methods, implementation-specific helpers) that can
+     * never match; keeping the innermost resolvable segment preserves leaf hotness and the contexts
+     * below the mismatch, which is what a method-rooted view consumes. A stack whose leaf itself is
+     * unresolvable is dropped.
+     */
+    private static SamplingDiagnostics resolveSamples(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Map<String, HostedMethod> methodsByDescriptor,
+                    Map<NodeSourcePosition, Long> sampleCounts) {
+        int resolved = 0;
+        int truncated = 0;
+        int unresolved = 0;
+        long samples = 0;
+        long dropped = 0;
+        Set<AnalysisMethod> methods = new HashSet<>();
+        Map<String, Long> missing = new HashMap<>();
+        for (SamplingEntry entry : profile.samplingEntries()) {
+            samples += entry.count();
+            NodeSourcePosition chain = null;
+            boolean complete = true;
+            for (ContextFrame frame : entry.context()) {
+                String descriptor = descriptorByMethodId.get(frame.methodId());
+                HostedMethod method = descriptor == null ? null : methodsByDescriptor.get(descriptor);
+                if (method == null) {
+                    missing.merge(descriptor == null ? "<method id " + frame.methodId() + ">" : descriptor, entry.count(), Long::sum);
+                    complete = false;
+                    break;
+                }
+                /* Innermost first in the file, so each frame becomes the new outermost position. */
+                chain = new NodeSourcePosition(chain, method.getWrapped(), frame.bci());
+            }
+            if (chain == null) {
+                unresolved++;
+                dropped += entry.count();
+                continue;
+            }
+            for (NodeSourcePosition position : chain) {
+                methods.add((AnalysisMethod) position.getMethod());
+            }
+            sampleCounts.merge(chain, entry.count(), Long::sum);
+            if (complete) {
+                resolved++;
+            } else {
+                truncated++;
+            }
+        }
+        return new SamplingDiagnostics(profile.samplingEntries().size(), resolved, truncated, unresolved, samples, dropped, methods.size(), missing);
     }
 
     /** Indexes image types by JVM descriptor so profile type names resolve to analysis types. */
