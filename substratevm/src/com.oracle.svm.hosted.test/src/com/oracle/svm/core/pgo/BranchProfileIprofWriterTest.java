@@ -68,6 +68,33 @@ public class BranchProfileIprofWriterTest {
         Assert.assertEquals(4, statistics.recordedEvents());
     }
 
+    /* A loop header's peeled guard and its in-loop exit are two physical copies of one bytecode branch. */
+    @Test
+    public void sameSuccessorPhysicalCopiesSumIntoOneLegacyEntry() throws Exception {
+        String[] methods = {"Lexample/LoopTest;.scan()V"};
+        int[] bcis = {27};
+        BranchProfileCounter guard = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 71, 30, "IntegerLessThanNode", 5L, 0);
+        BranchProfileCounter loopExit = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 71, 30, "IntegerLessThanNode", 6L, 1);
+        BranchProfileCounter negated = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 30, 71, "IntegerLessThanNode", 7L, 0);
+        BranchProfileRecorder.increment(guard.getCounterIndex(), false);           // entered once (71 = exit, 30 = body)
+        for (int i = 0; i < 9; i++) {
+            BranchProfileRecorder.increment(loopExit.getCounterIndex(), false);  // 9 more iterations
+        }
+        BranchProfileRecorder.increment(loopExit.getCounterIndex(), true);       // 1 exit
+        BranchProfileRecorder.increment(negated.getCounterIndex(), true);        // swapped successors: true = body
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(guard, loopExit, negated));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.conditionalProfiles());
+        Assert.assertEquals(3, statistics.preciseConditionalProfiles());
+        long[] records = parsed.conditionalEntries().getFirst().records();
+        java.util.Map<Long, Long> countByBci = java.util.Map.of(records[0], records[2], records[3], records[5]);
+        Assert.assertEquals(Long.valueOf(1), countByBci.get(71L));
+        Assert.assertEquals(Long.valueOf(11), countByBci.get(30L));
+    }
+
     @Test
     public void conflictingPhysicalSitesRemainDistinctAndAreOmittedFromLegacyOutput() throws Exception {
         String[] methods = {"Lexample/CollisionTest;.branch()V"};

@@ -27,6 +27,7 @@ package com.oracle.svm.hosted.pgo.profiles;
 import java.io.IOException;
 import java.io.StringReader;
 import java.lang.reflect.Proxy;
+import java.util.Optional;
 import java.util.Set;
 
 import org.junit.Assert;
@@ -36,6 +37,8 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
+
+import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup.ProfiledValue;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.JavaType;
@@ -227,9 +230,13 @@ public class ConditionalProfileContextResolverTest {
 
     // --- applied hit/miss counters --------------------------------------------------------------
 
+    /*
+     * Two physical copies of one bytecode branch (same successor BCIs, e.g. a loop guard and its
+     * in-loop exit) share a summed legacy entry, and a query from another stage may use it.
+     */
     @Test
-    public void ambiguousLegacyContextDoesNotFallback() throws IOException {
-        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,10,53,1,1]}";
+    public void sameSuccessorDuplicateSitesFallBackToSummedLegacy() throws IOException {
+        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,11,53,1,11]}";
         String first = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
                         "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}";
         String second = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
@@ -240,8 +247,47 @@ public class ConditionalProfileContextResolverTest {
         BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
         ConditionalProfileSiteDescriptor earlySite = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
 
+        Optional<ProfiledValue<long[]>> result = lookup.getConditionalProfile(context, earlySite);
+        Assert.assertTrue(result.isPresent());
+        Assert.assertArrayEquals(new long[]{20, 0, 11, 53, 1, 11}, result.get().value());
+        Assert.assertEquals(1, lookup.preciseMissDiagnostics().unambiguousFallback());
+    }
+
+    /* Copies routed to different successors are a different branch; the producer emits no legacy entry, so nothing falls back. */
+    @Test
+    public void rewiredDuplicateSitesWithoutLegacyEntryDoNotFallback() throws IOException {
+        String first = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,53]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}";
+        String second = "{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"22263:9\",\"successors\":[20,60]," +
+                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"2a\",\"occurrence\":0,\"records\":[20,0,1,60,1,10]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"ceConditionalProfilesV2\":[" + first + ',' + second + "]}";
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(
+                        new IprofConditionalParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
+        ConditionalProfileSiteDescriptor earlySite = new ConditionalProfileSiteDescriptor(Stage.ROOT_PRE_INLINE, java.util.List.of(20, 53), "IntegerEqualsNode", 42L, 0);
+
         Assert.assertTrue(lookup.getConditionalProfile(context, earlySite).isEmpty());
         Assert.assertEquals(0, lookup.preciseMissDiagnostics().unambiguousFallback());
+    }
+
+    /* A branch queried under an inlining chain the profile never saw falls back to the branch's shorter-context entry. */
+    @Test
+    public void unseenInliningContextFallsBackToShorterContext() throws IOException {
+        String legacy = "{\"ctx\":\"22263:9\",\"records\":[20,0,7,53,1,3]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + legacy + "],\"ceConditionalProfilesV2\":[]}";
+        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(
+                        new IprofConditionalParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        BytecodePosition caller = new BytecodePosition(null, mockBarMethod(), 40);
+        BytecodePosition inlined = new BytecodePosition(caller, mockBarMethod(), 9);
+
+        Optional<ProfiledValue<long[]>> result = lookup.getConditionalProfile(inlined);
+        Assert.assertTrue(result.isPresent());
+        Assert.assertArrayEquals(new long[]{20, 0, 7, 53, 1, 3}, result.get().value());
+        Assert.assertEquals(1, lookup.contextFallbackCount());
+        Assert.assertEquals(1, lookup.contextFallbackDroppedFrames());
+
+        lookup.setContextFallback(false);
+        Assert.assertTrue(lookup.getConditionalProfile(inlined).isEmpty());
     }
 
     @Test

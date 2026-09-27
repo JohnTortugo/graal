@@ -79,6 +79,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         @Option(help = "Consume conditional branch profiles at the end of hosted HighTier, matching the post-inlining producer stage.")//
         public static final HostedOptionKey<String> ConditionalProfilesPostInliningUse = new ProfilePathOption();
 
+        @Option(help = "When a conditional site's full inlining context has no profile, fall back to the profile of the same branch under a shorter context (outermost callers dropped).")//
+        public static final HostedOptionKey<Boolean> PGOContextFallback = new HostedOptionKey<>(true);
+
         @Option(help = "Ignore matched conditional profiles with fewer than this many recorded successor events; the site keeps its static probability. 0 disables.")//
         public static final HostedOptionKey<Long> PGOConditionalMinEvents = new HostedOptionKey<>(0L);
 
@@ -164,6 +167,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         if (parsedEarlyProfile != null && !ImageSingletons.contains(PGOProfilesLookup.class)) {
             earlyLookup = ConditionalProfileContextResolver.resolve(parsedEarlyProfile, hostedUniverse);
             earlyLookup.setFilter(filter);
+            earlyLookup.setContextFallback(Options.PGOContextFallback.getValue());
             ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
             reportResolution("early", earlyLookup);
             if (earlyLookup.getSampleCounts().isPresent()) {
@@ -176,6 +180,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         if (parsedPostInliningProfile != null) {
             postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
             postInliningLookup.setFilter(filter);
+            postInliningLookup.setContextFallback(Options.PGOContextFallback.getValue());
             reportResolution("post-inlining", postInliningLookup);
         }
         parsedEarlyProfile = null;
@@ -301,8 +306,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         if (lookup.usesPreciseProfiles()) {
             SimpleConditionalProfilesLookup.PreciseMissDiagnostics precise = lookup.preciseMissDiagnostics();
-            System.out.printf("[PGO:%s] precise misses by first mismatch: context=%d, stage=%d, successors=%d, condition-kind=%d, occurrence=%d; matched fingerprint drift=%d, unambiguous legacy fallback=%d%n",
-                            stage, precise.context(), precise.stage(), precise.successors(), precise.conditionKind(), precise.occurrence(), precise.fingerprintDrift(), precise.unambiguousFallback());
+            System.out.printf("[PGO:%s] precise misses by first mismatch: context=%d, stage=%d, successors=%d, condition-kind=%d, occurrence=%d; matched fingerprint drift=%d, unambiguous legacy fallback=%d, shortened-context fallback=%d (avg %.1f frames dropped)%n",
+                            stage, precise.context(), precise.stage(), precise.successors(), precise.conditionKind(), precise.occurrence(), precise.fingerprintDrift(), precise.unambiguousFallback(),
+                            lookup.contextFallbackCount(), lookup.contextFallbackCount() == 0 ? 0.0 : (double) lookup.contextFallbackDroppedFrames() / lookup.contextFallbackCount());
         }
         // Checkstyle: resume
         if (PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue()) {

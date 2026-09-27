@@ -93,6 +93,12 @@ public final class BranchProfileIprofWriter {
     }
 
     /** Legacy output is safe only when one context identifies exactly one precise branch site. */
+    /**
+     * A legacy context-only entry describes the bytecode branch, so it is the sum over every physical
+     * copy of that branch: a loop header's peeled guard plus its in-loop exit condition, or a peeled
+     * iteration plus the loop body. Copies that route to different successor BCIs are not the same
+     * branch anymore (the compiler rewired them); such contexts stay ambiguous and get no legacy entry.
+     */
     private static Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> unambiguousLegacySites(Map<PreciseSiteKey, PreciseSiteData> preciseSites) {
         Map<ContextKey, List<Map.Entry<PreciseSiteKey, PreciseSiteData>>> byContext = new HashMap<>();
         for (Map.Entry<PreciseSiteKey, PreciseSiteData> entry : preciseSites.entrySet()) {
@@ -100,8 +106,27 @@ public final class BranchProfileIprofWriter {
         }
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> result = new TreeMap<>(CONTEXT_COMPARATOR);
         byContext.forEach((context, entries) -> {
+            PreciseSiteKey first = entries.getFirst().getKey();
+            long trueCount = 0;
+            long falseCount = 0;
+            for (Map.Entry<PreciseSiteKey, PreciseSiteData> entry : entries) {
+                PreciseSiteKey key = entry.getKey();
+                long[] counts = entry.getValue().counts();
+                if (key.trueSuccessorBci == first.trueSuccessorBci && key.falseSuccessorBci == first.falseSuccessorBci) {
+                    trueCount += counts[0];
+                    falseCount += counts[1];
+                } else if (key.trueSuccessorBci == first.falseSuccessorBci && key.falseSuccessorBci == first.trueSuccessorBci) {
+                    /* Same branch with a negated condition: successors swapped. */
+                    trueCount += counts[1];
+                    falseCount += counts[0];
+                } else {
+                    return;
+                }
+            }
             if (entries.size() == 1) {
                 result.put(context, entries.getFirst());
+            } else {
+                result.put(context, Map.entry(first, new PreciseSiteData(entries.getFirst().getValue().conditionFingerprint(), new long[]{trueCount, falseCount})));
             }
         });
         return result;

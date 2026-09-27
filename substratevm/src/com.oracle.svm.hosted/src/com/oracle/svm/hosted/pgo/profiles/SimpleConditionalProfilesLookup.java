@@ -125,6 +125,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final AtomicLong preciseOccurrenceMissCount = new AtomicLong();
     private final AtomicLong preciseFingerprintDriftCount = new AtomicLong();
     private final AtomicLong preciseUnambiguousFallbackCount = new AtomicLong();
+    private final AtomicLong contextFallbackCount = new AtomicLong();
+    private final AtomicLong contextFallbackDroppedFrames = new AtomicLong();
+    private volatile boolean contextFallback = true;
     private final AtomicLong filteredFewEventsCount = new AtomicLong();
     private final AtomicLong filteredEvenCount = new AtomicLong();
     /** Distinct matched sites withheld by the usefulness filter. */
@@ -184,6 +187,18 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         this.preciseSitesByContext = Map.copyOf(byContext);
         this.preferPrecise = !preciseConditionalData.isEmpty();
         this.diagnostics = diagnostics;
+    }
+
+    public void setContextFallback(boolean enabled) {
+        this.contextFallback = enabled;
+    }
+
+    public long contextFallbackCount() {
+        return contextFallbackCount.get();
+    }
+
+    public long contextFallbackDroppedFrames() {
+        return contextFallbackDroppedFrames.get();
     }
 
     public void setFilter(ConditionalProfileFilter newFilter) {
@@ -324,6 +339,13 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         }
         Object queryKey = rawProfileKey(callingContext, site);
         Object key = selectProfileKey(queryKey);
+        boolean shortened = false;
+        if (key instanceof ShortenedKey shortenedKey) {
+            key = shortenedKey.context();
+            shortened = true;
+            contextFallbackCount.incrementAndGet();
+            contextFallbackDroppedFrames.addAndGet(shortenedKey.droppedFrames());
+        }
         PreciseProfile preciseProfile = key instanceof PreciseKey preciseKey ? preciseConditionalData.get(preciseKey) : null;
         long[] records = preciseProfile != null ? preciseProfile.records() : conditionalData.get(key);
         if (records == null) {
@@ -334,7 +356,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
             return Optional.empty();
         }
         boolean exactPreciseMatch = queryKey.equals(key);
-        if (!exactPreciseMatch && queryKey instanceof PreciseKey) {
+        if (!exactPreciseMatch && !shortened && queryKey instanceof PreciseKey) {
             preciseUnambiguousFallbackCount.incrementAndGet();
         }
         if (exactPreciseMatch && preciseProfile != null && site != null && preciseProfile.conditionFingerprint() != site.conditionFingerprint()) {
@@ -408,6 +430,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
             return;
         }
         Object key = selectProfileKey(rawProfileKey(callingContext, site));
+        if (key instanceof ShortenedKey shortenedKey) {
+            key = shortenedKey.context();
+        }
         boolean present = key instanceof PreciseKey preciseKey ? preciseConditionalData.containsKey(preciseKey) : conditionalData.containsKey(key);
         if (!present) {
             return;
@@ -428,16 +453,48 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         return context;
     }
 
-    /** Selects exact v2 first, then a legacy context only when it maps to one precise site. */
+    /**
+     * Selects exact v2 first, then the legacy entry for the full context, then legacy entries for
+     * progressively shorter contexts (outermost callers dropped) when enabled. A shortened context
+     * is the same bytecode branch observed under a different or absent inlining chain, e.g. a callee
+     * the profile saw compiled standalone that the profiled build now inlines into a new caller.
+     */
     private Object selectProfileKey(Object queryKey) {
         if (!(queryKey instanceof PreciseKey preciseQuery) || preciseConditionalData.containsKey(preciseQuery)) {
+            if (queryKey instanceof List<?> context && !conditionalData.containsKey(context)) {
+                Object shortened = shortenedLegacyKey(asFrames(context));
+                return shortened == null ? queryKey : shortened;
+            }
             return queryKey;
         }
-        List<PreciseKey> contextSites = preciseSitesByContext.get(preciseQuery.context());
-        if (contextSites != null && contextSites.size() == 1 && conditionalData.containsKey(preciseQuery.context())) {
-            return contextSites.getFirst();
+        if (conditionalData.containsKey(preciseQuery.context())) {
+            /* The legacy entry is the producer's sum over all same-branch physical copies at this context. */
+            return preciseQuery.context();
         }
-        return queryKey;
+        Object shortened = shortenedLegacyKey(preciseQuery.context());
+        return shortened == null ? queryKey : shortened;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<FrameKey> asFrames(List<?> context) {
+        return (List<FrameKey>) context;
+    }
+
+    private Object shortenedLegacyKey(List<FrameKey> context) {
+        if (!contextFallback || context.size() < 2) {
+            return null;
+        }
+        for (int depth = context.size() - 1; depth >= 1; depth--) {
+            List<FrameKey> shorter = context.subList(0, depth);
+            if (conditionalData.containsKey(shorter)) {
+                return new ShortenedKey(List.copyOf(shorter), context.size() - depth);
+            }
+        }
+        return null;
+    }
+
+    /** Marker for a legacy hit obtained by dropping {@code droppedFrames} outermost frames. */
+    private record ShortenedKey(List<FrameKey> context, int droppedFrames) {
     }
 
     private static final ConditionalProfileSiteDescriptor MISSING_SITE = new ConditionalProfileSiteDescriptor(

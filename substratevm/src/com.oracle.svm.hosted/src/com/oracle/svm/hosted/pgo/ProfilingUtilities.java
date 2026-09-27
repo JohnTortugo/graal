@@ -128,8 +128,31 @@ public class ProfilingUtilities {
      * Occurrence ordinals are assigned in deterministic graph iteration order within equal
      * context/successor/condition shapes; graph-local node ids are never serialized.
      */
+    /**
+     * Groups every candidate conditional by source position without the probability-based pruning
+     * of {@link #relevantConditionalNodesFromGraph}. Precise site identities distinguish physical
+     * copies, so all of them are kept: after loop transformations the bytecode branch of a loop
+     * header exists as a peeled guard (default probability) and as the in-loop exit condition
+     * (compiler-assigned probability); pruning would drop the copy that carries the iteration count.
+     */
+    private static EconomicMap<NodeSourcePosition, List<ControlSplitNode>> allConditionalNodesFromGraph(StructuredGraph graph) {
+        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = EconomicMap.create();
+        getConditionalNodesFromGraph(graph).filter(n -> isNotForImplicitException((ControlSplitNode) n)).filter(n -> !hasUnknownBci(n)).forEach(node -> {
+            NodeSourcePosition position = node.getNodeSourcePosition();
+            if (position != null) {
+                List<ControlSplitNode> nodes = groups.get(position);
+                if (nodes == null) {
+                    nodes = new ArrayList<>();
+                    groups.put(position, nodes);
+                }
+                nodes.add((ControlSplitNode) node);
+            }
+        });
+        return groups;
+    }
+
     public static List<ConditionalSite> relevantConditionalSitesFromGraph(StructuredGraph graph, Stage stage, NodeSourcePosition inliningContext) {
-        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = relevantConditionalNodesFromGraph(graph);
+        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = allConditionalNodesFromGraph(graph);
         Map<String, Integer> nextOccurrence = new HashMap<>();
         List<ConditionalSite> result = new ArrayList<>();
         for (List<ControlSplitNode> group : groups.getValues()) {
