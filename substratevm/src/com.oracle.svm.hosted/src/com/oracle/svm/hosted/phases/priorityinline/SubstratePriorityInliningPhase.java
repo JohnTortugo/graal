@@ -347,6 +347,9 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 if (isCFunctionInvoke(inlineCacheNode.invoke())) {
                     return;
                 }
+                if (!hasReceiverFrequencyProfile(inlineCacheNode.invoke())) {
+                    continue;
+                }
                 List<SubgraphNode> hotSubgraphNodes = inlineCacheNode.children().stream().filter(e -> !(e instanceof GenericNode)).filter(this::isCallSiteToHotCaller).map(this::expandIfCutoff).filter(
                                 Objects::nonNull).collect(Collectors.toList());
                 if (!hotSubgraphNodes.isEmpty()) {
@@ -355,6 +358,18 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                                     });
                 }
             }
+        }
+
+        /**
+         * Hot-callee devirtualization guards an inline cache by receiver, so it has to know how
+         * often each receiver is dispatched. Stack samples do not carry that information: they weight
+         * a callee by the time spent under it, which favours long-running callees over frequently
+         * dispatched ones. Guarding a hot call site on a rarely dispatched receiver makes every
+         * dispatch pay for a failing guard, so only devirtualize when a frequency-based receiver
+         * profile backs the call site.
+         */
+        private static boolean hasReceiverFrequencyProfile(Invoke invoke) {
+            return invoke.callTarget() instanceof SubstrateMethodCallTargetNode target && target.hasDynamicTypeProfile();
         }
 
         private void devirtualizeIndirectCallTargetInvokes(CoreProviders coreProviders) {
