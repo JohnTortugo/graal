@@ -97,7 +97,9 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 5. Receiver-type profiles, consumer | done (consumer only) | stock path −1.3% regression traced to lost closed-world exactness; fixed → −0.4%; producer deferred (low ceiling) |
 | 6. Sampling / hotness profiles, consumer | done (consumer only) | plumbing neutral by default; external samples too mismatched to evaluate; naive inlining bonus +5% regression; needs a same-build CE sampler |
 | 7. Loop-header profiling + shortened-context fallback | done | two producer/consumer defects fixed; −8.8% on the fixed workload (now −21% vs no-PGO, 16.5% behind commercial PGO); public suites at noise |
+| 8. Same-build stack sampler | done | allocation-free per-thread sampling; −2.4% beyond milestone 7; invalid sample-time receiver guards fixed; scala-doku +9.2% regression → +1.2% |
 
-Standing caveats: only `IfNode` conditionals are profiled (no switches); the application result is
-same-input specialization until a held-out input is measured; the north-star gap to a full
-commercial PGO implementation remains large because only one profile category exists.
+Standing caveats: conditional instrumentation covers `IfNode` branches but not switches; sampled
+callee counts measure time rather than receiver dispatch frequency; the application result is
+same-input specialization until a held-out input is measured. The fixed workload is now 24.8% below
+no-PGO and 11.2% above the timing-only commercial PGO reference.

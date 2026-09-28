@@ -1,173 +1,147 @@
-# Conditional PGO architecture
+# Experimental CE PGO architecture
 
 ## Scope
 
-The implementation provides a Native Image CE producer and consumer for conditional branch counts.
-It reuses the existing public PGO application infrastructure rather than introducing an independent
-optimization pipeline.
+The implementation provides Native Image CE producers and consumers for conditional branch counts
+and sampled Java call stacks. It reuses the existing public PGO application and priority-inlining
+infrastructure rather than introducing an independent optimization pipeline. The consumer also
+accepts external receiver-type profiles.
 
 ## Consumer
 
 ### Parsing and resolution
 
-`IprofConditionalParser` reads the iprof 1.0.0/1.1.0 subset described in
-[ProfileFormat.md](ProfileFormat.md). It validates the required type and method tables, contexts, and
-conditional record triples.
+`IprofConditionalParser` reads the relevant iprof 1.0.0/1.1.0 categories. It validates type and method
+tables, conditional record triples, receiver profiles, and stack contexts.
 
 `ConditionalProfileContextResolver` converts profile methods and hosted methods to one canonical JVM
 descriptor representation. Profile entries are resolved against `HostedUniverse` before compilation.
+Hidden-class binary names use a slash (`Foo$$Lambda/0x...`), while JVMCI descriptors render that
+separator as a dot; writer and resolver convert explicitly between the two forms.
 
-`SimpleConditionalProfilesLookup` implements `PGOProfilesLookup` for conditional data only. Every
-other profile category remains absent. When `ceConditionalProfilesV2` is present, exact site identity
-has priority. If an exact stage-qualified site is absent, the lookup may adopt the legacy context only
-when that context maps to one precise site; ambiguous contexts never fall back. Fingerprint drift is
-reported but does not reject an otherwise exact identity.
+`SimpleConditionalProfilesLookup` implements `PGOProfilesLookup`. For conditional data, exact
+`ceConditionalProfilesV2` identity has priority. If an exact stage-qualified site is absent, lookup
+may use an unambiguous legacy context and may progressively drop outermost caller frames. Ambiguous
+successor shapes never fall back. Fingerprint drift is telemetry and does not reject an otherwise
+exact identity.
 
-### Early consumption
+### Early and post-inlining consumption
 
-`--pgo=<file>` installs the lookup as the `PGOProfilesLookup` image singleton before compile-queue
-creation.
-
-Profiles are applied at two points:
+`--pgo=<file>` installs the lookup singleton before compile-queue creation. Profiles are applied at
+two points:
 
 1. A reusable HighTier wrapper creates a fresh `PGOApplyProfilesPhase` for each root graph and runs it
    immediately before `AbstractInliningPhase`.
-2. The existing priority-inliner expansion path reads the same singleton while decoding cutoff
-   graphs and extends each node context with the explicit caller position.
+2. The priority-inliner expansion path reads the same singleton while decoding cutoff graphs and
+   extends each node context with the explicit caller position.
 
 A fresh apply phase is required because `PGOApplyProfilesPhase` is a `SingleRunSubphase` and cannot be
 shared across parallel graph compilations.
 
-### Post-inlining consumption
-
 `--pgo-post-inlining=<file>` creates an independent lookup that is not installed as the inliner
-singleton. Its apply wrapper is appended to hosted HighTier.
+singleton. Its apply wrapper is appended to hosted HighTier. Both consumer options can be specified;
+their parsing, resolution, counters, and application accounting remain separate.
 
-Both consumer options can be specified. Their parsing, resolution, lookup counters, and application
-accounting remain separate.
+### Sampling hotness
+
+`SamplingHotness` turns resolved `samplingProfiles` into a method-rooted `PrefixTree`. For every frame
+of every sampled stack it adds the suffix beginning at that frame, so each context-insensitive
+compilation root gets a merged calling-context tree below that method. This supplies:
+
+- a cursor for root-relative callee hotness;
+- sampled callee method profiles at indirect calls;
+- a graph `GlobalProfileProvider` reporting whether the root was sampled and its global self-time
+  share.
+
+`SamplingInliningProvider` installs those values in the priority inliner. Expansion and inlining
+bonuses and the method-profile, hot-caller, self-time, and apply-while-expanding mechanisms are
+independently option-gated. The accepted defaults are expansion bonus 0 and hot-inlining bonus 1.
+
+A sampled callee count is **not** a receiver dispatch count: sampling weights time anywhere below a
+callee, so a rarely dispatched long-running receiver can outrank a frequently dispatched tiny one.
+Consequently, receiver-based hot-callee devirtualization requires a dynamic receiver type profile at
+the call site. Sampling-only method profiles can guide the regular cost-benefit inliner but cannot
+select receiver guards.
 
 ### Application accounting
 
-`PGOApplyProfilesPhase` reports how many profiled successor probabilities exist and how many matched
-successors in the current graph. `SimpleConditionalProfilesLookup` classifies each distinct resolved
-context as:
-
-- fully applied;
-- partially applied;
-- matched but not applied;
-- unused.
-
+`PGOApplyProfilesPhase` reports how many profiled successor probabilities exist and how many match
+successors in the current graph. `SimpleConditionalProfilesLookup` classifies each resolved
+conditional context as fully applied, partially applied, matched but not applied, or unused. Sampling
+telemetry reports complete, truncated, unresolved, and dropped stacks and hot/cold compilation roots.
 This distinguishes profile-key compatibility from actual graph mutation.
 
-## Producer
+## Conditional producer
 
-### Instrumentation selection
-
-Both producer modes use `ProfilingUtilities.relevantConditionalNodesFromGraph`. It excludes:
-
-- implicit-exception conditionals;
-- unknown or invalid BCIs;
-- unsuitable nodes with compiler-injected probabilities.
-
-The utility groups candidates by `NodeSourcePosition` and can return more than one node for one
-position. This behavior is central to the known branch-identity limitation.
-
-### Post-inlining mode
+### Instrumentation modes
 
 `--pgo-instrument` appends `BranchProfileInstrumentationPhase` to hosted HighTier. It records branches
 that survive HighTier inlining and optimization. This mode does not place counters in the graph while
-priority inlining decisions are made.
+priority-inlining decisions are made.
 
-### Consumer-aligned mode
+`--pgo-instrument-aligned` instruments roots immediately before `AbstractInliningPhase` and instruments
+callee graphs in `SubstratePriorityInliningPhase.createGraph`, adjacent to profile application, using
+the exact caller context. Both modes use `PGOApplyProfilesPhase.createPointContext`.
 
-`--pgo-instrument-aligned` uses two hooks:
+### Site selection and identity
 
-1. A root instrumentation phase immediately before `AbstractInliningPhase`.
-2. `SubstratePriorityInliningPhase.createGraph`, adjacent to profile application, with the exact
-   `replaceePosition` caller context.
+Every `IfNode` with a source position is instrumented except implicit-exception branches and positions
+with unknown BCIs. Multiple physical copies of one bytecode branch (for example, a peeled loop guard
+and in-loop exit) each get a counter and precise identity. The legacy context entry is their sum only
+when they route to the same successor BCIs, with negated conditions normalized. Rewired copies remain
+ambiguous and are omitted from legacy output.
 
-Both aligned instrumentation and the consumer construct full contexts with
-`PGOApplyProfilesPhase.createPointContext`.
-
-### Site selection
-
-Every `IfNode` with a source position is instrumented, except branches guarding implicit exceptions
-and positions with unknown BCIs. Multiple physical copies of one bytecode branch (loop guard and
-in-loop exit, peeled iterations) each get their own counter and precise identity; the legacy
-context entry is their sum when they route to the same successor BCIs. Selecting a single
-representative per position, as the consumer-side helper does, would drop the copy that carries a
-loop's iteration count.
+Each precise identity includes stage, full method/BCI context, ordered successor BCIs, condition kind,
+a structural fingerprint, and an occurrence ordinal. Identical precise identities are aggregated only
+while serializing.
 
 ### Runtime counters
 
 `DynamicCounterNode` cannot be used because the Native Image AArch64 backend does not implement its
-benchmark-counter LIR operation.
+benchmark-counter LIR operation. The producer instead uses `BranchProfileCounterNode`, lowered through
+an SVM snippet, with integer indexes embedded in generated code.
 
-The producer uses:
+Each attached thread owns a private native counter block addressed by a `FastThreadLocalWord<Pointer>`:
 
-- `BranchProfileCounterNode`, lowered through an SVM snippet template;
-- one physical counter for every selected graph site;
-- integer indexes embedded in generated code;
-- a private native counter block per thread, plus shared global counters that exited threads fold
-  into;
-- immutable metadata containing stage, context, successors, condition kind, structural fingerprint,
-  and occurrence ordinal.
+- `afterThreadAttach`, at the end of `VMThreads.attachThread` and before any Java execution, allocates
+  `2 * sites` longs. If allocation fails, the pointer uses shared counters.
+- Generated code loads the thread-local pointer and performs a non-atomic load/add/store. The block is
+  single-writer, so counts are exact and cores do not contend on cache lines.
+- `afterThreadExit` atomically folds the block into shared `CGlobalData` counters and frees it.
+- Dumping snapshots shared counters plus every live thread's block in a safepoint VM operation.
 
-Identical precise identities are aggregated only while serializing. Conflicting same-context sites
-remain separate in `ceConditionalProfilesV2`; ambiguous contexts are omitted from legacy output.
+The site count and compilation-created metadata use `AfterCompilation` field availability so static
+analysis does not fold placeholder values. Low-level runtime packages that can execute before the
+image-heap base exists are excluded from heap-backed instrumentation.
 
-Embedding hosted-created counter objects directly produced unrelocated compressed image-heap offsets.
-The indexed array avoids late object constants in generated code.
+## Stack-sampling producer
 
-#### Per-thread counter blocks
+`StackSampleRecorder` registers a recurring callback for each Java thread. The period is selected at
+run time by `-XX:PGOSamplingIntervalMillis` and defaults to 10 milliseconds.
 
-The first producer incremented a shared image-heap `long[]` directly. That was cheap in isolation
-(five instructions per successor on AArch64, no bounds check) but every core wrote the same cache
-lines, so parallel workloads slowed 16–21x and racing non-atomic increments silently lost most events.
+The callback may interrupt code under a no-allocation contract. It therefore walks the current Java
+stack from the interrupted return address and inserts the raw instruction-pointer chain into a
+per-thread native open-addressed table using primitive operations only. It does not allocate Java
+objects and does not update shared hot-path counters. Tables have fixed bucket and address-arena
+capacities; full tables report dropped samples instead of allocating.
 
-`BranchProfileThreadCounters` is a `ThreadListener` that owns a `FastThreadLocalWord<Pointer>`:
+Per-thread tables are linked through a `CGlobalData` list. At teardown, after sampling stops, the
+dumper decodes instruction pointers through image code info, expands inlined frames, maps each frame
+to method/BCI identity, merges equal stacks, and emits `samplingProfiles`. `CodeInfoEncoder` includes
+method signatures and modifiers whenever the sampler is registered, even without JFR, because stack
+profile identities require signatures.
 
-- `afterThreadAttach` (a new listener callback invoked at the end of `VMThreads.attachThread`,
-  before the thread can run any Java code or even has a `Thread` object) callocs a block of
-  `2 * sites` longs and stores its address in the thread-local. The site count is sealed in
-  `afterCompilation` and kept in an `AfterCompilation` primitive field, so blocks are exactly sized;
-  untouched pages stay unmapped. If calloc fails the thread-local points at the shared counters.
-- Generated code loads the thread-local pointer and increments `block[slot]` with a private
-  `LocationIdentity`, so the load is hoisted out of loops. There is no null check and no base
-  arithmetic: the per-site code is the same load/add/store with a constant offset as before.
-- `afterThreadExit` folds the block into the shared counters with atomic adds and frees it.
-- The shared counters are a zero-initialized `CGlobalData` byte region sized after compilation
-  (replacing the fixed 15.3 MiB image-heap array; instrumentation images shrank 14–20 MB).
-- Dumping takes a snapshot: the shared counters plus, in a safepoint `JavaVMOperation`, every live
-  thread's block. Serialization reads the frozen snapshot, so profile-writing code is not counted.
+## Dumping
 
-Increments within a block are single-writer, so per-thread counts are exact; only the exit-time
-merge needs atomics. Overhead is flat in thread count and single-threaded training is no slower than
-the shared-array producer (see ExperimentsAndDecisions).
-
-Why the attach callback: the thread-start listener runs after a foreign thread has constructed its
-`Thread` object, and that constructor is instrumented JDK code. Without a block at that point the
-alternatives were a null check per site (measured +5.4% training time) or a displacement add per
-site (+4.2%). The attach callback is the only point that precedes every Java execution on a thread.
-
-### Reachability and initialization constraints
-
-Compilation-created metadata fields use `@UnknownObjectField` and `@UnknownPrimitiveField` with
-`AfterCompilation` availability so static analysis does not constant-fold placeholder values.
-
-Low-level Native Image runtime packages are excluded from heap-backed instrumentation because some
-methods execute before the image-heap base is initialized.
-
-### Dumping
-
-A runtime teardown hook writes the deterministic conditional-only iprof file selected by:
+A runtime teardown hook writes one deterministic iprof selected by:
 
 ```text
 -XX:ProfilesDumpFile=<path>
 ```
 
-The default path is `default.iprof`. Never-executed contexts are omitted. Counts are frozen in a
-snapshot before serialization begins.
+The default is `default.iprof`. Conditional counts are frozen before serialization; never-executed
+conditional contexts are omitted. Sampling stops before per-thread native tables are decoded. The
+output contains method/type tables shared by conditional, receiver, and sampling categories.
 
 ## Build lifecycle
 
@@ -177,9 +151,12 @@ The important lifecycle order is:
 2. Resolve contexts in `beforeCompilation`, once `HostedUniverse` exists.
 3. Install the early lookup before compile-queue/inliner construction.
 4. Register root, aligned, and post-inlining graph phases through `registerGraalPhases`.
-5. Compile graphs in parallel.
-6. Report lookup and successor-application accounting in `afterCompilation`.
-7. For instrumentation images, dump counts from the runtime teardown hook.
+5. For instrumentation builds, register branch metadata and stack sampling and encode required frame
+   metadata.
+6. Compile graphs in parallel.
+7. Report lookup, successor-application, and sampling-hotness accounting in `afterCompilation`.
+8. At instrumented-image teardown, stop sampling, snapshot counters, decode stacks, and serialize one
+   iprof.
 
 ## Packaging caveat
 

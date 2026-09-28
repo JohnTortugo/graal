@@ -1,17 +1,22 @@
-# Experimental conditional PGO for Native Image CE
+# Experimental PGO for Native Image CE
 
-This directory documents the experimental conditional-branch profile-guided optimization (PGO)
-producer and consumer implemented in public GraalVM Community Edition Native Image.
+This directory documents the experimental profile-guided optimization (PGO) producer and consumer
+implemented in public GraalVM Community Edition Native Image.
 
-The producer covers one profile category: iprof `conditionalProfiles` for `IfNode` branches. The
-consumer additionally accepts `virtualInvokeProfiles` (receiver-type histograms for indirect calls)
-from an external profile. Call counts, sampling, monitor, `instanceof`, switch, code-layout, and
-image-heap profiles are outside the current scope.
+The producer records two iprof categories in one training image:
+
+- `conditionalProfiles` / `ceConditionalProfilesV2` for `IfNode` branches;
+- `samplingProfiles` from recurring per-thread Java stack samples.
+
+The consumer also accepts external `virtualInvokeProfiles` receiver histograms. Call counts, monitor,
+`instanceof`, switch, code-layout, and image-heap profiles are outside the current scope.
 
 > [!WARNING]
-> This implementation is experimental. Precise CE profiles use stage, context, successor signature,
-> condition kind, and occurrence to distinguish transformed graph sites. Legacy external profiles
-> remain context-only and cannot distinguish every transformed branch. See
+> This implementation is experimental. Precise CE conditional profiles use stage, context, successor
+> signature, condition kind, and occurrence to distinguish transformed graph sites. Legacy external
+> profiles remain context-only and cannot distinguish every transformed branch. Sampling-based
+> method profiles measure time below a callee, not receiver dispatch frequency, and therefore never
+> select receiver guards without a separate dynamic receiver type profile. See
 > [Experiments and decisions](ExperimentsAndDecisions.md).
 
 ## Documentation
@@ -35,6 +40,16 @@ Run the training workload and choose the output file:
 ./app-instrumented -XX:ProfilesDumpFile=app.iprof <training-arguments>
 ```
 
+The training image records branch counters and recurring stack samples. The sample period defaults
+to 10 milliseconds and can be changed at run time:
+
+```bash
+./app-instrumented \
+    -XX:PGOSamplingIntervalMillis=20 \
+    -XX:ProfilesDumpFile=app.iprof \
+    <training-arguments>
+```
+
 Build the optimized image:
 
 ```bash
@@ -42,7 +57,8 @@ native-image --pgo=app.iprof -cp <classpath> <main-class> -o app-pgo
 ```
 
 `--pgo` applies conditional profiles to root graphs before priority inlining and to decoded
-priority-inliner expansion graphs.
+priority-inliner expansion graphs. Sampling profiles provide root-relative call-tree hotness,
+sampled callee method profiles, and global hot-caller/self-time data.
 
 ## Experimental stage modes
 
@@ -52,14 +68,14 @@ Post-inlining producer (current performance baseline):
 native-image --pgo-instrument ...
 ```
 
-Consumer-aligned producer:
+Consumer-aligned conditional producer:
 
 ```bash
 native-image --pgo-instrument-aligned ...
 ```
 
 The aligned producer instruments root graphs immediately before priority inlining and instruments
-callee graphs while the priority inliner expands them.
+callee graphs while the priority inliner expands them. Both producer modes emit stack samples.
 
 Consume a profile only at the end of hosted HighTier:
 
@@ -79,6 +95,23 @@ native-image \
 Instrumentation and consumption options are mutually exclusive in one image build. The two
 instrumentation modes are also mutually exclusive.
 
+## Sampling controls
+
+The sampling consumer mechanisms remain independently gateable for experiments:
+
+```text
+-H:PGOHotExpansionBonus=<n>          expansion priority bonus (default 0)
+-H:PGOHotInliningBonus=<n>           local inlining-benefit bonus (default 1)
+-H:-PGOApplyProfilesWhileExpanding   do not apply profiles to hot expanded graphs
+-H:-PGOSamplingMethodProfiles        do not prefer sampled callee method profiles
+-H:-PGOSamplingHotCaller             do not mark sampled roots as hot callers
+-H:-PGOSamplingSelfTime              do not expose sampled self time
+```
+
+Receiver-based hot-callee devirtualization additionally requires a dynamic receiver type profile.
+Stack samples alone cannot safely choose receiver guards because they measure time, not dispatch
+frequency.
+
 ## Diagnostics
 
 Profile resolution is reported before compilation. After compilation, each active consumer channel
@@ -91,7 +124,8 @@ reports:
 - matched contexts for which no successor probability was applied;
 - a prior-comparison table: applied sites bucketed by recorded event count, split into those whose
   dominant successor agrees with the probability the node already had and those that contradict it,
-  with contradictions of compiler-injected probabilities called out separately.
+  with contradictions of compiler-injected probabilities called out separately;
+- resolved, truncated, unresolved, and dropped stack-sample counts, plus hot/cold compilation roots.
 
 A lookup hit alone is not treated as proof that profile records were applied.
 
@@ -121,38 +155,35 @@ full method/BCI context, ordered successor BCIs, condition kind, and an occurren
 structural fingerprint is retained as advisory drift telemetry rather than a hard key.
 
 The producer gives each selected physical graph site its own counter and aggregates only identical
-v2 identities at dump time. The legacy `conditionalProfiles` section includes only contexts that map
-to one unambiguous v2 site.
+v2 identities at dump time. The legacy `conditionalProfiles` entry sums physical copies only when
+they route to the same successor BCIs; ambiguous contexts are omitted.
 
 The consumer tries exact v2 identity first. If the requested stage does not match, it may use the
-legacy context only when that context maps to exactly one v2 site. Ambiguous contexts never fall back.
-Graph-local node IDs are not used because they are not stable across builds.
+legacy context only when that context maps to exactly one unambiguous successor shape. If a full
+context is absent, it can try progressively shorter contexts. Graph-local node IDs are not used
+because they are not stable across builds.
 
 External legacy profiles remain context-only and retain the original ambiguity risk.
 
 ## mx benchmark integration
 
-The existing Native Image PGO configuration drives the CE conditional pipeline:
+The existing Native Image PGO configuration drives the CE pipeline:
 
 ```bash
 mx benchmark renaissance-native-image:<benchmark> -- \
     --jvm=native-image --jvm-config=pgo -- <benchmark-arguments>
 ```
 
-It builds a post-inlining instrumented image, runs one training iteration, builds the final image with
-`--pgo`, and runs the requested evaluation iterations. The harness accepts precise CE conditional
-profiles without requiring an unrelated sampling section.
+It builds an instrumented image, runs one training iteration, builds the final image with `--pgo`,
+and runs the requested evaluation iterations. One profile carries both conditional and stack-sampling
+data.
 
 ## Validation
 
-The focused tests can be run from the `substratevm` suite:
+Run the focused PGO tests from the `substratevm` suite:
 
 ```bash
-mx unittest \
-    com.oracle.svm.hosted.pgo.IprofConditionalParserTest \
-    com.oracle.svm.hosted.pgo.ConditionalProbabilityMathTest \
-    com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolverTest \
-    com.oracle.svm.core.pgo.BranchProfileIprofWriterTest
+mx unittest com.oracle.svm.hosted.pgo com.oracle.svm.core.pgo
 ```
 
 Also run:

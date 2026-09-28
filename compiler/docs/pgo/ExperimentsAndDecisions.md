@@ -395,6 +395,37 @@ overhead rose modestly with the extra sites (fj-kmeans 1.15x → 1.29x).
 Versus the no-PGO baseline the fixed workload is now −21%, and 16.5% behind the commercial PGO
 result (was 25%).
 
+## Same-build stack sampling and receiver-frequency safety
+
+The CE instrumentation image now emits `samplingProfiles` in the same run as branch profiles. A
+recurring callback walks each Java thread every 10 ms by default and records raw instruction-pointer
+chains in a private native open-addressed table. The callback cannot allocate, so decoding, inlined-
+frame expansion, method identity resolution, and stack merging happen at teardown. Method signatures
+are included in code metadata whenever sampling is active. Explicit slash/dot conversion for hidden-
+class descriptors made lambda frames resolve consistently between training and optimized builds.
+
+On the fixed workload, one training run produced 75,224 samples from 13 threads, merged to 432 stacks;
+all sample and conditional contexts resolved. Sampling did not add measurable training overhead. With
+a hot-inlining bonus of 1, a fresh paired three-round confirmation improved the previous best image by
+**2.4%** (98.17 s versus 100.58 s), with serial-GC time falling from 2.61–2.66 s to 2.55–2.58 s. This
+puts the fixed workload 24.8% below its no-PGO baseline and 11.2% above the timing-only commercial PGO
+reference. Expansion bonuses remained unhelpful, so their default stays zero.
+
+Public validation found an important semantic failure before acceptance: scala-doku regressed 9.2%.
+The regression required sampled callee method profiles and hot-caller devirtualization; disabling
+hot-callee devirtualization removed it. At a hot Scala function bridge, samples selected two
+long-running outer lambdas for receiver guards, while the tiny receivers actually dispatched at the
+bridge were not observed as leaves. Every dispatch paid failing guards.
+
+The issue is fundamental: stack samples weight time below a callee, whereas receiver guards need
+dispatch frequencies. Receiver-based hot-callee devirtualization now requires a dynamic receiver type
+profile. Sampling-only method profiles remain available to the regular cost-benefit inliner. After the
+fix scala-doku returned to +1.2% (the same as globally disabling the transformation); fj-kmeans and
+scrabble remained within noise, and sunflow showed no regression.
+
+Decision: accept the same-build sampler, default hot-inlining bonus 1, expansion bonus 0, and the
+receiver-frequency guard. Do not use sample-time method profiles as receiver-frequency profiles.
+
 ## Validation standard
 
 Each accepted iteration requires:
