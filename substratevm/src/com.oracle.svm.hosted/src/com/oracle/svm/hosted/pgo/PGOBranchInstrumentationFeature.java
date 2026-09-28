@@ -34,6 +34,8 @@ import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
+import com.oracle.svm.core.pgo.StackSampleRecorder;
+import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
@@ -69,6 +71,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         @APIOption(name = "pgo-instrument-aligned")//
         @Option(help = "Instrument conditional branches at the root and priority-inliner expansion points where CE consumes profiles.")//
         public static final HostedOptionKey<Boolean> BranchProfilesInstrumentAligned = new SourcePositionOption();
+
+        @Option(help = "Also sample call stacks periodically in the instrumentation image and emit samplingProfiles. Interval: -XX:PGOSamplingIntervalMillis.")//
+        public static final HostedOptionKey<Boolean> PGOSampleStacks = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static final class SourcePositionOption extends HostedOptionKey<Boolean> {
@@ -81,6 +86,8 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                 super.onValueUpdate(values, oldValue, newValue);
                 if (Boolean.TRUE.equals(newValue)) {
                     GraalOptions.TrackNodeSourcePosition.update(values, true);
+                    /* The stack sampler runs as a recurring callback on every Java thread. */
+                    RecurringCallbackSupport.ConcealedOptions.SupportRecurringCallback.update(values, true);
                 }
             }
         }
@@ -123,6 +130,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
+        if (Options.PGOSampleStacks.getValue()) {
+            ThreadListenerSupport.get().register(StackSampleRecorder.create());
+        }
     }
 
     @Override

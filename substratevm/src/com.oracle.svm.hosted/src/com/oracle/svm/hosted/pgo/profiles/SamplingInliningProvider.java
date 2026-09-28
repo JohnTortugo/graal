@@ -52,7 +52,7 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         public static final HostedOptionKey<Integer> PGOHotExpansionBonus = new HostedOptionKey<>(0);
 
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
-        public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(0);
+        public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
 
         @Option(help = "Apply profiles to callee graphs expanded under a hot compilation root.")//
         public static final HostedOptionKey<Boolean> PGOApplyProfilesWhileExpanding = new HostedOptionKey<>(true);

@@ -233,14 +233,21 @@ public final class BranchProfileRecorder {
             fileName = "default.iprof";
         }
         try {
-            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters());
+            List<StackSampleRecorder.DecodedSample> stackSamples = StackSampleRecorder.hasSamples() ? StackSampleRecorder.decodeSamples() : List.of();
+            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples);
             Log.log().string("[PGO] wrote conditional profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
                             .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();
+            if (StackSampleRecorder.hasSamples()) {
+                StackSampleRecorder.Statistics sampling = StackSampleRecorder.statistics(stackSamples.size());
+                Log.log().string("[PGO] stack samples=").signed(sampling.samples()).string(", threads=").signed(sampling.tables())
+                                .string(", decoded stacks=").signed(sampling.decodedStacks()).string(", truncated=").signed(sampling.truncated())
+                                .string(", dropped=").signed(sampling.dropped()).string(", unresolved addresses=").signed(sampling.unresolvedAddresses()).newline();
+            }
         } catch (IOException | RuntimeException exception) {
-            Log.log().string("[PGO] could not write conditional profile '").string(fileName).string("': ").string(exception.getMessage()).newline();
+            Log.log().string("[PGO] could not write conditional profile '").string(fileName).string("': ").exception(exception).newline();
         }
     }
 

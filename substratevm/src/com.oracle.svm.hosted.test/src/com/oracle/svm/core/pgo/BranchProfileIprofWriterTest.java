@@ -95,6 +95,31 @@ public class BranchProfileIprofWriterTest {
         Assert.assertEquals(Long.valueOf(11), countByBci.get(30L));
     }
 
+    /* Sampled stacks are written innermost first; hidden-class names round-trip through the binary name form. */
+    @Test
+    public void samplingProfilesRoundTripIncludingHiddenClassNames() throws Exception {
+        BranchProfileCounter counter = BranchProfileRecorder.lookup(new String[]{"Lexample/SampleTest;.work()V"}, new int[]{3}, 5, 9);
+        BranchProfileRecorder.increment(counter.getCounterIndex(), true);
+        String lambdaRun = "Lexample/SampleTest$$Lambda.0xabc123;.run()V";
+        StackSampleRecorder.DecodedSample sample = new StackSampleRecorder.DecodedSample(
+                        new String[]{"Lexample/SampleTest;.work()V", lambdaRun}, new int[]{12, 4}, 77);
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.write(output, List.of(counter), List.of(sample));
+        String json = output.toString();
+        Assert.assertTrue(json.contains("\"samplingProfiles\""));
+        Assert.assertTrue("binary name uses a slash inside the hidden class name", json.contains("example.SampleTest$$Lambda/0xabc123"));
+
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(json));
+        Assert.assertEquals(1, parsed.samplingEntries().size());
+        IprofConditionalParser.SamplingEntry entry = parsed.samplingEntries().getFirst();
+        Assert.assertEquals(77, entry.count());
+        Assert.assertEquals(2, entry.context().size());
+        Assert.assertEquals(12, entry.context().get(0).bci());
+        IprofConditionalParser.MethodDescriptor caller = parsed.methodsById().get(entry.context().get(1).methodId());
+        Assert.assertEquals(lambdaRun, com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver.descriptorForProfileMethod(caller, parsed.typeNamesById()));
+    }
+
     @Test
     public void conflictingPhysicalSitesRemainDistinctAndAreOmittedFromLegacyOutput() throws Exception {
         String[] methods = {"Lexample/CollisionTest;.branch()V"};

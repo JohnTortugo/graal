@@ -48,34 +48,40 @@ public final class BranchProfileIprofWriter {
     private BranchProfileIprofWriter() {
     }
 
-    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters) throws IOException {
+    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
         try (JsonWriter writer = new JsonWriter(path)) {
-            return write(writer, counters);
+            return write(writer, counters, stackSamples);
         }
     }
 
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters) throws IOException {
+        return write(output, counters, List.of());
+    }
+
+    public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
-            return write(writer, counters);
+            return write(writer, counters, stackSamples);
         }
     }
 
-    private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters) throws IOException {
+    private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
         Map<PreciseSiteKey, PreciseSiteData> preciseSites = aggregatePreciseSites(activeCounters);
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> legacySites = unambiguousLegacySites(preciseSites);
-        Metadata metadata = Metadata.create(preciseSites.keySet());
-
+        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples);
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
         writeMethods(writer, metadata).appendSeparator();
         writeLegacyProfiles(writer, metadata, legacySites).appendSeparator();
         writePreciseProfiles(writer, metadata, preciseSites);
+        if (!stackSamples.isEmpty()) {
+            writer.appendSeparator();
+            writeSamplingProfiles(writer, metadata, stackSamples);
+        }
         writer.appendObjectEnd();
-
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
         return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), events);
     }
@@ -92,7 +98,6 @@ public final class BranchProfileIprofWriter {
                         .collect(LinkedHashMap::new, (map, entry) -> map.put(entry.getKey(), entry.getValue()), Map::putAll);
     }
 
-    /** Legacy output is safe only when one context identifies exactly one precise branch site. */
     /**
      * A legacy context-only entry describes the bytecode branch, so it is the sum over every physical
      * copy of that branch: a loop header's peeled guard plus its in-loop exit condition, or a peeled
@@ -182,6 +187,22 @@ public final class BranchProfileIprofWriter {
         return writer.appendArrayEnd();
     }
 
+    /** {@code samplingProfiles}: sampled call stacks innermost first with their sample counts. */
+    private static void writeSamplingProfiles(JsonWriter writer, Metadata metadata, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
+        writer.quote("samplingProfiles").appendFieldSeparator().appendArrayStart();
+        boolean first = true;
+        for (StackSampleRecorder.DecodedSample sample : stackSamples) {
+            if (!first) {
+                writer.appendSeparator();
+            }
+            first = false;
+            ContextKey context = new ContextKey(Arrays.asList(sample.methodDescriptors()), Arrays.stream(sample.bcis()).boxed().toList());
+            writer.appendObjectStart().appendKeyValue("ctx", context(metadata, context)).appendSeparator()
+                            .quote("records").appendFieldSeparator().appendArrayStart().printValue(sample.count()).appendArrayEnd().appendObjectEnd();
+        }
+        writer.appendArrayEnd();
+    }
+
     private static void writePreciseProfiles(JsonWriter writer, Metadata metadata, Map<PreciseSiteKey, PreciseSiteData> profiles) throws IOException {
         writer.quote(PRECISE_CONDITIONAL_PROFILES_KEY).appendFieldSeparator().appendArrayStart();
         boolean first = true;
@@ -268,10 +289,13 @@ public final class BranchProfileIprofWriter {
             this.methodsByDescriptor = methodsByDescriptor;
         }
 
-        private static Metadata create(Iterable<PreciseSiteKey> sites) {
+        private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples) {
             TreeSet<String> descriptors = new TreeSet<>();
             for (PreciseSiteKey site : sites) {
                 descriptors.addAll(site.context.methodDescriptors);
+            }
+            for (StackSampleRecorder.DecodedSample sample : stackSamples) {
+                descriptors.addAll(Arrays.asList(sample.methodDescriptors()));
             }
             TreeSet<String> types = new TreeSet<>();
             for (String descriptor : descriptors) {
@@ -356,7 +380,7 @@ public final class BranchProfileIprofWriter {
                 arrays++;
             }
             if (arrays != 0) {
-                return descriptor.replace('/', '.');
+                return internalToBinaryName(descriptor);
             }
             if (descriptor.length() == 1) {
                 return switch (descriptor.charAt(0)) {
@@ -375,7 +399,21 @@ public final class BranchProfileIprofWriter {
             if (descriptor.charAt(0) != 'L' || descriptor.charAt(descriptor.length() - 1) != ';') {
                 throw new IllegalArgumentException("Malformed object descriptor: " + descriptor);
             }
-            return descriptor.substring(1, descriptor.length() - 1).replace('/', '.');
+            return internalToBinaryName(descriptor.substring(1, descriptor.length() - 1));
+        }
+
+        /**
+         * Internal (descriptor) form to binary class name: slashes become dots, and the dot that
+         * JVMCI uses inside a hidden class name ({@code Foo$$Lambda.0x1234}) becomes the slash of
+         * the binary name ({@code Foo$$Lambda/0x1234}). The consumer applies the inverse swap.
+         */
+        private static String internalToBinaryName(String internal) {
+            StringBuilder result = new StringBuilder(internal.length());
+            for (int i = 0; i < internal.length(); i++) {
+                char c = internal.charAt(i);
+                result.append(c == '/' ? '.' : c == '.' ? '/' : c);
+            }
+            return result.toString();
         }
     }
 }

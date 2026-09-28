@@ -112,7 +112,7 @@ public final class ConditionalProfileContextResolver {
      *
      * @return the descriptor, or {@code null} if a referenced type id is missing.
      */
-    static String descriptorForProfileMethod(MethodDescriptor method, Map<Integer, String> typeNamesById) {
+    public static String descriptorForProfileMethod(MethodDescriptor method, Map<Integer, String> typeNamesById) {
         String declaring = descriptorForTypeId(method.declaringTypeId(), typeNamesById);
         String returnType = descriptorForTypeId(method.returnTypeId(), typeNamesById);
         if (declaring == null || returnType == null) {
@@ -180,10 +180,25 @@ public final class ConditionalProfileContextResolver {
         }
         if (iprofTypeName.charAt(0) == '[') {
             // Array: JVM descriptor already, but object element FQNs use dots -> convert to slashes.
-            return iprofTypeName.replace('.', '/');
+            return binaryToInternalName(iprofTypeName);
         }
         // Object type: dotted FQN -> Lbinary/name;
-        return 'L' + iprofTypeName.replace('.', '/') + ';';
+        return 'L' + binaryToInternalName(iprofTypeName) + ';';
+    }
+
+    /**
+     * Converts a binary class name to the internal form used by JVMCI type descriptors. Package
+     * separators become slashes. A hidden class name such as {@code Foo$$Lambda/0x1234} contains a
+     * slash that JVMCI renders as a dot in the descriptor ({@code LFoo$$Lambda.0x1234;}), so the two
+     * characters are swapped rather than dots merely replaced.
+     */
+    public static String binaryToInternalName(String binaryName) {
+        StringBuilder result = new StringBuilder(binaryName.length());
+        for (int i = 0; i < binaryName.length(); i++) {
+            char c = binaryName.charAt(i);
+            result.append(c == '.' ? '/' : c == '/' ? '.' : c);
+        }
+        return result.toString();
     }
 
     /**
