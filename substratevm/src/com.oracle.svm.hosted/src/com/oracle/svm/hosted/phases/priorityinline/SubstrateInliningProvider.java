@@ -134,13 +134,33 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return calleeCursor != null;
     }
 
-    public double compilationRootRelativeHotness(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
+    public record SamplingContext(double rootRelativeHotness, long samples) {
+        static final SamplingContext COLD = new SamplingContext(0.0, 0);
+    }
+
+    public SamplingContext compilationRootSamplingContext(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
         PrefixTree.Cursor compilationRootContext = methodContextProvider.apply(compilationRoot);
         if (compilationRootContext == null) {
-            // Cold compilation unit.
-            return 0;
+            return SamplingContext.COLD;
         }
-        return compilationRootContext.ratio(callPosition, dispatchedMethod);
+        PrefixTree.Cursor calleeContext = compilationRootContext.findForMethod(callPosition, dispatchedMethod);
+        if (calleeContext == null) {
+            return SamplingContext.COLD;
+        }
+        long rootSamples = compilationRootContext.getSubtreeCount();
+        long calleeSamples = calleeContext.getSubtreeCount();
+        return createSamplingContext(rootSamples, calleeSamples);
+    }
+
+    static SamplingContext createSamplingContext(long rootSamples, long calleeSamples) {
+        if (rootSamples <= 0 || calleeSamples <= 0) {
+            return SamplingContext.COLD;
+        }
+        return new SamplingContext((double) calleeSamples / rootSamples, calleeSamples);
+    }
+
+    public double compilationRootRelativeHotness(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
+        return compilationRootSamplingContext(compilationRoot, callPosition, dispatchedMethod).rootRelativeHotness();
     }
 
     public JavaMethodProfile samplingMethodProfiles(Map<CallTreeNode, PrefixTree.Cursor> nodeContextMap, HostedMethod root, CallTreeNode caller, CallTargetNode callee) {
@@ -190,6 +210,18 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
     ///
     /// @param options the options being used during inlining
     protected int hotBonusWhileInlining(OptionValues options) {
+        return 0;
+    }
+
+    /// Gets the additional multiplier for a selected, sufficiently sampled hot context.
+    protected int selectedContextBonusWhileInlining(@SuppressWarnings("unused") OptionValues options, @SuppressWarnings("unused") double hotness,
+                    @SuppressWarnings("unused") long samples) {
+        return 0;
+    }
+
+    /// Gets the additional priority for a selected, sufficiently sampled hot context.
+    protected int selectedContextBonusWhileExpanding(@SuppressWarnings("unused") OptionValues options, @SuppressWarnings("unused") double hotness,
+                    @SuppressWarnings("unused") long samples) {
         return 0;
     }
 

@@ -26,6 +26,7 @@ package com.oracle.svm.hosted.pgo.profiles;
 
 import java.util.Map;
 
+import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.cai.PrefixTree;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
@@ -46,6 +47,8 @@ import jdk.vm.ci.meta.JavaMethodProfile;
  */
 public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
+    private final long profileSamples;
+
     public static final class Options {
         // @formatter:off
         @Option(help = "Priority bonus, scaled by root-relative hotness, added to hot cutoff nodes while expanding the call tree. 0 disables.")//
@@ -53,6 +56,21 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
         public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
+
+        @Option(help = "Minimum total samples in the profile before discrete hot-context bonuses may apply.")//
+        public static final HostedOptionKey<Integer> PGOHotContextMinProfileSamples = new HostedOptionKey<>(5000, option -> requirePositive(option));
+
+        @Option(help = "Minimum samples below a call context before discrete hot-context bonuses may apply.")//
+        public static final HostedOptionKey<Integer> PGOHotContextMinSamples = new HostedOptionKey<>(50, option -> requirePositive(option));
+
+        @Option(help = "Minimum share of a compilation root's samples below a call context before discrete hot-context bonuses may apply.")//
+        public static final HostedOptionKey<Double> PGOHotContextMinRatio = new HostedOptionKey<>(0.05, option -> requireProbability(option));
+
+        @Option(help = "Additional local-benefit multiplier for call contexts meeting all hot-context thresholds. 0 disables.")//
+        public static final HostedOptionKey<Integer> PGOHotContextInliningBonus = new HostedOptionKey<>(1, option -> requireNonNegative(option));
+
+        @Option(help = "Additional expansion priority for call contexts meeting all hot-context thresholds. 0 disables.")//
+        public static final HostedOptionKey<Integer> PGOHotContextExpansionBonus = new HostedOptionKey<>(5, option -> requireNonNegative(option));
 
         @Option(help = "Apply profiles to callee graphs expanded under a hot compilation root.")//
         public static final HostedOptionKey<Boolean> PGOApplyProfilesWhileExpanding = new HostedOptionKey<>(true);
@@ -66,10 +84,30 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         @Option(help = "Expose sampled self time to the compiler (enables hot-code duplication budgets).")//
         public static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
         // @formatter:on
+
+        private static void requirePositive(HostedOptionKey<Integer> option) {
+            if (option.getValue() <= 0) {
+                throw UserError.invalidOptionValue(option, option.getValue(), "The value must be greater than zero.");
+            }
+        }
+
+        private static void requireNonNegative(HostedOptionKey<Integer> option) {
+            if (option.getValue() < 0) {
+                throw UserError.invalidOptionValue(option, option.getValue(), "The value must not be negative.");
+            }
+        }
+
+        private static void requireProbability(HostedOptionKey<Double> option) {
+            double value = option.getValue();
+            if (!(value > 0.0 && value <= 1.0)) {
+                throw UserError.invalidOptionValue(option, value, "The value must be greater than zero and at most one.");
+            }
+        }
     }
 
     public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness) {
         super(universe, hotness::cursorFor);
+        this.profileSamples = hotness.totalSamples();
     }
 
     @Override
@@ -95,5 +133,25 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
     @Override
     protected int hotBonusWhileInlining(OptionValues options) {
         return Options.PGOHotInliningBonus.getValue(options);
+    }
+
+    @Override
+    protected int selectedContextBonusWhileInlining(OptionValues options, double hotness, long samples) {
+        return selectedContextBonus(options, hotness, samples, Options.PGOHotContextInliningBonus);
+    }
+
+    @Override
+    protected int selectedContextBonusWhileExpanding(OptionValues options, double hotness, long samples) {
+        return selectedContextBonus(options, hotness, samples, Options.PGOHotContextExpansionBonus);
+    }
+
+    private int selectedContextBonus(OptionValues options, double hotness, long samples, HostedOptionKey<Integer> bonusOption) {
+        int bonus = bonusOption.getValue(options);
+        return bonus != 0 && isHotContext(hotness, samples, profileSamples, Options.PGOHotContextMinRatio.getValue(options), Options.PGOHotContextMinSamples.getValue(options),
+                        Options.PGOHotContextMinProfileSamples.getValue(options)) ? bonus : 0;
+    }
+
+    static boolean isHotContext(double hotness, long samples, long profileSamples, double minimumRatio, int minimumSamples, int minimumProfileSamples) {
+        return hotness > 0.0 && samples > 0 && profileSamples >= minimumProfileSamples && samples >= minimumSamples && hotness >= minimumRatio;
     }
 }

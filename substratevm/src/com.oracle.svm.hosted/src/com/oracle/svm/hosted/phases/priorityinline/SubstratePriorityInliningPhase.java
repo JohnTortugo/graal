@@ -474,8 +474,8 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private void setHotness(CallTreeNode caller, Invoke invoke, ResolvedJavaMethod targetMethod, CallTreeNode substrateCutoffNode, SamplingCallTreeState samplingCallTreeState) {
             StructuredGraph rootGraph = caller.callTree().root().getReadonlySubgraph();
-            double hotness = getInliningProvider().compilationRootRelativeHotness((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
-            samplingCallTreeState.setHotness(substrateCutoffNode, hotness);
+            SubstrateInliningProvider.SamplingContext context = getInliningProvider().compilationRootSamplingContext((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
+            samplingCallTreeState.setSamplingContext(substrateCutoffNode, context);
         }
 
         /**
@@ -528,7 +528,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private static void setHotnessForExpandedNode(CutoffNode cutoffNode, CallTreeNode expanded) {
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(cutoffNode.callTree());
-            samplingCallTreeState.setHotness(expanded, samplingCallTreeState.hotness(cutoffNode));
+            samplingCallTreeState.setSamplingContext(expanded, samplingCallTreeState.samplingContext(cutoffNode));
         }
 
         @Override

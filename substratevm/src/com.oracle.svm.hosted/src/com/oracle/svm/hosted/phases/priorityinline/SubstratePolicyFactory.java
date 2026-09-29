@@ -222,14 +222,19 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
 
         private static double boostBasedOnHotness(CallTreeNode node, double value) {
             SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
-            int caiHotBonus = inliningProvider.hotBonusWhileInlining(node.getOptions());
-            if (caiHotBonus == 0) {
-                return value;
-            }
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(node.callTree());
             double hotness = samplingCallTreeState.hotness(node);
             assert 0.0 <= hotness && hotness <= 1.0;
-            return value * (1 + (caiHotBonus * hotness));
+            int scaledBonus = inliningProvider.hotBonusWhileInlining(node.getOptions());
+            int selectedContextBonus = inliningProvider.selectedContextBonusWhileInlining(node.getOptions(), hotness, samplingCallTreeState.samples(node));
+            if (scaledBonus == 0 && selectedContextBonus == 0) {
+                return value;
+            }
+            return value * hotnessMultiplier(hotness, scaledBonus, selectedContextBonus);
+        }
+
+        static double hotnessMultiplier(double hotness, int scaledBonus, int selectedContextBonus) {
+            return 1 + (scaledBonus * hotness) + selectedContextBonus;
         }
 
         private static int getFrequency(CallTree callTree) {
@@ -308,14 +313,15 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
         public void updateCutoffNodePriority(CutoffNode node) {
             super.updateCutoffNodePriority(node);
             SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
-            int bonus = inliningProvider.hotBonusWhileExpanding(node.callTree().getOptions());
-            if (bonus == 0) {
-                return;
-            }
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(node.callTree());
             double hotness = samplingCallTreeState.hotness(node);
             assert 0.0 <= hotness && hotness <= 1.0;
-            double newPriority = node.getPriority() + (bonus * hotness);
+            int scaledBonus = inliningProvider.hotBonusWhileExpanding(node.callTree().getOptions());
+            int selectedContextBonus = inliningProvider.selectedContextBonusWhileExpanding(node.getOptions(), hotness, samplingCallTreeState.samples(node));
+            if (scaledBonus == 0 && selectedContextBonus == 0) {
+                return;
+            }
+            double newPriority = node.getPriority() + (scaledBonus * hotness) + selectedContextBonus;
             node.setPriorityAndMaxLeafPriority(newPriority);
         }
 
