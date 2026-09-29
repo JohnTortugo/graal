@@ -453,6 +453,23 @@ improvements are not claimed as general speedups.
 Decision: accept confidence-gated context-aware inlining. Separate context-specific AOT method
 variants remain a larger future architecture project, not a capability claimed here.
 
+## Receiver-frequency producer experiment
+
+A CE `virtualInvokeProfiles` producer recorded `(call site, concrete receiver type)` frequencies in
+per-thread native tables. The first pre-inlining prototype appeared to improve the fixed workload,
+but review found that it could alias cached expansion contexts, race teardown, retain memory for every
+historical thread, under-report losses, and perturb the training inliner.
+
+A safety redesign instrumented only root sites after priority inlining, merged and freed exited-thread
+tables, snapshotted live tables at a safepoint, and reported all losses. It recorded 1.568 billion
+events across 369 active contexts with about 3.8% training overhead and no lost events. The isolated
+same-profile result was **+0.27%** (96.266 s with receiver profiles versus 96.009 s with only that
+section removed), i.e. noise/slight regression.
+
+Decision: do not merge the producer. Keep the external receiver-profile consumer and the requirement
+that receiver guards have dispatch-frequency evidence. Revisit only when a workload demonstrates a
+substantial remaining indirect-call ceiling.
+
 ## Validation standard
 
 Each accepted iteration requires:
