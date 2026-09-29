@@ -100,12 +100,17 @@ instrumentation modes are also mutually exclusive.
 The sampling consumer mechanisms remain independently gateable for experiments:
 
 ```text
--H:PGOHotExpansionBonus=<n>          expansion priority bonus (default 0)
--H:PGOHotInliningBonus=<n>           local inlining-benefit bonus (default 1)
--H:-PGOApplyProfilesWhileExpanding   do not apply profiles to hot expanded graphs
--H:-PGOSamplingMethodProfiles        do not prefer sampled callee method profiles
--H:-PGOSamplingHotCaller             do not mark sampled roots as hot callers
--H:-PGOSamplingSelfTime              do not expose sampled self time
+-H:PGOHotExpansionBonus=<n>            smooth expansion priority bonus (default 0)
+-H:PGOHotInliningBonus=<n>             smooth inlining-benefit bonus (default 1)
+-H:PGOHotContextMinProfileSamples=<n>  minimum profile confidence (default 5000)
+-H:PGOHotContextMinSamples=<n>         minimum inclusive context samples (default 50)
+-H:PGOHotContextMinRatio=<share>       minimum root-relative context share (default 0.05)
+-H:PGOHotContextExpansionBonus=<n>     selected-context expansion priority (default 5)
+-H:PGOHotContextInliningBonus=<n>      selected-context benefit multiplier (default 1)
+-H:-PGOApplyProfilesWhileExpanding     do not apply profiles to hot expanded graphs
+-H:-PGOSamplingMethodProfiles          do not prefer sampled callee method profiles
+-H:-PGOSamplingHotCaller               do not mark sampled roots as hot callers
+-H:-PGOSamplingSelfTime                do not expose sampled self time
 ```
 
 Receiver-based hot-callee devirtualization additionally requires a dynamic receiver type profile.

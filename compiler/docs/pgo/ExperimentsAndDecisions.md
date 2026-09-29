@@ -423,8 +423,35 @@ profile. Sampling-only method profiles remain available to the regular cost-bene
 fix scala-doku returned to +1.2% (the same as globally disabling the transformation); fj-kmeans and
 scrabble remained within noise, and sunflow showed no regression.
 
-Decision: accept the same-build sampler, default hot-inlining bonus 1, expansion bonus 0, and the
+Decision: accept the same-build sampler, default smooth hot-inlining bonus 1, smooth expansion bonus 0, and the
 receiver-frequency guard. Do not use sample-time method profiles as receiver-frequency profiles.
+
+## Confidence-gated hot-context inlining
+
+The public tree's `PrefixTree` exposes hot/cold-root state, but CE has no integration that creates
+analysis-time method variants and redirects selected AOT calls to context-specific compiled roots.
+The first bounded step instead specializes hot contexts through the existing priority inliner.
+
+Each call-tree node now carries its inclusive sample count as well as its share of the compilation
+root. Discrete bonuses apply only when the profile has at least 5,000 samples, the context has at
+least 50 samples, and it represents at least 5% of its root. Selected contexts receive expansion
+priority +5 and local-benefit multiplier +1; the existing smooth hotness multiplier remains additive
+and normal call-tree budgets cap growth. Option domains are validated, and unobserved contexts never
+qualify.
+
+The confidence gates account for a limitation of recurring-callback sampling: leaf observations are
+biased toward code that can service callbacks. Inclusive calling contexts still identify active hot
+paths, but sparse leaves are not sufficient evidence for aggressive inlining.
+
+Fixed workload, three rotated paired rounds: 98.006 s previous best versus **95.629 s**, a **2.42%**
+improvement, with serial-GC time comparable. This is 26.8% below the no-PGO baseline and 8.3% above
+the timing-only commercial PGO reference. Public validation used contemporaneous run-only baselines
+after detecting a host-speed shift: scala-doku +0.5%, fj-kmeans −9.3%, scrabble +2.5% over three
+high-variance forks, and sunflow −14.2%. These runs establish no robust regression; the public
+improvements are not claimed as general speedups.
+
+Decision: accept confidence-gated context-aware inlining. Separate context-specific AOT method
+variants remain a larger future architecture project, not a capability claimed here.
 
 ## Validation standard
 

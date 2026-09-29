@@ -53,9 +53,19 @@ compilation root gets a merged calling-context tree below that method. This supp
 - a graph `GlobalProfileProvider` reporting whether the root was sampled and its global self-time
   share.
 
-`SamplingInliningProvider` installs those values in the priority inliner. Expansion and inlining
-bonuses and the method-profile, hot-caller, self-time, and apply-while-expanding mechanisms are
-independently option-gated. The accepted defaults are expansion bonus 0 and hot-inlining bonus 1.
+`SamplingInliningProvider` installs those values in the priority inliner. Each call-tree node carries
+both inclusive samples and root-relative hotness. The prior smooth bonus scales continuously with
+hotness. A second, confidence-gated policy selects a context only when the profile has at least 5,000
+samples, the context has at least 50 samples, and it covers at least 5% of the root; selected contexts
+receive expansion priority +5 and local-benefit multiplier +1. Normal call-tree budgets still cap
+code growth. All thresholds and bonuses are validated hosted options.
+
+This specializes selected caller contexts through inlining. It does not create separate AOT method
+variants: although `PrefixTree` retains hot/cold-root state APIs, the public compile queue has no
+analysis-time variant creation and call-target redirection for context-specific roots.
+
+Method-profile, hot-caller, self-time, apply-while-expanding, smooth-bonus, and selected-context
+mechanisms remain independently option-gated.
 
 A sampled callee count is **not** a receiver dispatch count: sampling weights time anywhere below a
 callee, so a rarely dispatched long-running receiver can outrank a frequently dispatched tiny one.
