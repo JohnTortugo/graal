@@ -30,18 +30,22 @@ import java.util.Map;
 import org.graalvm.collections.EconomicMap;
 
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
+import com.oracle.svm.core.graal.meta.SubstrateForeignCallsProvider;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
 import com.oracle.svm.core.pgo.CallCountProfileRecorder;
 import com.oracle.svm.core.pgo.ReceiverProfileRecorder;
+import com.oracle.svm.core.pgo.SplitHistogramRecorder;
 import com.oracle.svm.core.pgo.StackSampleRecorder;
 import com.oracle.svm.core.pgo.SwitchProfileRecorder;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
+import com.oracle.svm.hosted.FeatureImpl.BeforeAnalysisAccessImpl;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
@@ -86,6 +90,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
 
         @Option(help = "Record switch successor frequencies in conditionalProfiles. Disable with -H:-PGOProfileSwitches.")//
         public static final HostedOptionKey<Boolean> PGOProfileSwitches = new HostedOptionKey<>(true);
+
+        @Option(help = "Experimental: print per-invocation input-length, result-size, and coder histograms for the static (String, char) method named package.Class.method. Empty disables.")//
+        public static final HostedOptionKey<String> PGOSplitHistogramMethod = new HostedOptionKey<>("");
         // @formatter:on
 
         private static final class SourcePositionOption extends HostedOptionKey<Boolean> {
@@ -117,10 +124,17 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         return postInliningEnabled() || alignedEnabled();
     }
 
+    private static boolean splitHistogramEnabled() {
+        return enabled() && !Options.PGOSplitHistogramMethod.getValue().isEmpty();
+    }
+
     /** Called for every decoded priority-inliner cutoff graph under its exact caller context. */
     public static void instrumentExpandedGraph(StructuredGraph graph, NodeSourcePosition inliningContext) {
         if (alignedEnabled()) {
             BranchProfileInstrumentationPhase.instrumentGraph(graph, Stage.INLINE_EXPANSION, inliningContext);
+        }
+        if (splitHistogramEnabled()) {
+            SplitHistogramInstrumentationPhase.instrumentGraph(graph);
         }
     }
 
@@ -142,8 +156,11 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
-        if (Options.PGOProfileCallCounts.getValue() || Options.PGOProfileSwitches.getValue()) {
+        if (Options.PGOProfileCallCounts.getValue() || Options.PGOProfileSwitches.getValue() || splitHistogramEnabled()) {
             ThreadListenerSupport.get().register(CallCountProfileRecorder.createRecorder());
+        }
+        if (splitHistogramEnabled()) {
+            SplitHistogramRecorder.enable();
         }
         if (Options.PGOProfileSwitches.getValue()) {
             SwitchProfileRecorder.enable();
@@ -153,6 +170,22 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         if (Options.PGOSampleStacks.getValue()) {
             ThreadListenerSupport.get().register(StackSampleRecorder.create());
+        }
+    }
+
+    @Override
+    public void registerForeignCalls(SubstrateForeignCallsProvider foreignCalls) {
+        if (splitHistogramEnabled()) {
+            foreignCalls.register(SplitHistogramRecorder.RECORD);
+        }
+    }
+
+    @Override
+    public void beforeAnalysis(BeforeAnalysisAccess access) {
+        if (splitHistogramEnabled()) {
+            BeforeAnalysisAccessImpl accessImpl = (BeforeAnalysisAccessImpl) access;
+            accessImpl.getBigBang().addRootMethod((AnalysisMethod) SplitHistogramRecorder.RECORD.findMethod(accessImpl.getMetaAccess()), true,
+                            "Split histogram foreign call, registered in " + PGOBranchInstrumentationFeature.class);
         }
     }
 
@@ -167,6 +200,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             if (Options.PGOProfileReceivers.getValue(options)) {
                 providers.getReplacements().registerSnippetTemplateCache(new ReceiverProfileCounterNode.Templates(options, providers));
             }
+            if (!Options.PGOSplitHistogramMethod.getValue(options).isEmpty()) {
+                providers.getReplacements().registerSnippetTemplateCache(new SplitHistogramNode.Templates(options, providers));
+            }
         }
     }
 
@@ -176,6 +212,15 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             return;
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
+        if (splitHistogramEnabled()) {
+            ListIterator<BasePhase<? super HighTierContext>> splitInliner = highTier.findPhase(AbstractInliningPhase.class);
+            if (splitInliner != null) {
+                splitInliner.previous();
+                splitInliner.add(new SplitHistogramInstrumentationPhase());
+            } else {
+                highTier.prependPhase(new SplitHistogramInstrumentationPhase());
+            }
+        }
         if (Options.PGOProfileReceivers.getValue()) {
             ListIterator<BasePhase<? super HighTierContext>> receiverInliner = highTier.findPhase(AbstractInliningPhase.class);
             if (receiverInliner != null) {
@@ -222,6 +267,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                         BranchProfileInstrumentationPhase.instrumentedSwitches(), BranchProfileInstrumentationPhase.skippedSwitches(),
                         ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes(),
                         CallCountProfileInstrumentationPhase.instrumented(), CallCountProfileInstrumentationPhase.skipped());
+        if (splitHistogramEnabled()) {
+            System.out.printf("[PGO] split histogram returns instrumented=%d for %s%n", SplitHistogramInstrumentationPhase.instrumented(), Options.PGOSplitHistogramMethod.getValue());
+        }
         // Checkstyle: resume
     }
 }

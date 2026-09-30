@@ -144,8 +144,9 @@ public final class CallCountProfileRecorder implements ThreadListener {
     }
 
     @Uninterruptible(reason = "Counter key and total publication must be observed atomically by a safepoint snapshot.")
-    private static void incrementRuntime(int counterIndex) {
-        long key = Integer.toUnsignedLong(counterIndex + 1);
+    static void incrementRuntime(int counterIndex) {
+        /* Inlined unsigned widening: Integer.toUnsignedLong is not @Uninterruptible. */
+        long key = (counterIndex + 1) & 0xffffffffL;
         Pointer table = TABLE.get();
         if (table.isNonNull() && addToTable(table, THREAD_BUCKETS, key, 1)) {
             table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET) + 1);

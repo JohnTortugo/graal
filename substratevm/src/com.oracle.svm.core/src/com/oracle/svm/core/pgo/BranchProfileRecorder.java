@@ -266,6 +266,7 @@ public final class BranchProfileRecorder {
                                 .string(", attributed=").signed(calls.attributedEvents()).string(", keys=").signed(calls.keys()).string(", mapped keys=").signed(calls.mappedKeys())
                                 .string(", dropped=").signed(calls.dropped()).newline();
             }
+            SplitHistogramRecorder.dumpSummary();
         } catch (IOException | RuntimeException exception) {
             Log.log().string("[PGO] could not write conditional profile '").string(fileName).string("': ").exception(exception).newline();
         }
