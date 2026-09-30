@@ -333,7 +333,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
             return false;
         }
         if (CALL_COUNT_PROFILES_CATEGORY.equals(category)) {
-            return useCallCounts && !callCountsByContext.isEmpty();
+            return useCallCounts && !callCountsByMethod.isEmpty();
         }
         if (VIRTUAL_INVOKE_PROFILES_CATEGORY.equals(category)) {
             return !virtualInvokeData.isEmpty();

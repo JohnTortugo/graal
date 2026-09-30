@@ -113,6 +113,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private SamplingHotness samplingHotness;
     private SimpleConditionalProfilesLookup postInliningLookup;
     private HostedUniverse hostedUniverse;
+    private static SimpleConditionalProfilesLookup codeLayoutLookup;
+
+    public static PGOProfilesLookup codeLayoutProfiles() {
+        return codeLayoutLookup;
+    }
 
     private static String earlyProfilePath() {
         return Options.ConditionalProfilesUse.getValue();
@@ -191,6 +196,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             postInliningLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             reportResolution("post-inlining", postInliningLookup);
         }
+        codeLayoutLookup = earlyLookup != null ? earlyLookup : postInliningLookup;
         parsedEarlyProfile = null;
         parsedPostInliningProfile = null;
     }

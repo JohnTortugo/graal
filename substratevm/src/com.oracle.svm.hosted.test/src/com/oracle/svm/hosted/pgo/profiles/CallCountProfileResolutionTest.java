@@ -65,6 +65,7 @@ public class CallCountProfileResolutionTest {
         SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(ConditionalProfileContextResolverTest.BAR_DESC));
         Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());
+        Assert.assertTrue(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
         Assert.assertEquals(9, lookup.getMethodCallCount(ConditionalProfileContextResolverTest.BAR_DESC));
     }
 
