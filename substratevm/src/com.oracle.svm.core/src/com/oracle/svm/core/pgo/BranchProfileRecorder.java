@@ -239,11 +239,13 @@ public final class BranchProfileRecorder {
                 CallCountProfileRecorder.prepareSnapshot();
             }
             List<CallCountProfileCounter> callCountProfiles = CallCountProfileRecorder.isEnabled() ? CallCountProfileRecorder.getCounters() : List.of();
-            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles, callCountProfiles);
+            List<SwitchProfileCounter> switchProfiles = SwitchProfileRecorder.isEnabled() ? SwitchProfileRecorder.profiles() : List.of();
+            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles, callCountProfiles, switchProfiles);
             Log.log().string("[PGO] wrote profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
                             .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
                             .string(", receiver contexts=").signed(statistics.receiverProfiles())
                             .string(", call-count contexts=").signed(statistics.callCountProfiles())
+                            .string(", switch contexts=").signed(statistics.switchProfiles())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();

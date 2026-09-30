@@ -30,15 +30,19 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.oracle.svm.core.pgo.BranchProfileCounter;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
+import com.oracle.svm.core.pgo.SwitchProfileCounter;
+import com.oracle.svm.core.pgo.SwitchProfileRecorder;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities.ConditionalSite;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 
+import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.AbstractBeginNode;
 import jdk.graal.compiler.nodes.IfNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.extended.SwitchNode;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.tiers.HighTierContext;
 
@@ -47,6 +51,8 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
 
     private static final AtomicLong INSTRUMENTED_BRANCHES = new AtomicLong();
     private static final AtomicLong SKIPPED_BRANCHES = new AtomicLong();
+    private static final AtomicLong INSTRUMENTED_SWITCHES = new AtomicLong();
+    private static final AtomicLong SKIPPED_SWITCHES = new AtomicLong();
 
     private final Stage stage;
     private final NodeSourcePosition inliningContext;
@@ -69,6 +75,8 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
         for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, stage, explicitInliningContext)) {
             if (site.node() instanceof IfNode conditional) {
                 instrument(graph, conditional, site.context(), site.descriptor());
+            } else if (site.node() instanceof SwitchNode switchNode && PGOBranchInstrumentationFeature.Options.PGOProfileSwitches.getValue()) {
+                instrumentSwitch(graph, switchNode, site.context());
             }
         }
     }
@@ -97,6 +105,37 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
         INSTRUMENTED_BRANCHES.incrementAndGet();
     }
 
+    private static void instrumentSwitch(StructuredGraph graph, SwitchNode switchNode, NodeSourcePosition position) {
+        if (position == null) {
+            SKIPPED_SWITCHES.incrementAndGet();
+            return;
+        }
+        List<Node> successors = switchNode.successors().snapshot();
+        int[] successorBcis = new int[successors.size()];
+        for (int i = 0; i < successors.size(); i++) {
+            NodeSourcePosition successorPosition = successors.get(i).getNodeSourcePosition();
+            if (successorPosition == null) {
+                SKIPPED_SWITCHES.incrementAndGet();
+                return;
+            }
+            successorBcis[i] = successorPosition.getBCI();
+        }
+        List<String> descriptors = new ArrayList<>();
+        List<Integer> bcis = new ArrayList<>();
+        for (NodeSourcePosition frame = position; frame != null; frame = frame.getCaller()) {
+            descriptors.add(ConditionalProfileContextResolver.methodDescriptor(frame.getMethod()));
+            bcis.add(frame.getBCI());
+        }
+        SwitchProfileCounter profile = SwitchProfileRecorder.create(descriptors.toArray(String[]::new), bcis.stream().mapToInt(Integer::intValue).toArray(), successorBcis);
+        for (int i = 0; i < successors.size(); i++) {
+            AbstractBeginNode successor = (AbstractBeginNode) successors.get(i);
+            CallCountProfileMarkerNode counter = graph.add(new CallCountProfileMarkerNode(profile.counterIndex(i)));
+            counter.setNodeSourcePosition(successor.getNodeSourcePosition());
+            graph.addAfterFixed(successor, counter);
+        }
+        INSTRUMENTED_SWITCHES.incrementAndGet();
+    }
+
     static boolean isNativeImageRuntimeMethod(String declaringClassName) {
         return declaringClassName.startsWith("Lcom/oracle/svm/") ||
                         declaringClassName.startsWith("Lorg/graalvm/nativeimage/") ||
@@ -115,5 +154,13 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
 
     static long skippedBranches() {
         return SKIPPED_BRANCHES.get();
+    }
+
+    static long instrumentedSwitches() {
+        return INSTRUMENTED_SWITCHES.get();
+    }
+
+    static long skippedSwitches() {
+        return SKIPPED_SWITCHES.get();
     }
 }

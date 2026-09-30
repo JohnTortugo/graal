@@ -37,6 +37,7 @@ import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
 import com.oracle.svm.core.pgo.CallCountProfileRecorder;
 import com.oracle.svm.core.pgo.ReceiverProfileRecorder;
 import com.oracle.svm.core.pgo.StackSampleRecorder;
+import com.oracle.svm.core.pgo.SwitchProfileRecorder;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
@@ -82,6 +83,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
 
         @Option(help = "Record context-sensitive method-entry counts and emit callCountProfiles. Disable with -H:-PGOProfileCallCounts.")//
         public static final HostedOptionKey<Boolean> PGOProfileCallCounts = new HostedOptionKey<>(true);
+
+        @Option(help = "Record switch successor frequencies in conditionalProfiles. Disable with -H:-PGOProfileSwitches.")//
+        public static final HostedOptionKey<Boolean> PGOProfileSwitches = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static final class SourcePositionOption extends HostedOptionKey<Boolean> {
@@ -138,8 +142,11 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
-        if (Options.PGOProfileCallCounts.getValue()) {
+        if (Options.PGOProfileCallCounts.getValue() || Options.PGOProfileSwitches.getValue()) {
             ThreadListenerSupport.get().register(CallCountProfileRecorder.createRecorder());
+        }
+        if (Options.PGOProfileSwitches.getValue()) {
+            SwitchProfileRecorder.enable();
         }
         if (Options.PGOProfileReceivers.getValue()) {
             ThreadListenerSupport.get().register(ReceiverProfileRecorder.create());
@@ -154,7 +161,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                     Map<Class<? extends Node>, NodeLoweringProvider<?>> lowerings, boolean hosted) {
         if (hosted && enabled()) {
             providers.getReplacements().registerSnippetTemplateCache(new BranchProfileCounterNode.Templates(options, providers));
-            if (Options.PGOProfileCallCounts.getValue(options)) {
+            if (Options.PGOProfileCallCounts.getValue(options) || Options.PGOProfileSwitches.getValue(options)) {
                 providers.getReplacements().registerSnippetTemplateCache(new CallCountProfileMarkerNode.Templates(options, providers));
             }
             if (Options.PGOProfileReceivers.getValue(options)) {
@@ -209,9 +216,10 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         BranchProfileRecorder.sealRegistry();
         // Checkstyle: stop
-        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions; receiver invokes=%d, skipped=%d; call edges=%d, skipped=%d%n",
+        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped; switches=%d, skipped=%d; receiver invokes=%d, skipped=%d; call edges=%d, skipped=%d%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",
                         BranchProfileInstrumentationPhase.instrumentedBranches(), BranchProfileInstrumentationPhase.skippedBranches(),
+                        BranchProfileInstrumentationPhase.instrumentedSwitches(), BranchProfileInstrumentationPhase.skippedSwitches(),
                         ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes(),
                         CallCountProfileInstrumentationPhase.instrumented(), CallCountProfileInstrumentationPhase.skipped());
         // Checkstyle: resume

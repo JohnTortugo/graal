@@ -60,8 +60,12 @@ public final class CallCountProfileMarkerNode extends FixedWithNextNode implemen
     private final int counterIndex;
 
     public CallCountProfileMarkerNode(CallCountProfileCounter counter) {
+        this(counter.counterIndex());
+    }
+
+    public CallCountProfileMarkerNode(int counterIndex) {
         super(TYPE, StampFactory.forVoid());
-        this.counterIndex = counter.counterIndex();
+        this.counterIndex = counterIndex;
     }
 
     @Override

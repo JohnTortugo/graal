@@ -210,6 +210,7 @@ public class BranchProfileIprofWriterTest {
         CallCountProfileRecorder.increment(first.counterIndex());
         CallCountProfileRecorder.increment(second.counterIndex());
         CallCountProfileRecorder.increment(second.counterIndex());
+        CallCountProfileRecorder.refreshHostedSnapshotForTesting();
 
         StringWriter output = new StringWriter();
         BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(first, second));
@@ -219,5 +220,43 @@ public class BranchProfileIprofWriterTest {
         Assert.assertEquals(1, parsed.callCountEntries().size());
         Assert.assertEquals(3, parsed.callCountEntries().getFirst().count());
         Assert.assertEquals(2, parsed.callCountEntries().getFirst().context().size());
+    }
+
+    @Test
+    public void switchSuccessorsRoundTripThroughConditionalProfiles() throws Exception {
+        SwitchProfileCounter profile = SwitchProfileRecorder.create(new String[]{"Lexample/SwitchTest;.choose(I)I"}, new int[]{4}, new int[]{10, 20, 30});
+        CallCountProfileRecorder.increment(profile.counterIndex(0));
+        CallCountProfileRecorder.increment(profile.counterIndex(1));
+        CallCountProfileRecorder.increment(profile.counterIndex(1));
+        CallCountProfileRecorder.increment(profile.counterIndex(2));
+        CallCountProfileRecorder.increment(profile.counterIndex(2));
+        CallCountProfileRecorder.increment(profile.counterIndex(2));
+        CallCountProfileRecorder.refreshHostedSnapshotForTesting();
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(), List.of(profile));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.switchProfiles());
+        Assert.assertEquals(1, parsed.conditionalEntries().size());
+        Assert.assertArrayEquals(new long[]{10, 0, 1, 20, 1, 2, 30, 2, 3}, parsed.conditionalEntries().getFirst().records());
+    }
+
+    @Test
+    public void rewiredSwitchCopiesAreOmittedAsAmbiguous() throws Exception {
+        String[] methods = {"Lexample/AmbiguousSwitchTest;.choose(I)I"};
+        int[] bcis = {4};
+        SwitchProfileCounter first = SwitchProfileRecorder.create(methods, bcis, new int[]{10, 20, 30});
+        SwitchProfileCounter rewired = SwitchProfileRecorder.create(methods, bcis, new int[]{10, 25, 30});
+        CallCountProfileRecorder.increment(first.counterIndex(0));
+        CallCountProfileRecorder.increment(rewired.counterIndex(0));
+        CallCountProfileRecorder.refreshHostedSnapshotForTesting();
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(), List.of(first, rewired));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(0, statistics.switchProfiles());
+        Assert.assertTrue(parsed.conditionalEntries().isEmpty());
     }
 }

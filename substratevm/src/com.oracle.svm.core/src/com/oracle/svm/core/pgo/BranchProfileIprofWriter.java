@@ -31,9 +31,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -59,8 +61,14 @@ public final class BranchProfileIprofWriter {
 
     public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
+        return write(path, counters, stackSamples, receiverProfiles, callCountProfiles, List.of());
+    }
+
+    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
+                    List<SwitchProfileCounter> switchProfileCounters) throws IOException {
         try (JsonWriter writer = new JsonWriter(path)) {
-            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters);
         }
     }
 
@@ -79,25 +87,35 @@ public final class BranchProfileIprofWriter {
 
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
+        return write(output, counters, stackSamples, receiverProfiles, callCountProfiles, List.of());
+    }
+
+    public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
+                    List<SwitchProfileCounter> switchProfileCounters) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
-            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters);
         }
     }
 
     private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
-                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
+                    List<SwitchProfileCounter> switchProfileCounters) throws IOException {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
         Map<PreciseSiteKey, PreciseSiteData> preciseSites = aggregatePreciseSites(activeCounters);
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> legacySites = unambiguousLegacySites(preciseSites);
         Map<ContextKey, Long> callCounts = aggregateCallCounts(callCountProfiles);
-        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles, callCounts.keySet());
+        Map<ContextKey, long[]> switchProfiles = aggregateSwitchProfiles(switchProfileCounters);
+        /* A context represented by an If profile is ambiguous for a context-only switch record. */
+        switchProfiles.keySet().removeAll(legacySites.keySet());
+        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles, callCounts.keySet(), switchProfiles.keySet());
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
         writeMethods(writer, metadata).appendSeparator();
-        writeLegacyProfiles(writer, metadata, legacySites).appendSeparator();
+        writeLegacyProfiles(writer, metadata, legacySites, switchProfiles).appendSeparator();
         if (!callCounts.isEmpty()) {
             writeCallCountProfiles(writer, metadata, callCounts).appendSeparator();
         }
@@ -111,7 +129,48 @@ public final class BranchProfileIprofWriter {
         }
         writer.appendObjectEnd();
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
-        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), receiverProfiles.size(), callCounts.size(), events);
+        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size() + switchProfiles.size(), preciseSites.size(), receiverProfiles.size(), callCounts.size(), switchProfiles.size(), events);
+    }
+
+    private static Map<ContextKey, long[]> aggregateSwitchProfiles(List<SwitchProfileCounter> profiles) {
+        Map<ContextKey, int[]> shapes = new HashMap<>();
+        Map<ContextKey, long[]> counts = new TreeMap<>(CONTEXT_COMPARATOR);
+        Set<ContextKey> ambiguous = new HashSet<>();
+        for (SwitchProfileCounter profile : profiles) {
+            ContextKey context = new ContextKey(Arrays.asList(profile.methodDescriptors()), Arrays.stream(profile.contextBcis()).boxed().toList());
+            int[] successorBcis = new int[profile.successorCount()];
+            Set<Integer> distinctBcis = new HashSet<>();
+            for (int i = 0; i < successorBcis.length; i++) {
+                successorBcis[i] = profile.successorBci(i);
+                if (!distinctBcis.add(successorBcis[i])) {
+                    ambiguous.add(context);
+                }
+            }
+            int[] previousShape = shapes.putIfAbsent(context, successorBcis);
+            if (previousShape != null && !Arrays.equals(previousShape, successorBcis)) {
+                ambiguous.add(context);
+                continue;
+            }
+            long[] aggregate = counts.computeIfAbsent(context, _ -> new long[successorBcis.length]);
+            for (int i = 0; i < aggregate.length; i++) {
+                aggregate[i] += profile.count(i);
+            }
+        }
+        ambiguous.forEach(counts::remove);
+        Map<ContextKey, long[]> result = new TreeMap<>(CONTEXT_COMPARATOR);
+        counts.forEach((context, successorCounts) -> {
+            if (Arrays.stream(successorCounts).anyMatch(count -> count != 0)) {
+                int[] successorBcis = shapes.get(context);
+                long[] records = new long[successorCounts.length * 3];
+                for (int i = 0; i < successorCounts.length; i++) {
+                    records[i * 3] = successorBcis[i];
+                    records[i * 3 + 1] = i;
+                    records[i * 3 + 2] = successorCounts[i];
+                }
+                result.put(context, records);
+            }
+        });
+        return result;
     }
 
     private static Map<ContextKey, Long> aggregateCallCounts(List<CallCountProfileCounter> counters) {
@@ -214,7 +273,7 @@ public final class BranchProfileIprofWriter {
     }
 
     private static JsonWriter writeLegacyProfiles(JsonWriter writer, Metadata metadata,
-                    Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> profiles) throws IOException {
+                    Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> profiles, Map<ContextKey, long[]> switchProfiles) throws IOException {
         writer.quote("conditionalProfiles").appendFieldSeparator().appendArrayStart();
         boolean first = true;
         for (Map.Entry<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> profile : profiles.entrySet()) {
@@ -223,6 +282,21 @@ public final class BranchProfileIprofWriter {
             }
             first = false;
             writeProfileEntry(writer, metadata, profile.getKey(), profile.getValue().getKey(), profile.getValue().getValue(), false);
+        }
+        for (Map.Entry<ContextKey, long[]> profile : switchProfiles.entrySet()) {
+            if (!first) {
+                writer.appendSeparator();
+            }
+            first = false;
+            writer.appendObjectStart().appendKeyValue("ctx", context(metadata, profile.getKey())).appendSeparator()
+                            .quote("records").appendFieldSeparator().appendArrayStart();
+            for (int i = 0; i < profile.getValue().length; i++) {
+                if (i != 0) {
+                    writer.appendSeparator();
+                }
+                writer.printValue(profile.getValue()[i]);
+            }
+            writer.appendArrayEnd().appendObjectEnd();
         }
         return writer.appendArrayEnd();
     }
@@ -324,7 +398,8 @@ public final class BranchProfileIprofWriter {
         return result.toString();
     }
 
-    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, int callCountProfiles, long recordedEvents) {
+    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, int callCountProfiles, int switchProfiles,
+                    long recordedEvents) {
     }
 
     private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) {
@@ -368,7 +443,8 @@ public final class BranchProfileIprofWriter {
         }
 
         private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples,
-                        List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, Iterable<ContextKey> callCountProfiles) {
+                        List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, Iterable<ContextKey> callCountProfiles,
+                        Iterable<ContextKey> switchProfiles) {
             TreeSet<String> descriptors = new TreeSet<>();
             for (PreciseSiteKey site : sites) {
                 descriptors.addAll(site.context.methodDescriptors);
@@ -380,6 +456,9 @@ public final class BranchProfileIprofWriter {
                 descriptors.addAll(Arrays.asList(profile.methodDescriptors()));
             }
             for (ContextKey context : callCountProfiles) {
+                descriptors.addAll(context.methodDescriptors);
+            }
+            for (ContextKey context : switchProfiles) {
                 descriptors.addAll(context.methodDescriptors);
             }
             TreeSet<String> types = new TreeSet<>();

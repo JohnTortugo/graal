@@ -114,4 +114,16 @@ public class ConditionalProbabilityMathTest {
         Assert.assertTrue(byBci.containsKey(20));
         Assert.assertTrue(byBci.containsKey(53));
     }
+
+    @Test
+    public void switchProbabilitiesAreInstalledAtomically() {
+        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(3, new int[]{0, 1, 2}, new double[]{1.0 / 3, 1.0 / 3, 1.0 / 3}, new double[]{0.2, 0.3, 0.5});
+        Assert.assertArrayEquals(new double[]{0.2, 0.3, 0.5}, result, 1e-12);
+    }
+
+    @Test
+    public void sharedSwitchTargetPreservesPriorKeyRatio() {
+        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(2, new int[]{0, 0, 1}, new double[]{0.1, 0.2, 0.7}, new double[]{0.6, 0.4});
+        Assert.assertArrayEquals(new double[]{0.2, 0.4, 0.4}, result, 1e-12);
+    }
 }

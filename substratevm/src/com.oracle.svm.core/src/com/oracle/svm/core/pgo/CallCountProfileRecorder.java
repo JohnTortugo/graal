@@ -91,6 +91,18 @@ public final class CallCountProfileRecorder implements ThreadListener {
         return enabled;
     }
 
+    public static int allocateRawCounter() {
+        int index = NEXT_INDEX.getAndIncrement();
+        if (index >= MAX_COUNTERS) {
+            throw new IllegalStateException("Profile instrumentation exceeds the " + MAX_COUNTERS + "-counter capacity");
+        }
+        return index;
+    }
+
+    public static long getRawCount(int counterIndex) {
+        return getCount(counterIndex);
+    }
+
     public static CallCountProfileCounter create(String[] methodDescriptors, int[] contextBcis) {
         if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length) {
             throw new IllegalArgumentException("Call-count context must contain matching non-empty arrays");
@@ -298,6 +310,12 @@ public final class CallCountProfileRecorder implements ThreadListener {
         result.sort(Comparator.comparing((CallCountProfileCounter counter) -> String.join("\u0000", counter.methodDescriptors()))
                         .thenComparing(counter -> java.util.Arrays.toString(counter.contextBcis())));
         return result;
+    }
+
+    static void refreshHostedSnapshotForTesting() {
+        if (SubstrateUtil.HOSTED) {
+            snapshot = null;
+        }
     }
 
     public static void prepareSnapshot() {

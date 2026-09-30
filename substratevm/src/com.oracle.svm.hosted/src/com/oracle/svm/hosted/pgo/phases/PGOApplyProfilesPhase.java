@@ -66,6 +66,7 @@ import jdk.graal.compiler.nodes.ControlSplitNode;
 import jdk.graal.compiler.nodes.IndirectCallTargetNode;
 import jdk.graal.compiler.nodes.ProfileData;
 import jdk.graal.compiler.nodes.ProfileData.BranchProbabilityData;
+import jdk.graal.compiler.nodes.ProfileData.SwitchProbabilityData;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.extended.SwitchNode;
 import jdk.graal.compiler.nodes.java.InstanceOfNode;
@@ -92,6 +93,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
         @Option(help = "Apply virtualInvokeProfiles receiver frequencies. Disable with -H:-PGOUseReceiverProfiles.")//
         public static final HostedOptionKey<Boolean> PGOUseReceiverProfiles = new HostedOptionKey<>(true);
+
+        @Option(help = "Apply conditionalProfiles to SwitchNode successors. Disable with -H:-PGOUseSwitchProfiles.")//
+        public static final HostedOptionKey<Boolean> PGOUseSwitchProfiles = new HostedOptionKey<>(true);
         // @formatter:on
     }
 
@@ -288,11 +292,19 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             return;
         }
         for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, conditionalStage, inliningContext)) {
-            updateConditionalProbabilitiesBasedOnSamples(site.node());
+            if (shouldApplyConditional(site.node())) {
+                updateConditionalProbabilitiesBasedOnSamples(site.node());
+            }
         }
         for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, conditionalStage, inliningContext)) {
-            updateConditionalProbabilities(site);
+            if (shouldApplyConditional(site.node())) {
+                updateConditionalProbabilities(site);
+            }
         }
+    }
+
+    private static boolean shouldApplyConditional(ControlSplitNode node) {
+        return !(node instanceof SwitchNode) || Options.PGOUseSwitchProfiles.getValue();
     }
 
     private void updateProfilesForInvokes(StructuredGraph graph) {
@@ -596,6 +608,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     private static ConditionalApplication setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode,
                     PGOProfilesLookup telemetry) {
+        if (conditionalNode instanceof SwitchNode switchNode) {
+            return setSwitchProbabilities(source, conditionalSuccessors, switchNode, telemetry);
+        }
         List<Node> successors = conditionalNode.successors().snapshot();
         List<Node> aliveSuccessors = successors.stream().filter(Node::isAlive).collect(Collectors.toList());
         Optional<Map<Integer, Double>> aggregatedProbabilities = aggregatedProbabilities(conditionalSuccessors);
@@ -607,6 +622,55 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         matchingProfiles.forEach(
                         s -> conditionalNode.setProbability((AbstractBeginNode) s, BranchProbabilityData.create(aggregatedProbabilities.get().get(s.getNodeSourcePosition().getBCI()), source)));
         return new ConditionalApplication(aggregatedProbabilities.get().size(), matchingProfiles.size());
+    }
+
+    private static ConditionalApplication setSwitchProbabilities(ProfileData.ProfileSource source, long[] records, SwitchNode switchNode, PGOProfilesLookup telemetry) {
+        Optional<Map<Integer, Double>> probabilities = aggregatedProbabilities(records);
+        List<Node> successors = switchNode.successors().snapshot();
+        if (probabilities.isEmpty() || probabilities.get().size() != successors.size()) {
+            return new ConditionalApplication(probabilities.map(Map::size).orElse(0), 0);
+        }
+        double[] successorProbabilities = new double[successors.size()];
+        Set<Integer> seenBcis = new HashSet<>();
+        for (int i = 0; i < successors.size(); i++) {
+            Node successor = successors.get(i);
+            NodeSourcePosition position = successor.getNodeSourcePosition();
+            if (!successor.isAlive() || position == null || !seenBcis.add(position.getBCI())) {
+                return new ConditionalApplication(probabilities.get().size(), 0);
+            }
+            Double probability = probabilities.get().get(position.getBCI());
+            if (probability == null) {
+                return new ConditionalApplication(probabilities.get().size(), 0);
+            }
+            successorProbabilities[i] = probability;
+        }
+        int keyCount = switchNode.keyCount() + 1; // Explicit keys plus the default key.
+        int[] keySuccessors = new int[keyCount];
+        double[] prior = new double[keyCount];
+        for (int i = 0; i < keyCount; i++) {
+            keySuccessors[i] = switchNode.keySuccessorIndex(i);
+            prior[i] = switchNode.keyProbability(i);
+        }
+        double[] keyProbabilities = distributeSwitchProbabilities(successors.size(), keySuccessors, prior, successorProbabilities);
+        recordPriorComparison(telemetry, records, switchNode, successors, probabilities.get());
+        switchNode.setProfileData(SwitchProbabilityData.create(keyProbabilities, source));
+        return new ConditionalApplication(probabilities.get().size(), successors.size());
+    }
+
+    public static double[] distributeSwitchProbabilities(int successorCount, int[] keySuccessors, double[] prior, double[] successorProbabilities) {
+        double[] priorBySuccessor = new double[successorCount];
+        int[] keysBySuccessor = new int[successorCount];
+        for (int i = 0; i < keySuccessors.length; i++) {
+            priorBySuccessor[keySuccessors[i]] += prior[i];
+            keysBySuccessor[keySuccessors[i]]++;
+        }
+        double[] result = new double[keySuccessors.length];
+        for (int i = 0; i < keySuccessors.length; i++) {
+            int successor = keySuccessors[i];
+            result[i] = priorBySuccessor[successor] == 0.0 ? successorProbabilities[successor] / keysBySuccessor[successor]
+                            : successorProbabilities[successor] * prior[i] / priorBySuccessor[successor];
+        }
+        return result;
     }
 
     /**
