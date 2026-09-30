@@ -31,12 +31,15 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
+import org.graalvm.nativeimage.RuntimeStateTrimConfig;
 import org.graalvm.nativeimage.impl.VMRuntimeSupport;
 
 import com.oracle.svm.guest.staging.GuestStagingDependencyBridge;
 import com.oracle.svm.guest.staging.HeapSizeVerifier;
+import com.oracle.svm.guest.staging.IsolateArgumentParser;
 import com.oracle.svm.guest.staging.SubstrateGuestOptions;
 import com.oracle.svm.guest.staging.option.RuntimeOptionParser;
+import com.oracle.svm.shared.imagelayer.LayeredGuestFoldResolver;
 import com.oracle.svm.shared.meta.GuestFold;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.AllAccess;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.SingleLayer;
@@ -72,7 +75,7 @@ public final class RuntimeSupport implements VMRuntimeSupport {
     public RuntimeSupport() {
     }
 
-    @GuestFold
+    @GuestFold(resolver = LayeredGuestFoldResolver.INITIAL_LAYER)
     public static RuntimeSupport getRuntimeSupport() {
         return ImageSingletons.lookup(RuntimeSupport.class);
     }
@@ -99,7 +102,7 @@ public final class RuntimeSupport implements VMRuntimeSupport {
         if (shouldInitialize) {
             RuntimeOptionParser.singleton().validateOptionsAfterParsing();
 
-            GuestStagingDependencyBridge.singleton().verifyIsolateArgumentOptionValues();
+            IsolateArgumentParser.singleton().verifyOptionValues();
             HeapSizeVerifier.verifyHeapOptions();
 
             executeHooks(startupHooks);
@@ -114,7 +117,7 @@ public final class RuntimeSupport implements VMRuntimeSupport {
      * initialization, before runtime options are parsed. The executed code should therefore not
      * try to access any runtime options. If it is necessary to access a runtime option, then its
      * value must be parsed early and accessed via
-     * {@code com.oracle.svm.core.IsolateArgumentParser}.
+     * {@code com.oracle.svm.guest.staging.IsolateArgumentParser}.
      */
     public void addInitializationHook(Hook initHook) {
         addHook(initializationHooks, initHook);
@@ -176,6 +179,14 @@ public final class RuntimeSupport implements VMRuntimeSupport {
                 hook.execute(firstIsolate);
             }
         }
+    }
+
+    /**
+     * Optimizes runtime state according to {@link RuntimeStateTrimConfig config}.
+     */
+    @Override
+    public void trimRuntimeState(RuntimeStateTrimConfig config) {
+        GuestStagingDependencyBridge.singleton().trimRuntimeState(config);
     }
 
     /**

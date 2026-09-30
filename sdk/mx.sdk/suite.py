@@ -39,9 +39,9 @@
 # SOFTWARE.
 #
 suite = {
-  "mxversion": "7.83.0",
+  "mxversion": "7.86.0",
   "name" : "sdk",
-  "version" : "25.4.4.1.1",
+  "version" : "25.5.5",
   "release_from" : "tag:vm",
   "sourceinprojectwhitelist" : [],
   "url" : "https://github.com/oracle/graal",
@@ -1621,7 +1621,7 @@ CXX=xcrun <path:LLVM_TOOLCHAIN>/bin/clang++
 AR=xcrun <path:LLVM_TOOLCHAIN>/bin/llvm-ar
 CFLAGS=
 CXXFLAGS=
-LDFLAGS=-fuse-ld=lld
+LDFLAGS=
 '''
             },
           },

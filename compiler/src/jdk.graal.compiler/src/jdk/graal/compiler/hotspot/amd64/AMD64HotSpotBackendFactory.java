@@ -76,6 +76,20 @@ public class AMD64HotSpotBackendFactory extends HotSpotBackendFactory {
     }
 
     @Override
+    protected void filterTargetFeatures(GraalHotSpotVMConfig config, TargetDescription target) {
+        AMD64 architecture = (AMD64) target.arch;
+        if (!config.useFMAIntrinsics) {
+            architecture.getFeatures().remove(AMD64.CPUFeature.FMA);
+        }
+        if (!config.usePopCountInstruction) {
+            architecture.getFeatures().remove(AMD64.CPUFeature.POPCNT);
+        }
+        if (!config.useCountLeadingZerosInstruction) {
+            architecture.getFeatures().remove(AMD64.CPUFeature.LZCNT);
+        }
+    }
+
+    @Override
     protected Plugins createGraphBuilderPlugins(HotSpotGraalRuntimeProvider graalRuntime, CompilerConfiguration compilerConfiguration, GraalHotSpotVMConfig config, TargetDescription target,
                     HotSpotConstantReflectionProvider constantReflection, HotSpotHostForeignCallsProvider foreignCalls, MetaAccessProvider metaAccess,
                     HotSpotSnippetReflectionProvider snippetReflection, HotSpotReplacementsImpl replacements, HotSpotWordTypes wordTypes, OptionValues options, BarrierSet barrierSet) {
@@ -123,7 +137,7 @@ public class AMD64HotSpotBackendFactory extends HotSpotBackendFactory {
     protected HotSpotLoweringProvider createLowerer(HotSpotGraalRuntimeProvider runtime, MetaAccessProvider metaAccess, HotSpotHostForeignCallsProvider foreignCalls,
                     HotSpotRegistersProvider registers, HotSpotConstantReflectionProvider constantReflection, HotSpotPlatformConfigurationProvider platformConfig,
                     HotSpotMetaAccessExtensionProvider metaAccessExtensionProvider, TargetDescription target) {
-        boolean enableObjectVectorization = runtime.getVMConfig().gc.supportsVectorization();
+        boolean enableObjectVectorization = platformConfig.getBarrierSet().supportsObjectArrayRangeBarriers();
         VectorAMD64 varch = new VectorAMD64((AMD64) target.arch, metaAccess.getArrayIndexScale(JavaKind.Object), runtime.getVMConfig().useCompressedOops, runtime.getVMConfig().objectAlignment,
                         runtime.getVMConfig().maxVectorSize, enableObjectVectorization);
         return new AMD64HotSpotLoweringProvider(runtime, metaAccess, foreignCalls, registers, constantReflection, platformConfig, metaAccessExtensionProvider, target, varch);

@@ -132,7 +132,7 @@ import jdk.graal.compiler.nodes.loop.DerivedInductionVariable;
 import jdk.graal.compiler.nodes.loop.DerivedOffsetInductionVariable;
 import jdk.graal.compiler.nodes.loop.InductionVariable;
 import jdk.graal.compiler.nodes.loop.Loop;
-import jdk.graal.compiler.nodes.loop.OriginalLimitCheckedIV;
+import jdk.graal.compiler.loop.phases.CountedStripMiningUtility;
 import jdk.graal.compiler.nodes.memory.AddressableMemoryAccess;
 import jdk.graal.compiler.nodes.memory.FloatableThreadLocalAccess;
 import jdk.graal.compiler.nodes.memory.FloatingReadNode;
@@ -302,6 +302,13 @@ public final class LoopVectorizationAnalysis {
             if (node instanceof ReachabilityFenceNode && VectorizeReachabilityFences.getValue(graph.getOptions())) {
                 ReachabilityFenceNode fence = (ReachabilityFenceNode) node;
                 for (Node input : fence.inputs()) {
+                    if (loop.isOutsideLoop(input)) {
+                        /*
+                         * An invariant input becomes a FillVectorNode and is converted back to a
+                         * scalar by VectorReachabilityFenceNode during vector simplification.
+                         */
+                        continue;
+                    }
                     if (!isVectorizableComputationRoot(input, loop, arch, preVectorizationCheck, null)) {
                         return null;
                     }
@@ -695,11 +702,7 @@ public final class LoopVectorizationAnalysis {
     private static boolean isCounterIVHiddenBehindStripMining(Loop loop, InductionVariable currentIV, InductionVariable counterIV) {
         return loop.loopBegin().isCountedStripMinedInner() && loop.parent() != null && currentIV instanceof DerivedOffsetInductionVariable offsetIV &&
                         offsetIV.getBase() == counterIV && offsetIV.valueNode() instanceof AddNode &&
-                        isOriginalLimitCheckedIV(offsetIV.getOffset(), loop.parent());
-    }
-
-    private static boolean isOriginalLimitCheckedIV(ValueNode value, Loop loop) {
-        return loop.loopBegin().isCountedStripMinedOuter() && value instanceof OriginalLimitCheckedIV && value instanceof ValuePhiNode phi && phi.merge() == loop.loopBegin();
+                        CountedStripMiningUtility.isOriginalLimitCheckedIV(offsetIV.getOffset(), loop.parent());
     }
 
     /**
@@ -1017,9 +1020,16 @@ public final class LoopVectorizationAnalysis {
         NodeFlood flood = inputFlood != null ? inputFlood : new NodeFlood(value.graph());
         flood.add(value);
         for (Node node : flood) {
-            if (node instanceof ValueNode && ((ValueNode) node).stamp(NodeView.DEFAULT) instanceof SimdStamp) {
-                loop.loopBegin().getDebug().log(DebugContext.DETAILED_LEVEL, "can't vectorize SIMD value %s", node);
-                return false;
+            if (node instanceof ValueNode valueNode) {
+                Stamp stamp = valueNode.stamp(NodeView.DEFAULT);
+                if (stamp instanceof SimdStamp) {
+                    loop.loopBegin().getDebug().log(DebugContext.DETAILED_LEVEL, "can't vectorize SIMD value %s", node);
+                    return false;
+                }
+                if (!arch.supportsObjectVectorization() && stamp instanceof AbstractObjectStamp) {
+                    loop.loopBegin().getDebug().log(DebugContext.DETAILED_LEVEL, "can't vectorize object value %s", node);
+                    return false;
+                }
             }
             if (loop.isOutsideLoop(node)) {
                 continue;

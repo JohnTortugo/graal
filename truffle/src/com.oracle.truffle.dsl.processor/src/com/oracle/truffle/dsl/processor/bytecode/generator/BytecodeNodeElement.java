@@ -1484,7 +1484,7 @@ final class BytecodeNodeElement extends AbstractElement {
         CodeTreeBuilder b = ex.appendBuilder();
 
         b.tree(createNeverPartOfCompilation());
-        b.declaration(nodeArrayType, "result", "new Node[this.numNodes]");
+        b.declaration(nodeArrayType, "result", "this.numNodes == 0 ? EMPTY_NODES : new Node[this.numNodes]");
         b.statement("byte[] bc = bytecodes");
         b.statement("int bci = 0");
         b.statement("int numConditionalBranches = 0");
@@ -1555,6 +1555,7 @@ final class BytecodeNodeElement extends AbstractElement {
             }
         }
 
+        this.add(new CodeVariableElement(Set.of(PRIVATE, STATIC, FINAL), nodeArrayType, "EMPTY_NODES")).createInitBuilder().string("new Node[0]");
         this.add(new CodeVariableElement(Set.of(PRIVATE, STATIC, FINAL), type(boolean[].class), "EMPTY_EXCEPTION_PROFILES")).createInitBuilder().string("new boolean[0]");
         return ex;
     }
@@ -1689,6 +1690,9 @@ final class BytecodeNodeElement extends AbstractElement {
             parent.emitWriteBytecodeIndexToFrame(b, localFrame(), "-1");
         }
 
+        if (tier.isCached()) {
+            b.startAssign("bci").startStaticCall(types.CompilerDirectives, "mergeExplodeKey").string("bci").end(2);
+        }
         b.string("loop: ").startWhile().string("true").end().startBlock();
         if (tier.isCached()) {
             b.lineComment("Detect if a tier-down occurred.");
@@ -2736,9 +2740,10 @@ final class BytecodeNodeElement extends AbstractElement {
 
         CodeExecutableElement allocateBranchProfiles = new CodeExecutableElement(Set.of(PRIVATE, STATIC, FINAL), branchProfilesType, "allocateBranchProfiles",
                         new CodeVariableElement(type(int.class), "numProfiles"));
-        allocateBranchProfiles.getBuilder() //
-                        .lineComment("Encoding: [t1, f1, t2, f2, ..., tn, fn]") //
-                        .startReturn().startNewArray(branchProfilesType, CodeTreeBuilder.singleString("numProfiles * 2")).end(2);
+        CodeTreeBuilder b = allocateBranchProfiles.createBuilder();
+        b.lineComment("Encoding: [t1, f1, t2, f2, ..., tn, fn]");
+        b.startReturn().string("numProfiles == 0 ? ").string(BytecodeRootNodeElement.EMPTY_INT_ARRAY).string(" : ");
+        b.startNewArray(branchProfilesType, CodeTreeBuilder.singleString("numProfiles * 2")).end(2);
 
         CodeExecutableElement profileBranch = createProfileBranch(branchProfilesType);
         CodeExecutableElement ensureFalseProfile = createEnsureFalseProfile(branchProfilesType);

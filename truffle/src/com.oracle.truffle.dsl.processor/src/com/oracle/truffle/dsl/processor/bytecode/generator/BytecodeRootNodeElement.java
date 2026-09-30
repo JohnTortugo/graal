@@ -67,7 +67,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -86,7 +85,6 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.ArrayType;
-import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 
@@ -142,6 +140,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
     static final String BCI_INDEX = "BCI_INDEX";
     static final String CONTINUATION_FRAME_INDEX = "CONTINUATION_FRAME_INDEX";
     static final String EMPTY_INT_ARRAY = "EMPTY_INT_ARRAY";
+    static final String EMPTY_BYTE_ARRAY = "EMPTY_BYTE_ARRAY";
 
     // !Important: Keep these in sync with InstructionBytecodeSizeTest!
     // Estimated number of Java bytecodes per instruction.
@@ -232,6 +231,9 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         this.parserType = generic(types.BytecodeParser, abstractBuilderType == null ? bytecodeBuilderType : abstractBuilderType);
         setSuperClass(model.getTemplateType().asType());
         addField(this, Set.of(PRIVATE, STATIC, FINAL), int[].class, EMPTY_INT_ARRAY, "new int[0]");
+        if (model.enableCompressedSources) {
+            addField(this, Set.of(PRIVATE, STATIC, FINAL), byte[].class, EMPTY_BYTE_ARRAY, "new byte[0]");
+        }
 
         addField(this, Set.of(PRIVATE, STATIC, FINAL), Object[].class, "EMPTY_ARRAY", "new Object[0]");
         this.fastAccess = addField(this, Set.of(PRIVATE, STATIC, FINAL), types.BytecodeDSLAccess, "ACCESS");
@@ -289,6 +291,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
 
         if (model.enableTagInstrumentation) {
             tagNode.lazyInit();
+            tagRootNode.lazyInit();
         }
 
         CodeVariableElement bytecodeNode = new CodeVariableElement(Set.of(PRIVATE, VOLATILE), abstractBytecodeNode.asType(), "bytecode");
@@ -487,12 +490,6 @@ public final class BytecodeRootNodeElement extends AbstractElement {
             this.add(classToTag);
             CodeExecutableElement classToTagMethod = createMapTagMaskToTagsArray();
             this.add(classToTagMethod);
-
-            CodeExecutableElement initializeTagIndexToClass = this.add(createInitializeTagIndexToClass());
-            CodeVariableElement tagToClass = new CodeVariableElement(Set.of(PRIVATE, STATIC, FINAL), generic(context.getDeclaredType(ClassValue.class), type(Integer.class)),
-                            "CLASS_TO_TAG_MASK");
-            tagToClass.createInitBuilder().startStaticCall(initializeTagIndexToClass).end();
-            this.add(tagToClass);
         }
 
         // Define helper methods for throwing exceptions.
@@ -1273,7 +1270,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         } else {
             b.declaration(type(int.class), "lastEntry", "0");
             SourceInfoTable.emitInitCompressedSourceIterationVariables(b, type(int.class), "index");
-            b.startWhile().string("index < info.length").end().startBlock();
+            b.startWhile().string("index < info.length - ").variable(sourceInfoTable.footerLengthVariable).end().startBlock();
             b.statement("lastEntry = index");
             b.statement("index += info[index] & 0xFF");
             b.end();
@@ -1378,38 +1375,6 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         CodeTreeBuilder b = ex.getBuilder();
         b.statement("return BYTECODE.create(language, config, parser)");
         return ex;
-    }
-
-    private CodeExecutableElement createInitializeTagIndexToClass() {
-        DeclaredType classValue = context.getDeclaredType(ClassValue.class);
-        TypeMirror classValueType = generic(classValue, type(Integer.class));
-
-        CodeExecutableElement method = new CodeExecutableElement(Set.of(PRIVATE, STATIC), classValueType,
-                        "initializeTagMaskToClass");
-        CodeTreeBuilder b = method.createBuilder();
-
-        b.startStatement();
-        b.string("return new ClassValue<>()").startBlock();
-        b.string("protected Integer computeValue(Class<?> type) ").startBlock();
-
-        boolean elseIf = false;
-        int index = 0;
-        for (TypeMirror tagClass : model.getProvidedTags()) {
-            elseIf = b.startIf(elseIf);
-            b.string("type == ").typeLiteral(tagClass);
-            b.end().startBlock();
-            b.startReturn().string(1 << index).end();
-            b.end();
-            index++;
-        }
-        createFailInvalidTag(b, "type");
-
-        b.end();
-
-        b.end();
-        b.end();
-
-        return method;
     }
 
     void createFailInvalidTag(CodeTreeBuilder b, String tagLocal) {
@@ -1814,54 +1779,31 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         CodeTreeBuilder b = ex.createBuilder();
         b.declaration(arrayOf(type(byte.class)), "copy", "Arrays.copyOf(original, original.length)");
 
-        Map<Boolean, List<InstructionModel>> partitionedByIsQuickening = model.getInstructions().stream() //
-                        .sorted(Comparator.comparing(InstructionModel::getName)).collect(Collectors.partitioningBy(InstructionModel::isQuickening));
-
-        List<Entry<Integer, List<InstructionModel>>> regularGroupedByLength = partitionedByIsQuickening.get(false).stream() //
-                        .collect(deterministicGroupingBy(InstructionModel::getInstructionLength)).entrySet() //
-                        .stream().sorted(Comparator.comparing(entry -> entry.getKey())) //
-                        .toList();
-
-        List<Entry<InstructionModel, List<InstructionModel>>> quickenedGroupedByQuickeningRoot = partitionedByIsQuickening.get(true).stream() //
-                        .collect(deterministicGroupingBy(InstructionModel::getQuickeningRoot)).entrySet() //
-                        .stream().sorted(Comparator.comparing((Entry<InstructionModel, List<InstructionModel>> entry) -> {
-                            InstructionKind kind = entry.getKey().kind;
-                            return kind == InstructionKind.CUSTOM || kind == InstructionKind.CUSTOM_SHORT_CIRCUIT;
-                        }).thenComparing(entry -> entry.getKey().getInstructionLength())) //
-                        .toList();
-
         b.declaration(getBytecodeIndexType(), "bci", "0");
 
         b.startWhile().string("bci < copy.length").end().startBlock();
         b.startSwitch().tree(readInstruction("copy", "bci")).end().startBlock();
 
-        for (var quickenedGroup : quickenedGroupedByQuickeningRoot) {
-            InstructionModel quickeningRoot = quickenedGroup.getKey();
-            List<InstructionModel> instructions = quickenedGroup.getValue();
-            int instructionLength = instructions.get(0).getInstructionLength();
-            for (InstructionModel instruction : instructions) {
-                if (instruction.getInstructionLength() != instructionLength) {
-                    throw new AssertionError("quickened group has multiple different instruction lengths");
-                }
-                b.startCase().tree(createInstructionConstant(instruction)).end();
-            }
-            b.startCaseBlock();
-
-            b.statement(writeInstruction("copy", "bci", createInstructionConstant(quickeningRoot)));
-            b.startStatement().string("bci += ").string(instructionLength).end();
-            b.statement("break");
-            b.end();
+        if (ImmediateKind.STATE_PROFILE.width != ImmediateWidth.SHORT) {
+            throw new AssertionError("state bitset width changed");
         }
-
-        for (var regularGroup : regularGroupedByLength) {
-            int instructionLength = regularGroup.getKey();
-            List<InstructionModel> instructions = regularGroup.getValue();
+        Map<EqualityCodeTree, List<InstructionModel>> caseGrouping = EqualityCodeTree.group(b, model.getInstructions(), (InstructionModel instruction, CodeTreeBuilder group) -> {
+            if (instruction.isQuickening()) {
+                group.statement(writeInstruction("copy", "bci", createInstructionConstant(instruction.getQuickeningRoot())));
+            }
+            for (InstructionImmediate stateBitset : instruction.getImmediates(ImmediateKind.STATE_PROFILE)) {
+                group.statement(writeImmediate("copy", "bci", "(short) 0", stateBitset.encoding()));
+            }
+            group.startStatement().string("bci += ").string(instruction.getInstructionLength()).end();
+            group.statement("break");
+        });
+        for (var group : caseGrouping.entrySet()) {
+            List<InstructionModel> instructions = group.getValue();
             for (InstructionModel instruction : instructions) {
                 b.startCase().tree(createInstructionConstant(instruction)).end();
             }
             b.startCaseBlock();
-            b.startStatement().string("bci += ").string(instructionLength).end();
-            b.statement("break");
+            b.tree(group.getKey().getTree());
             b.end();
         }
 
@@ -1914,7 +1856,11 @@ public final class BytecodeRootNodeElement extends AbstractElement {
             boundVariables.add(assumption.getExpression());
         }
 
-        boundVariables.add(specialization.getLimitExpression());
+        // The parser omits the limit when it has no effect (specialization cannot have multiple instances).
+        DSLExpression limit = specialization.getLimitExpression();
+        if (limit != null) {
+            boundVariables.add(limit);
+        }
 
         return boundVariables;
     }
@@ -3012,6 +2958,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
         final List<CodeVariableElement> attributeOffsets;
         final int entryLength;
         final CodeVariableElement entryLengthVariable;
+        final CodeVariableElement footerLengthVariable;
         final ArrayType sourceInfoType;
 
         public final CodeExecutableElement createSourceSection;
@@ -3030,6 +2977,7 @@ public final class BytecodeRootNodeElement extends AbstractElement {
             }
             this.entryLength = offset;
             this.entryLengthVariable = addConstant("ENTRY_LENGTH", this.entryLength);
+            this.footerLengthVariable = model.enableCompressedSources ? addConstant("FOOTER_LENGTH", Byte.BYTES) : null;
 
             this.sourceInfoType = new CodeTypeMirror.ArrayCodeTypeMirror(type(model.enableCompressedSources ? byte.class : int.class));
             this.createSourceSection = BytecodeRootNodeElement.this.add(createCreateSourceSection());
