@@ -102,6 +102,7 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 10. Receiver-frequency producer | retained, independently gated | safe producer recorded 1.568B events with 3.8% training overhead; isolated runtime +0.27%; kept for polymorphic workloads |
 | 11. Exact post-inlining call edges | retained, independently gated | 27.22B attributed events, zero drops; isolated runtime −0.20%; public suites differ; producer/consumer separately disableable |
 | 12. Switch successor profiles | retained, independently gated | complete atomic distributions; 103 active contexts/~719M events; +0.20% on fixed workload, image +64 KiB |
+| 13. Profile-guided method layout | retained, independently gated | descending call-count order; −1.01% on latest-mainline fixed workload, no image-size change |
 
 Standing caveats: conditional instrumentation covers `IfNode` branches but not switches; sampled
 callee counts measure time rather than receiver dispatch frequency, and recurring-callback leaf

@@ -504,6 +504,16 @@ contexts, and roughly 719 million successor executions. Same-tip isolation was n
 100.184 s, switch on 100.381 s (**+0.20%**), image +65,536 bytes. The sound mechanism remains enabled
 and independently controlled by `-H:-PGOProfileSwitches` / `-H:-PGOUseSwitchProfiles`.
 
+## Profile-guided method layout
+
+CE's block emission already consumes PGO-derived CFG frequencies. Whole-image method layout previously
+sorted by method name; it now sorts by descending resolved call count, retaining method-name order for
+ties and absent profiles. Early and post-inlining-only profiles work, LLVM is unchanged, and
+`-H:-PGOUseCodeLayout` disables the optimization.
+
+Latest-mainline same-profile isolation improved the fixed workload by **1.01%** (99.189 versus 100.202
+seconds) with identical image size and comparable GC. The mechanism remains independently gated.
+
 ## Validation standard
 
 Each accepted iteration requires:

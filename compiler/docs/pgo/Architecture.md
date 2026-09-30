@@ -192,6 +192,14 @@ their prior ratio within that block. This avoids drift from sequential probabili
 
 `-H:-PGOProfileSwitches` disables production and `-H:-PGOUseSwitchProfiles` disables application.
 
+## Profile-guided method layout
+
+CFG block ordering already uses frequencies propagated from branch and switch probabilities. At the
+whole-image level, `ProfileGuidedCodeSectionLayouter` additionally orders compiled methods by
+descending resolved call count, with the prior formatted method-name order for ties or absent data.
+Both early and post-inlining-only profile sources are supported. LLVM retains its existing layout.
+`-H:-PGOUseCodeLayout` restores method-name ordering.
+
 ## Dumping
 
 A runtime teardown hook writes one deterministic iprof selected by:
