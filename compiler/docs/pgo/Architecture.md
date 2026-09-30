@@ -141,6 +141,25 @@ to method/BCI identity, merges equal stacks, and emits `samplingProfiles`. `Code
 method signatures and modifiers whenever the sampler is registered, even without JFR, because stack
 profile identities require signatures.
 
+## Receiver-frequency producer
+
+A phase immediately after priority inlining instruments each remaining indirect invoke whose exact
+closed-world receiver set is available. The instrumentation reads the receiver hub's type ID and
+updates a per-thread native `(site, type)` open-addressed table without Java allocation. Instrumenting
+after inlining avoids changing inliner topology and avoids attaching caller metadata to cached
+expansion graphs.
+
+Each physical site records its full method/BCI context and the type-ID-to-descriptor mapping from the
+static receiver profile. Exiting threads merge into a bounded shared native table under a rare lock
+and free their private tables. At dump, a safepoint operation merges live tables before deterministic
+context aggregation and `virtualInvokeProfiles` serialization. Allocation failures, table capacity,
+and unknown site/type losses are reported.
+
+Producer and consumer controls are independent: `-H:-PGOProfileReceivers` removes instrumentation and
+runtime collection, while `-H:-PGOUseReceiverProfiles` prevents receiver lookups and profile mutation.
+The consumer still preserves the complete exact static receiver set; dynamic counts only assign
+frequencies and permit receiver guards where dispatch evidence exists.
+
 ## Dumping
 
 A runtime teardown hook writes one deterministic iprof selected by:

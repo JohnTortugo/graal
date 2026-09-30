@@ -466,9 +466,10 @@ events across 369 active contexts with about 3.8% training overhead and no lost 
 same-profile result was **+0.27%** (96.266 s with receiver profiles versus 96.009 s with only that
 section removed), i.e. noise/slight regression.
 
-Decision: do not merge the producer. Keep the external receiver-profile consumer and the requirement
-that receiver guards have dispatch-frequency evidence. Revisit only when a workload demonstrates a
-substantial remaining indirect-call ceiling.
+Decision: retain the lifecycle-safe producer behind independent controls. `-H:-PGOProfileReceivers`
+removes producer instrumentation and collection; `-H:-PGOUseReceiverProfiles` disables consumer
+lookups and mutation. The unsafe pre-inlining implementation remains rejected, but a neutral result
+on one workload does not justify removing a sound optimization that may help polymorphic programs.
 
 ## Validation standard
 

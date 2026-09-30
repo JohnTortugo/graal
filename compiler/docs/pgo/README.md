@@ -3,13 +3,15 @@
 This directory documents the experimental profile-guided optimization (PGO) producer and consumer
 implemented in public GraalVM Community Edition Native Image.
 
-The producer records two iprof categories in one training image:
+The producer records three iprof categories in one training image:
 
 - `conditionalProfiles` / `ceConditionalProfilesV2` for `IfNode` branches;
-- `samplingProfiles` from recurring per-thread Java stack samples.
+- `samplingProfiles` from recurring per-thread Java stack samples;
+- `virtualInvokeProfiles` with concrete receiver frequencies at indirect calls remaining after
+  priority inlining.
 
-The consumer also accepts external `virtualInvokeProfiles` receiver histograms. Call counts, monitor,
-`instanceof`, switch, code-layout, and image-heap profiles are outside the current scope.
+Call counts, monitor, `instanceof`, switch, code-layout, and image-heap profiles are outside the
+current scope.
 
 > [!WARNING]
 > This implementation is experimental. Precise CE conditional profiles use stage, context, successor
@@ -111,6 +113,8 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:-PGOSamplingMethodProfiles          do not prefer sampled callee method profiles
 -H:-PGOSamplingHotCaller               do not mark sampled roots as hot callers
 -H:-PGOSamplingSelfTime                do not expose sampled self time
+-H:-PGOProfileReceivers               do not instrument or emit receiver frequencies
+-H:-PGOUseReceiverProfiles            parse but do not apply receiver profiles
 ```
 
 Receiver-based hot-callee devirtualization additionally requires a dynamic receiver type profile.
