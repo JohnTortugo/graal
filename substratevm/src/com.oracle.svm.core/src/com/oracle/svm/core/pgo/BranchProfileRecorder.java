@@ -234,9 +234,11 @@ public final class BranchProfileRecorder {
         }
         try {
             List<StackSampleRecorder.DecodedSample> stackSamples = StackSampleRecorder.hasSamples() ? StackSampleRecorder.decodeSamples() : List.of();
-            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples);
-            Log.log().string("[PGO] wrote conditional profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
+            List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles = ReceiverProfileRecorder.isEnabled() ? ReceiverProfileRecorder.decodeProfiles() : List.of();
+            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles);
+            Log.log().string("[PGO] wrote profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
                             .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
+                            .string(", receiver contexts=").signed(statistics.receiverProfiles())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();
@@ -245,6 +247,11 @@ public final class BranchProfileRecorder {
                 Log.log().string("[PGO] stack samples=").signed(sampling.samples()).string(", threads=").signed(sampling.tables())
                                 .string(", decoded stacks=").signed(sampling.decodedStacks()).string(", truncated=").signed(sampling.truncated())
                                 .string(", dropped=").signed(sampling.dropped()).string(", unresolved addresses=").signed(sampling.unresolvedAddresses()).newline();
+            }
+            if (ReceiverProfileRecorder.isEnabled()) {
+                ReceiverProfileRecorder.Statistics receivers = ReceiverProfileRecorder.statistics();
+                Log.log().string("[PGO] receiver profiles: physical sites=").signed(receivers.physicalSites()).string(", events=").signed(receivers.events())
+                                .string(", dropped=").signed(receivers.dropped()).string(", unknown=").signed(receivers.unknown()).newline();
             }
         } catch (IOException | RuntimeException exception) {
             Log.log().string("[PGO] could not write conditional profile '").string(fileName).string("': ").exception(exception).newline();

@@ -89,6 +89,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
         @Option(help = "Print the quality metrics (relevance and applicability) for the provided profiles i.e. iprof file(s).")//
         public static final HostedOptionKey<Boolean> PGOPrintProfileQuality = new HostedOptionKey<>(false);
+
+        @Option(help = "Apply virtualInvokeProfiles receiver frequencies. Disable with -H:-PGOUseReceiverProfiles.")//
+        public static final HostedOptionKey<Boolean> PGOUseReceiverProfiles = new HostedOptionKey<>(true);
         // @formatter:on
     }
 
@@ -293,7 +296,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     private void updateProfilesForInvokes(StructuredGraph graph) {
-        if (!pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_PROFILES) && !pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_METHOD_PROFILES)) {
+        if (!Options.PGOUseReceiverProfiles.getValue() ||
+                        (!pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_PROFILES) && !pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_METHOD_PROFILES))) {
             return;
         }
         Consumer<MethodCallTargetNode> updateInvokeProfile = forceHot || graph.globalProfileProvider().hotCaller() ?  //

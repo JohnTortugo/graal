@@ -97,7 +97,7 @@ final class BranchProfileInstrumentationPhase extends BasePhase<HighTierContext>
         INSTRUMENTED_BRANCHES.incrementAndGet();
     }
 
-    private static boolean isNativeImageRuntimeMethod(String declaringClassName) {
+    static boolean isNativeImageRuntimeMethod(String declaringClassName) {
         return declaringClassName.startsWith("Lcom/oracle/svm/") ||
                         declaringClassName.startsWith("Lorg/graalvm/nativeimage/") ||
                         declaringClassName.startsWith("Lorg/graalvm/word/");

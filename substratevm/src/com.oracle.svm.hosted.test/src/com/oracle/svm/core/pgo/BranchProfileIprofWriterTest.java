@@ -27,6 +27,7 @@ package com.oracle.svm.core.pgo;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -178,5 +179,25 @@ public class BranchProfileIprofWriterTest {
         ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(first.toString()));
         Assert.assertEquals(1, parsed.conditionalEntries().size());
         Assert.assertArrayEquals(new long[]{10, 0, 0, 20, 1, 1}, parsed.conditionalEntries().getFirst().records());
+    }
+
+    @Test
+    public void receiverProfilesRoundTripThroughConsumerParser() throws Exception {
+        BranchProfileCounter counter = BranchProfileRecorder.lookup(new String[]{"Lexample/ReceiverTest;.run()V"}, new int[]{3}, 5, 9);
+        ReceiverProfileRecorder.DecodedReceiverProfile receivers = new ReceiverProfileRecorder.DecodedReceiverProfile(
+                        new String[]{"Lexample/ReceiverTest;.run()V"}, new int[]{17}, Map.of("Ljava/lang/String;", 7L, "Ljava/lang/Integer;", 3L));
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(counter), List.of(), List.of(receivers));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.receiverProfiles());
+        Assert.assertEquals(1, parsed.virtualInvokeEntries().size());
+        IprofConditionalParser.VirtualInvokeEntry entry = parsed.virtualInvokeEntries().getFirst();
+        Map<String, Long> counts = new java.util.HashMap<>();
+        for (int i = 0; i < entry.records().length; i += 2) {
+            counts.put(parsed.typeNamesById().get((int) entry.records()[i]), entry.records()[i + 1]);
+        }
+        Assert.assertEquals(Map.of("java.lang.String", 7L, "java.lang.Integer", 3L), counts);
     }
 }

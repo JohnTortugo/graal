@@ -34,6 +34,7 @@ import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
+import com.oracle.svm.core.pgo.ReceiverProfileRecorder;
 import com.oracle.svm.core.pgo.StackSampleRecorder;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
@@ -74,6 +75,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
 
         @Option(help = "Also sample call stacks periodically in the instrumentation image and emit samplingProfiles. Interval: -XX:PGOSamplingIntervalMillis.")//
         public static final HostedOptionKey<Boolean> PGOSampleStacks = new HostedOptionKey<>(true);
+
+        @Option(help = "Record concrete receiver frequencies after priority inlining and emit virtualInvokeProfiles. Disable with -H:-PGOProfileReceivers.")//
+        public static final HostedOptionKey<Boolean> PGOProfileReceivers = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static final class SourcePositionOption extends HostedOptionKey<Boolean> {
@@ -130,6 +134,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
+        if (Options.PGOProfileReceivers.getValue()) {
+            ThreadListenerSupport.get().register(ReceiverProfileRecorder.create());
+        }
         if (Options.PGOSampleStacks.getValue()) {
             ThreadListenerSupport.get().register(StackSampleRecorder.create());
         }
@@ -140,6 +147,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                     Map<Class<? extends Node>, NodeLoweringProvider<?>> lowerings, boolean hosted) {
         if (hosted && enabled()) {
             providers.getReplacements().registerSnippetTemplateCache(new BranchProfileCounterNode.Templates(options, providers));
+            if (Options.PGOProfileReceivers.getValue(options)) {
+                providers.getReplacements().registerSnippetTemplateCache(new ReceiverProfileCounterNode.Templates(options, providers));
+            }
         }
     }
 
@@ -149,6 +159,15 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             return;
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
+        if (Options.PGOProfileReceivers.getValue()) {
+            ListIterator<BasePhase<? super HighTierContext>> receiverInliner = highTier.findPhase(AbstractInliningPhase.class);
+            if (receiverInliner != null) {
+                /* findPhase returns an iterator positioned immediately after the inliner. */
+                receiverInliner.add(new ReceiverProfileInstrumentationPhase());
+            } else {
+                highTier.prependPhase(new ReceiverProfileInstrumentationPhase());
+            }
+        }
         Stage stage = alignedEnabled() ? Stage.ROOT_PRE_INLINE : Stage.POST_HIGH_TIER;
         BranchProfileInstrumentationPhase phase = new BranchProfileInstrumentationPhase(stage, null);
         if (alignedEnabled()) {
@@ -172,9 +191,10 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         BranchProfileRecorder.sealRegistry();
         // Checkstyle: stop
-        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions%n",
+        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions; receiver invokes=%d, skipped=%d%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",
-                        BranchProfileInstrumentationPhase.instrumentedBranches(), BranchProfileInstrumentationPhase.skippedBranches());
+                        BranchProfileInstrumentationPhase.instrumentedBranches(), BranchProfileInstrumentationPhase.skippedBranches(),
+                        ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes());
         // Checkstyle: resume
     }
 }

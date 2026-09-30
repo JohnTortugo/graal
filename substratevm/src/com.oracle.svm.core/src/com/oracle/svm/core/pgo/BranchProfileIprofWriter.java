@@ -49,8 +49,13 @@ public final class BranchProfileIprofWriter {
     }
 
     public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
+        return write(path, counters, stackSamples, List.of());
+    }
+
+    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(path)) {
-            return write(writer, counters, stackSamples);
+            return write(writer, counters, stackSamples, receiverProfiles);
         }
     }
 
@@ -59,23 +64,32 @@ public final class BranchProfileIprofWriter {
     }
 
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
+        return write(output, counters, stackSamples, List.of());
+    }
+
+    public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
-            return write(writer, counters, stackSamples);
+            return write(writer, counters, stackSamples, receiverProfiles);
         }
     }
 
-    private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
+    private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
         Map<PreciseSiteKey, PreciseSiteData> preciseSites = aggregatePreciseSites(activeCounters);
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> legacySites = unambiguousLegacySites(preciseSites);
-        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples);
+        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles);
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
         writeMethods(writer, metadata).appendSeparator();
         writeLegacyProfiles(writer, metadata, legacySites).appendSeparator();
+        if (!receiverProfiles.isEmpty()) {
+            writeReceiverProfiles(writer, metadata, receiverProfiles).appendSeparator();
+        }
         writePreciseProfiles(writer, metadata, preciseSites);
         if (!stackSamples.isEmpty()) {
             writer.appendSeparator();
@@ -83,7 +97,7 @@ public final class BranchProfileIprofWriter {
         }
         writer.appendObjectEnd();
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
-        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), events);
+        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), receiverProfiles.size(), events);
     }
 
     private static Map<PreciseSiteKey, PreciseSiteData> aggregatePreciseSites(List<BranchProfileCounter> counters) {
@@ -187,6 +201,30 @@ public final class BranchProfileIprofWriter {
         return writer.appendArrayEnd();
     }
 
+    private static JsonWriter writeReceiverProfiles(JsonWriter writer, Metadata metadata, List<ReceiverProfileRecorder.DecodedReceiverProfile> profiles) throws IOException {
+        writer.quote("virtualInvokeProfiles").appendFieldSeparator().appendArrayStart();
+        boolean firstProfile = true;
+        for (ReceiverProfileRecorder.DecodedReceiverProfile profile : profiles) {
+            if (!firstProfile) {
+                writer.appendSeparator();
+            }
+            firstProfile = false;
+            ContextKey context = new ContextKey(Arrays.asList(profile.methodDescriptors()), Arrays.stream(profile.bcis()).boxed().toList());
+            writer.appendObjectStart().appendKeyValue("ctx", context(metadata, context)).appendSeparator()
+                            .quote("records").appendFieldSeparator().appendArrayStart();
+            boolean firstReceiver = true;
+            for (Map.Entry<String, Long> receiver : new TreeMap<>(profile.countsByTypeDescriptor()).entrySet()) {
+                if (!firstReceiver) {
+                    writer.appendSeparator();
+                }
+                firstReceiver = false;
+                writer.printValue(metadata.typesByName.get(ParsedMethod.typeName(receiver.getKey()))).appendSeparator().printValue(receiver.getValue());
+            }
+            writer.appendArrayEnd().appendObjectEnd();
+        }
+        return writer.appendArrayEnd();
+    }
+
     /** {@code samplingProfiles}: sampled call stacks innermost first with their sample counts. */
     private static void writeSamplingProfiles(JsonWriter writer, Metadata metadata, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
         writer.quote("samplingProfiles").appendFieldSeparator().appendArrayStart();
@@ -246,7 +284,7 @@ public final class BranchProfileIprofWriter {
         return result.toString();
     }
 
-    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, long recordedEvents) {
+    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, long recordedEvents) {
     }
 
     private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) {
@@ -289,7 +327,8 @@ public final class BranchProfileIprofWriter {
             this.methodsByDescriptor = methodsByDescriptor;
         }
 
-        private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples) {
+        private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples,
+                        List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) {
             TreeSet<String> descriptors = new TreeSet<>();
             for (PreciseSiteKey site : sites) {
                 descriptors.addAll(site.context.methodDescriptors);
@@ -297,12 +336,20 @@ public final class BranchProfileIprofWriter {
             for (StackSampleRecorder.DecodedSample sample : stackSamples) {
                 descriptors.addAll(Arrays.asList(sample.methodDescriptors()));
             }
+            for (ReceiverProfileRecorder.DecodedReceiverProfile profile : receiverProfiles) {
+                descriptors.addAll(Arrays.asList(profile.methodDescriptors()));
+            }
             TreeSet<String> types = new TreeSet<>();
             for (String descriptor : descriptors) {
                 ParsedMethod method = ParsedMethod.parse(descriptor);
                 types.add(method.declaringType);
                 types.add(method.returnType);
                 types.addAll(method.parameterTypes);
+            }
+            for (ReceiverProfileRecorder.DecodedReceiverProfile profile : receiverProfiles) {
+                for (String descriptor : profile.countsByTypeDescriptor().keySet()) {
+                    types.add(ParsedMethod.typeName(descriptor));
+                }
             }
             return new Metadata(assignIds(types), assignIds(descriptors));
         }
@@ -374,7 +421,7 @@ public final class BranchProfileIprofWriter {
             return cursor + 1;
         }
 
-        private static String typeName(String descriptor) {
+        static String typeName(String descriptor) {
             int arrays = 0;
             while (arrays < descriptor.length() && descriptor.charAt(arrays) == '[') {
                 arrays++;
