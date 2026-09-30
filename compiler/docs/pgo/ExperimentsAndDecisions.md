@@ -492,6 +492,18 @@ Decision: retain producer and consumer independently. `-H:-PGOProfileCallCounts`
 `-H:-PGOUseCallCounts` disables optimization use. A neutral result on one application does not remove
 a sound profile category.
 
+## Switch successor profiles
+
+The producer now covers `SwitchNode` through standard conditional records. Context-only ambiguity is
+handled conservatively: only identical successor shapes aggregate, while duplicate-BCI, rewired, and
+legacy-`If` collision contexts are omitted. The consumer requires a complete mapping and installs the
+whole distribution atomically; case keys sharing one block retain their prior relative weights.
+
+On the latest Oracle mainline base, the fixed workload recorded 3,864 physical switches, 103 active
+contexts, and roughly 719 million successor executions. Same-tip isolation was neutral: switch off
+100.184 s, switch on 100.381 s (**+0.20%**), image +65,536 bytes. The sound mechanism remains enabled
+and independently controlled by `-H:-PGOProfileSwitches` / `-H:-PGOUseSwitchProfiles`.
+
 ## Validation standard
 
 Each accepted iteration requires:

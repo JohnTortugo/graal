@@ -179,6 +179,19 @@ sampling-confidence gates. Call-count-only profiles also install the context-awa
 
 `-H:-PGOProfileCallCounts` disables production; `-H:-PGOUseCallCounts` disables optimization use.
 
+## Switch successor profiles
+
+Switches use the same standard `conditionalProfiles` category as `IfNode`s. One sparse raw counter is
+assigned to each distinct block successor. Because legacy switch records are context-only, the writer
+aggregates only physical copies with identical ordered successor shapes and omits duplicate-BCI,
+rewired, or legacy-`If` collision contexts.
+
+The consumer requires every live successor to map uniquely before changing the graph. It computes all
+case-key probabilities and installs one `SwitchProbabilityData` atomically; keys sharing a block retain
+their prior ratio within that block. This avoids drift from sequential probability rebalancing.
+
+`-H:-PGOProfileSwitches` disables production and `-H:-PGOUseSwitchProfiles` disables application.
+
 ## Dumping
 
 A runtime teardown hook writes one deterministic iprof selected by:

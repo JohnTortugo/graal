@@ -119,6 +119,8 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:-PGOUseReceiverProfiles            parse but do not apply receiver profiles
 -H:-PGOProfileCallCounts              do not instrument or emit exact call-edge counts
 -H:-PGOUseCallCounts                  parse but do not expose call counts to optimizations
+-H:-PGOProfileSwitches                do not instrument switch successors
+-H:-PGOUseSwitchProfiles              do not apply switch successor probabilities
 ```
 
 Receiver-based hot-callee devirtualization additionally requires a dynamic receiver type profile.
