@@ -100,6 +100,7 @@ within 0.012% and the resulting PGO image was performance-neutral versus the pre
 | 8. Same-build stack sampler | done | allocation-free per-thread sampling; −2.4% beyond milestone 7; invalid sample-time receiver guards fixed; scala-doku +9.2% regression → +1.2% |
 | 9. Confidence-gated hot-context inlining | done | inclusive count + root-share selection; −2.4% beyond milestone 8; now −26.8% vs no-PGO and 8.3% behind commercial PGO |
 | 10. Receiver-frequency producer | retained, independently gated | safe producer recorded 1.568B events with 3.8% training overhead; isolated runtime +0.27%; kept for polymorphic workloads |
+| 11. Exact post-inlining call edges | retained, independently gated | 27.22B attributed events, zero drops; isolated runtime −0.20%; public suites differ; producer/consumer separately disableable |
 
 Standing caveats: conditional instrumentation covers `IfNode` branches but not switches; sampled
 callee counts measure time rather than receiver dispatch frequency, and recurring-callback leaf

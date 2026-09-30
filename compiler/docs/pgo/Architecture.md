@@ -160,6 +160,25 @@ runtime collection, while `-H:-PGOUseReceiverProfiles` prevents receiver lookups
 The consumer still preserves the complete exact static receiver set; dynamic counts only assign
 frequencies and permit receiver guards where dispatch evidence exists.
 
+## Exact call-edge producer
+
+A phase immediately after priority inlining instruments direct calls and indirect calls with one
+exact closed-world target. Each standard `callCountProfiles` context begins with `callee:0`, followed
+by the caller call-site context. Polymorphic nominal targets are not misreported as executed method
+bodies.
+
+Counters use sparse per-thread native tables rather than storage proportional to all physical sites.
+Allocation or private-capacity fallback uses a bounded locked shared table; exiting threads merge and
+free private tables. Snapshot arrays are allocated before a safepoint operation, which merges live
+tables and copies native state before Java aggregation. Total and dropped events are reported.
+
+The resolver exposes method totals through `PGOProfilesLookup` and retains a present callee's count
+even if an outer profile frame is absent. For inlining, exact `min(edge calls / root calls, 1)` hotness
+is combined with sample-time hotness. Call counts affect smooth hotness but do not satisfy discrete
+sampling-confidence gates. Call-count-only profiles also install the context-aware provider.
+
+`-H:-PGOProfileCallCounts` disables production; `-H:-PGOUseCallCounts` disables optimization use.
+
 ## Dumping
 
 A runtime teardown hook writes one deterministic iprof selected by:

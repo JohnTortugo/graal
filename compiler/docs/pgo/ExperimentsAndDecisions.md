@@ -471,6 +471,27 @@ removes producer instrumentation and collection; `-H:-PGOUseReceiverProfiles` di
 lookups and mutation. The unsafe pre-inlining implementation remains rejected, but a neutral result
 on one workload does not justify removing a sound optimization that may help polymorphic programs.
 
+## Exact post-inlining call edges
+
+The CE producer now emits standard `callCountProfiles` for direct and exact-monomorphic calls that
+remain after priority inlining. Attempts to defer metadata assignment or place context markers before
+inlining were rejected after they failed to preserve runtime execution counts. The accepted phase
+runs immediately after the inliner, where both target and full caller context are stable.
+
+Sparse per-thread native tables recorded 27.22 billion fixed-workload edge executions in 4,000 active
+contexts with zero drops. The largest edge executed 9.225 billion times. Method totals remain usable
+when only an outer context frame is unresolved. The inliner combines exact edge/root invocation ratio
+with sample hotness, but does not treat call executions as sampling confidence.
+
+Fixed-workload same-profile isolation was neutral: **−0.20%** (99.020 versus 99.215 s), with a 0.33 MB
+image increase and roughly 24% additional training time over receiver-only instrumentation. Public
+pipelines showed different directional behavior, including improvements on three suites and a small
+regression on one; host-speed drift prevents general performance claims.
+
+Decision: retain producer and consumer independently. `-H:-PGOProfileCallCounts` removes collection;
+`-H:-PGOUseCallCounts` disables optimization use. A neutral result on one application does not remove
+a sound profile category.
+
 ## Validation standard
 
 Each accepted iteration requires:
