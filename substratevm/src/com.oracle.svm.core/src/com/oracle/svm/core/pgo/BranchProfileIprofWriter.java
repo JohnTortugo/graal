@@ -54,8 +54,13 @@ public final class BranchProfileIprofWriter {
 
     public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
+        return write(path, counters, stackSamples, receiverProfiles, List.of());
+    }
+
+    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(path)) {
-            return write(writer, counters, stackSamples, receiverProfiles);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles);
         }
     }
 
@@ -69,24 +74,33 @@ public final class BranchProfileIprofWriter {
 
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
+        return write(output, counters, stackSamples, receiverProfiles, List.of());
+    }
+
+    public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
-            return write(writer, counters, stackSamples, receiverProfiles);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles);
         }
     }
 
     private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
-                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) throws IOException {
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles) throws IOException {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
         Map<PreciseSiteKey, PreciseSiteData> preciseSites = aggregatePreciseSites(activeCounters);
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> legacySites = unambiguousLegacySites(preciseSites);
-        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles);
+        Map<ContextKey, Long> callCounts = aggregateCallCounts(callCountProfiles);
+        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles, callCounts.keySet());
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
         writeMethods(writer, metadata).appendSeparator();
         writeLegacyProfiles(writer, metadata, legacySites).appendSeparator();
+        if (!callCounts.isEmpty()) {
+            writeCallCountProfiles(writer, metadata, callCounts).appendSeparator();
+        }
         if (!receiverProfiles.isEmpty()) {
             writeReceiverProfiles(writer, metadata, receiverProfiles).appendSeparator();
         }
@@ -97,7 +111,19 @@ public final class BranchProfileIprofWriter {
         }
         writer.appendObjectEnd();
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
-        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), receiverProfiles.size(), events);
+        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size(), preciseSites.size(), receiverProfiles.size(), callCounts.size(), events);
+    }
+
+    private static Map<ContextKey, Long> aggregateCallCounts(List<CallCountProfileCounter> counters) {
+        Map<ContextKey, Long> result = new TreeMap<>(CONTEXT_COMPARATOR);
+        for (CallCountProfileCounter counter : counters) {
+            long count = counter.count();
+            if (count != 0) {
+                ContextKey context = new ContextKey(Arrays.asList(counter.methodDescriptors()), Arrays.stream(counter.contextBcis()).boxed().toList());
+                result.merge(context, count, Long::sum);
+            }
+        }
+        return result;
     }
 
     private static Map<PreciseSiteKey, PreciseSiteData> aggregatePreciseSites(List<BranchProfileCounter> counters) {
@@ -201,6 +227,20 @@ public final class BranchProfileIprofWriter {
         return writer.appendArrayEnd();
     }
 
+    private static JsonWriter writeCallCountProfiles(JsonWriter writer, Metadata metadata, Map<ContextKey, Long> profiles) throws IOException {
+        writer.quote("callCountProfiles").appendFieldSeparator().appendArrayStart();
+        boolean first = true;
+        for (Map.Entry<ContextKey, Long> profile : profiles.entrySet()) {
+            if (!first) {
+                writer.appendSeparator();
+            }
+            first = false;
+            writer.appendObjectStart().appendKeyValue("ctx", context(metadata, profile.getKey())).appendSeparator()
+                            .quote("records").appendFieldSeparator().appendArrayStart().printValue(profile.getValue()).appendArrayEnd().appendObjectEnd();
+        }
+        return writer.appendArrayEnd();
+    }
+
     private static JsonWriter writeReceiverProfiles(JsonWriter writer, Metadata metadata, List<ReceiverProfileRecorder.DecodedReceiverProfile> profiles) throws IOException {
         writer.quote("virtualInvokeProfiles").appendFieldSeparator().appendArrayStart();
         boolean firstProfile = true;
@@ -284,7 +324,7 @@ public final class BranchProfileIprofWriter {
         return result.toString();
     }
 
-    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, long recordedEvents) {
+    public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, int callCountProfiles, long recordedEvents) {
     }
 
     private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) {
@@ -328,7 +368,7 @@ public final class BranchProfileIprofWriter {
         }
 
         private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples,
-                        List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles) {
+                        List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, Iterable<ContextKey> callCountProfiles) {
             TreeSet<String> descriptors = new TreeSet<>();
             for (PreciseSiteKey site : sites) {
                 descriptors.addAll(site.context.methodDescriptors);
@@ -338,6 +378,9 @@ public final class BranchProfileIprofWriter {
             }
             for (ReceiverProfileRecorder.DecodedReceiverProfile profile : receiverProfiles) {
                 descriptors.addAll(Arrays.asList(profile.methodDescriptors()));
+            }
+            for (ContextKey context : callCountProfiles) {
+                descriptors.addAll(context.methodDescriptors);
             }
             TreeSet<String> types = new TreeSet<>();
             for (String descriptor : descriptors) {

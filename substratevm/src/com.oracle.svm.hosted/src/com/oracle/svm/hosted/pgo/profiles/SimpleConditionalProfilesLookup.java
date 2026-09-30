@@ -63,6 +63,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     /** The profile category this consumer supports; must match the phase's constant. */
     public static final String CONDITIONAL_PROFILES_CATEGORY = "conditionalProfiles";
+    public static final String CALL_COUNT_PROFILES_CATEGORY = "callCountProfiles";
     public static final String VIRTUAL_INVOKE_PROFILES_CATEGORY = "virtualInvokeProfiles";
     public static final String SAMPLING_PROFILES_CATEGORY = "samplingProfiles";
 
@@ -95,6 +96,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final Map<PreciseKey, PreciseProfile> preciseConditionalData;
     private final Map<List<FrameKey>, List<PreciseKey>> preciseSitesByContext;
     private final Map<NodeSourcePosition, Long> sampleCounts;
+    private final Map<String, Long> callCountsByMethod;
+    private final Map<List<FrameKey>, Long> callCountsByContext;
+    private final ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics;
     private final ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics;
     private final Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData;
     private final ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
@@ -106,6 +110,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final boolean preferPrecise;
     private final ConditionalProfileDiagnostics diagnostics;
     private volatile ConditionalProfileFilter filter = ConditionalProfileFilter.NONE;
+    private volatile boolean useCallCounts = true;
     private volatile boolean cleared;
 
     /**
@@ -160,20 +165,25 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics) {
-        this(conditionalData, preciseConditionalData, diagnostics, Map.of(), null, Map.of(), null);
+        this(conditionalData, preciseConditionalData, diagnostics, Map.of(), null, Map.of(), null, Map.of(), Map.of(), null);
     }
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
                     ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
-        this(conditionalData, preciseConditionalData, diagnostics, virtualInvokeData, virtualInvokeDiagnostics, Map.of(), null);
+        this(conditionalData, preciseConditionalData, diagnostics, virtualInvokeData, virtualInvokeDiagnostics, Map.of(), null, Map.of(), Map.of(), null);
     }
 
     public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, Map<PreciseKey, PreciseProfile> preciseConditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
                     ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,
-                    Map<NodeSourcePosition, Long> sampleCounts, ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics) {
+                    Map<NodeSourcePosition, Long> sampleCounts, ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics,
+                    Map<String, Long> callCountsByMethod, Map<List<FrameKey>, Long> callCountsByContext,
+                    ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics) {
         this.sampleCounts = Map.copyOf(sampleCounts);
+        this.callCountsByMethod = Map.copyOf(callCountsByMethod);
+        this.callCountsByContext = Map.copyOf(callCountsByContext);
+        this.callCountDiagnostics = callCountDiagnostics;
         this.samplingDiagnostics = samplingDiagnostics;
         this.virtualInvokeData = Map.copyOf(virtualInvokeData);
         this.virtualInvokeDiagnostics = virtualInvokeDiagnostics;
@@ -187,6 +197,10 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         this.preciseSitesByContext = Map.copyOf(byContext);
         this.preferPrecise = !preciseConditionalData.isEmpty();
         this.diagnostics = diagnostics;
+    }
+
+    public void setUseCallCounts(boolean enabled) {
+        this.useCallCounts = enabled;
     }
 
     public void setContextFallback(boolean enabled) {
@@ -317,6 +331,9 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     public boolean profileCategoryRecorded(String category) {
         if (cleared) {
             return false;
+        }
+        if (CALL_COUNT_PROFILES_CATEGORY.equals(category)) {
+            return useCallCounts && !callCountsByContext.isEmpty();
         }
         if (VIRTUAL_INVOKE_PROFILES_CATEGORY.equals(category)) {
             return !virtualInvokeData.isEmpty();
@@ -521,19 +538,38 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     // --- Out-of-scope categories: intentionally empty for a conditional-only consumer -----------
 
+    public Optional<Long> getContextCallCount(BytecodePosition callingContext) {
+        if (cleared || !useCallCounts || callingContext == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(callCountsByContext.get(canonicalize(callingContext)));
+    }
+
+    long getMethodCallCount(String methodDescriptor) {
+        return callCountsByMethod.getOrDefault(methodDescriptor, 0L);
+    }
+
+    public ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics() {
+        return callCountDiagnostics;
+    }
+
     @Override
     public Optional<ProfiledValue<Long>> getCallCountProfile(HostedMethod method) {
-        return Optional.empty();
+        if (cleared || !useCallCounts || method == null) {
+            return Optional.empty();
+        }
+        Long count = callCountsByMethod.get(ConditionalProfileContextResolver.methodDescriptor(method));
+        return count == null ? Optional.empty() : Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, count));
     }
 
     @Override
     public long getCallCountOrZero(HostedMethod method) {
-        return 0L;
+        return getCallCountProfile(method).map(ProfiledValue::value).orElse(0L);
     }
 
     @Override
     public boolean isExecuted(HostedMethod method) {
-        return false;
+        return getCallCountOrZero(method) > 0;
     }
 
     @Override

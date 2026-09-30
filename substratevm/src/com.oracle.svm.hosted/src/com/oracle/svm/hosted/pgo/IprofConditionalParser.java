@@ -73,6 +73,7 @@ public final class IprofConditionalParser {
     private static final String KEY_METHODS = "methods";
     private static final String KEY_CONDITIONAL_PROFILES = "conditionalProfiles";
     private static final String KEY_PRECISE_CONDITIONAL_PROFILES = "ceConditionalProfilesV2";
+    private static final String KEY_CALL_COUNT_PROFILES = "callCountProfiles";
     private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
     private static final String KEY_SAMPLING_PROFILES = "samplingProfiles";
     private static final String KEY_STAGE = "stage";
@@ -115,6 +116,10 @@ public final class IprofConditionalParser {
                     String conditionKind, long conditionFingerprint, int occurrence, long[] records) {
     }
 
+    /** One context-sensitive method-entry count. The innermost frame is the method at BCI 0. */
+    public record CallCountEntry(List<ContextFrame> context, long count) {
+    }
+
     /** Descriptor of a method as declared in the iprof {@code methods} table. */
     /**
      * One parsed {@code virtualInvokeProfiles} entry: the calling context of an indirect call and
@@ -140,22 +145,24 @@ public final class IprofConditionalParser {
         private final Map<Integer, MethodDescriptor> methodsById;
         private final List<ConditionalEntry> conditionalEntries;
         private final List<PreciseConditionalEntry> preciseConditionalEntries;
+        private final List<CallCountEntry> callCountEntries;
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         private final List<SamplingEntry> samplingEntries;
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries) {
-            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList(), Collections.emptyList());
+            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
         }
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries,
-                        List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
+                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
             this.conditionalEntries = Collections.unmodifiableList(conditionalEntries);
             this.preciseConditionalEntries = Collections.unmodifiableList(preciseConditionalEntries);
+            this.callCountEntries = Collections.unmodifiableList(callCountEntries);
             this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
             this.samplingEntries = Collections.unmodifiableList(samplingEntries);
         }
@@ -178,6 +185,10 @@ public final class IprofConditionalParser {
 
         public List<PreciseConditionalEntry> preciseConditionalEntries() {
             return preciseConditionalEntries;
+        }
+
+        public List<CallCountEntry> callCountEntries() {
+            return callCountEntries;
         }
 
         public List<VirtualInvokeEntry> virtualInvokeEntries() {
@@ -223,10 +234,11 @@ public final class IprofConditionalParser {
          */
         List<ConditionalEntry> conditionalEntries = optionalConditionalProfiles(top);
         List<PreciseConditionalEntry> preciseConditionalEntries = optionalPreciseConditionalProfiles(top);
+        List<CallCountEntry> callCountEntries = optionalCallCountProfiles(top);
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
         List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, virtualInvokeEntries, samplingEntries);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -322,6 +334,34 @@ public final class IprofConditionalParser {
             }
             long[] records = parseRecords(requireList(entry, KEY_RECORDS), ctx);
             result.add(new PreciseConditionalEntry(stage, parseContext(ctx), successorBcis, conditionKind, fingerprint, occurrence, records));
+        }
+        return result;
+    }
+
+    private static List<CallCountEntry> optionalCallCountProfiles(EconomicMap<String, Object> top) {
+        Object value = top.get(KEY_CALL_COUNT_PROFILES);
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + KEY_CALL_COUNT_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> profiles = (List<Object>) value;
+        List<CallCountEntry> result = new ArrayList<>(profiles.size());
+        for (Object element : profiles) {
+            EconomicMap<String, Object> entry = asObject(element, KEY_CALL_COUNT_PROFILES);
+            String ctx = requireString(entry, KEY_CTX);
+            List<ContextFrame> context = parseContext(ctx);
+            List<Object> records = requireList(entry, KEY_RECORDS);
+            if (records.size() != 1) {
+                throw new IprofFormatException("Call-count records for context '" + ctx + "' must contain exactly one count");
+            }
+            long count = asLong(records.get(0), KEY_RECORDS);
+            if (count < 0 || context.getFirst().bci() != 0) {
+                throw new IprofFormatException("Call-count context '" + ctx + "' must start at method BCI 0 with a non-negative count");
+            }
+            result.add(new CallCountEntry(context, count));
         }
         return result;
     }

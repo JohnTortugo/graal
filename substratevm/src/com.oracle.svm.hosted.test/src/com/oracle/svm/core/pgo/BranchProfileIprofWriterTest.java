@@ -200,4 +200,24 @@ public class BranchProfileIprofWriterTest {
         }
         Assert.assertEquals(Map.of("java.lang.String", 7L, "java.lang.Integer", 3L), counts);
     }
+
+    @Test
+    public void callCountProfilesRoundTripAndAggregatePhysicalCopies() throws Exception {
+        String[] methods = {"Lexample/CallCountTest;.callee()V", "Lexample/CallCountTest;.caller()V"};
+        int[] bcis = {0, 14};
+        CallCountProfileCounter first = CallCountProfileRecorder.create(methods, bcis);
+        CallCountProfileCounter second = CallCountProfileRecorder.create(methods, bcis);
+        CallCountProfileRecorder.increment(first.counterIndex());
+        CallCountProfileRecorder.increment(second.counterIndex());
+        CallCountProfileRecorder.increment(second.counterIndex());
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(first, second));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.callCountProfiles());
+        Assert.assertEquals(1, parsed.callCountEntries().size());
+        Assert.assertEquals(3, parsed.callCountEntries().getFirst().count());
+        Assert.assertEquals(2, parsed.callCountEntries().getFirst().context().size());
+    }
 }

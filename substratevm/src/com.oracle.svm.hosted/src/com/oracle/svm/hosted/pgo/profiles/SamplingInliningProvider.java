@@ -33,12 +33,14 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.phases.priorityinline.SubstrateInliningProvider;
 import com.oracle.svm.shared.option.HostedOptionKey;
 
+import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.CallTargetNode;
 import jdk.graal.compiler.nodes.Invoke;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CallTreeNode;
 import jdk.vm.ci.meta.JavaMethodProfile;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
  * Inlining provider that gives the priority inliner sampling-derived hotness: a calling-context
@@ -48,6 +50,7 @@ import jdk.vm.ci.meta.JavaMethodProfile;
 public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
     private final long profileSamples;
+    private final SimpleConditionalProfilesLookup profiles;
 
     public static final class Options {
         // @formatter:off
@@ -105,9 +108,26 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         }
     }
 
-    public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness) {
+    public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness, SimpleConditionalProfilesLookup profiles) {
         super(universe, hotness::cursorFor);
         this.profileSamples = hotness.totalSamples();
+        this.profiles = profiles;
+    }
+
+    @Override
+    public SamplingContext compilationRootSamplingContext(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
+        SamplingContext sampled = super.compilationRootSamplingContext(compilationRoot, callPosition, dispatchedMethod);
+        long rootCalls = profiles.getCallCountOrZero(compilationRoot);
+        if (rootCalls <= 0) {
+            return sampled;
+        }
+        NodeSourcePosition edgeContext = new NodeSourcePosition(callPosition, dispatchedMethod, 0);
+        long edgeCalls = profiles.getContextCallCount(edgeContext).orElse(0L);
+        if (edgeCalls <= 0) {
+            return sampled;
+        }
+        double callRatio = Math.min(1.0, (double) edgeCalls / rootCalls);
+        return new SamplingContext(Math.max(sampled.rootRelativeHotness(), callRatio), sampled.samples());
     }
 
     @Override

@@ -87,6 +87,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
 
         @Option(help = "Ignore matched conditional profiles whose dominant successor share is below this value in [0,1]; the site keeps its static probability. 0 disables.")//
         public static final HostedOptionKey<Double> PGOConditionalMinBias = new HostedOptionKey<>(0.0);
+
+        @Option(help = "Expose callCountProfiles to call-count optimization consumers. Disable with -H:-PGOUseCallCounts.")//
+        public static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static final class ProfilePathOption extends HostedOptionKey<String> {
@@ -168,6 +171,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             earlyLookup = ConditionalProfileContextResolver.resolve(parsedEarlyProfile, hostedUniverse);
             earlyLookup.setFilter(filter);
             earlyLookup.setContextFallback(Options.PGOContextFallback.getValue());
+            earlyLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
             reportResolution("early", earlyLookup);
             if (earlyLookup.getSampleCounts().isPresent()) {
@@ -175,12 +179,16 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
                 // Checkstyle: stop
                 System.out.printf("[PGO:early] sampling hotness: %d samples over %d sampled methods%n", samplingHotness.totalSamples(), samplingHotness.sampledMethodCount());
                 // Checkstyle: resume
+            } else if (earlyLookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY)) {
+                /* Install the same context-aware provider for call-count-only profiles. */
+                samplingHotness = new SamplingHotness(java.util.Map.of());
             }
         }
         if (parsedPostInliningProfile != null) {
             postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
             postInliningLookup.setFilter(filter);
             postInliningLookup.setContextFallback(Options.PGOContextFallback.getValue());
+            postInliningLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             reportResolution("post-inlining", postInliningLookup);
         }
         parsedEarlyProfile = null;
@@ -195,6 +203,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
         if (lookup.samplingDiagnostics() != null && lookup.samplingDiagnostics().totalEntries() > 0) {
             System.out.println("[PGO:" + stage + "] " + lookup.samplingDiagnostics().summary());
+        }
+        if (lookup.callCountDiagnostics() != null && lookup.callCountDiagnostics().totalEntries() > 0) {
+            System.out.println("[PGO:" + stage + "] " + lookup.callCountDiagnostics().summary());
         }
         // Checkstyle: resume
         if (!lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CONDITIONAL_PROFILES_CATEGORY)) {
@@ -240,7 +251,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             return;
         }
         SubstratePriorityInliningPhase current = (SubstratePriorityInliningPhase) position.previous();
-        position.set(new SubstratePriorityInliningPhase(current, new SamplingInliningProvider(hostedUniverse, samplingHotness), earlyLookup));
+        position.set(new SubstratePriorityInliningPhase(current, new SamplingInliningProvider(hostedUniverse, samplingHotness, earlyLookup), earlyLookup));
     }
 
     /** Creates the single-use PGO subphase separately for every compilation graph. */

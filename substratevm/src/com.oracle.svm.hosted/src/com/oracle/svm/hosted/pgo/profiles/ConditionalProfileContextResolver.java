@@ -37,6 +37,7 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.CallCountEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
@@ -304,7 +305,40 @@ public final class ConditionalProfileContextResolver {
         VirtualInvokeDiagnostics virtualDiagnostics = resolveVirtualInvokes(profile, descriptorByMethodId, presentDescriptors, typesByDescriptor, virtualInvokeTable);
         Map<NodeSourcePosition, Long> sampleCounts = new HashMap<>();
         SamplingDiagnostics samplingDiagnostics = resolveSamples(profile, descriptorByMethodId, methodsByDescriptor, sampleCounts);
-        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics);
+        Map<List<FrameKey>, Long> callCountsByContext = new HashMap<>();
+        Map<String, Long> callCountsByMethod = new HashMap<>();
+        CallCountDiagnostics callCountDiagnostics = resolveCallCounts(profile, descriptorByMethodId, presentDescriptors, callCountsByContext, callCountsByMethod);
+        return new SimpleConditionalProfilesLookup(legacyTable, preciseTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics,
+                        callCountsByMethod, callCountsByContext, callCountDiagnostics);
+    }
+
+    public record CallCountDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, long totalCount) {
+        public String summary() {
+            return String.format("iprof callCountProfiles: %d entries, %d resolved, %d unresolved; total count %d", totalEntries, resolvedEntries, unresolvedEntries, totalCount);
+        }
+    }
+
+    private static CallCountDiagnostics resolveCallCounts(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
+                    Map<List<FrameKey>, Long> byContext, Map<String, Long> byMethod) {
+        int resolved = 0;
+        int unresolved = 0;
+        long total = 0;
+        for (CallCountEntry entry : profile.callCountEntries()) {
+            String headDescriptor = descriptorByMethodId.get(entry.context().getFirst().methodId());
+            if (headDescriptor != null && presentDescriptors.contains(headDescriptor)) {
+                /* Method totals remain useful even when an outer caller frame is absent. */
+                byMethod.merge(headDescriptor, entry.count(), Long::sum);
+            }
+            List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
+            if (key == null) {
+                unresolved++;
+                continue;
+            }
+            byContext.merge(key, entry.count(), Long::sum);
+            total += entry.count();
+            resolved++;
+        }
+        return new CallCountDiagnostics(profile.callCountEntries().size(), resolved, unresolved, total);
     }
 
     /** Resolution statistics for the {@code virtualInvokeProfiles} section. */

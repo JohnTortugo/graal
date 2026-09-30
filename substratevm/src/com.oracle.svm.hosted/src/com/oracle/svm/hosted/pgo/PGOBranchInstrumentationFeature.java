@@ -34,6 +34,7 @@ import com.oracle.svm.core.graal.meta.RuntimeConfiguration;
 import com.oracle.svm.core.graal.snippets.NodeLoweringProvider;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
+import com.oracle.svm.core.pgo.CallCountProfileRecorder;
 import com.oracle.svm.core.pgo.ReceiverProfileRecorder;
 import com.oracle.svm.core.pgo.StackSampleRecorder;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
@@ -78,6 +79,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
 
         @Option(help = "Record concrete receiver frequencies after priority inlining and emit virtualInvokeProfiles. Disable with -H:-PGOProfileReceivers.")//
         public static final HostedOptionKey<Boolean> PGOProfileReceivers = new HostedOptionKey<>(true);
+
+        @Option(help = "Record context-sensitive method-entry counts and emit callCountProfiles. Disable with -H:-PGOProfileCallCounts.")//
+        public static final HostedOptionKey<Boolean> PGOProfileCallCounts = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static final class SourcePositionOption extends HostedOptionKey<Boolean> {
@@ -134,6 +138,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
+        if (Options.PGOProfileCallCounts.getValue()) {
+            ThreadListenerSupport.get().register(CallCountProfileRecorder.createRecorder());
+        }
         if (Options.PGOProfileReceivers.getValue()) {
             ThreadListenerSupport.get().register(ReceiverProfileRecorder.create());
         }
@@ -147,6 +154,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                     Map<Class<? extends Node>, NodeLoweringProvider<?>> lowerings, boolean hosted) {
         if (hosted && enabled()) {
             providers.getReplacements().registerSnippetTemplateCache(new BranchProfileCounterNode.Templates(options, providers));
+            if (Options.PGOProfileCallCounts.getValue(options)) {
+                providers.getReplacements().registerSnippetTemplateCache(new CallCountProfileMarkerNode.Templates(options, providers));
+            }
             if (Options.PGOProfileReceivers.getValue(options)) {
                 providers.getReplacements().registerSnippetTemplateCache(new ReceiverProfileCounterNode.Templates(options, providers));
             }
@@ -182,6 +192,14 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             /* Preserve the milestone-2 post-inlining producer as the default baseline. */
             highTier.appendPhase(phase);
         }
+        if (Options.PGOProfileCallCounts.getValue()) {
+            ListIterator<BasePhase<? super HighTierContext>> callCountInliner = highTier.findPhase(AbstractInliningPhase.class);
+            if (callCountInliner != null) {
+                callCountInliner.add(new CallCountProfileInstrumentationPhase());
+            } else {
+                highTier.prependPhase(new CallCountProfileInstrumentationPhase());
+            }
+        }
     }
 
     @Override
@@ -191,10 +209,11 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         BranchProfileRecorder.sealRegistry();
         // Checkstyle: stop
-        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions; receiver invokes=%d, skipped=%d%n",
+        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped without source positions; receiver invokes=%d, skipped=%d; call edges=%d, skipped=%d%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",
                         BranchProfileInstrumentationPhase.instrumentedBranches(), BranchProfileInstrumentationPhase.skippedBranches(),
-                        ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes());
+                        ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes(),
+                        CallCountProfileInstrumentationPhase.instrumented(), CallCountProfileInstrumentationPhase.skipped());
         // Checkstyle: resume
     }
 }

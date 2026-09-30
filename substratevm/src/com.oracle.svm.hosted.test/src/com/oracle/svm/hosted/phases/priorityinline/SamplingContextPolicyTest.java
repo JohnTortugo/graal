@@ -39,6 +39,13 @@ public class SamplingContextPolicyTest {
     }
 
     @Test
+    public void callCountHotnessIsStoredWithoutSamplingSupport() {
+        SubstrateInliningProvider.SamplingContext callOnly = new SubstrateInliningProvider.SamplingContext(1.0, 0);
+        Assert.assertTrue(SamplingCallTreeState.shouldStore(callOnly));
+        Assert.assertFalse(SamplingCallTreeState.shouldStore(SubstrateInliningProvider.SamplingContext.COLD));
+    }
+
+    @Test
     public void selectedBonusComposesWithPriorSmoothBonus() {
         Assert.assertEquals(1.25, SubstratePolicyFactory.SubstrateExpanderPolicy.hotnessMultiplier(0.25, 1, 0), 0.0);
         Assert.assertEquals(2.25, SubstratePolicyFactory.SubstrateExpanderPolicy.hotnessMultiplier(0.25, 1, 1), 0.0);

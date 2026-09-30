@@ -41,9 +41,13 @@ public class SamplingCallTreeState extends InterproceduralPartialEscapeAnalysisC
     }
 
     public void setSamplingContext(CallTreeNode node, SubstrateInliningProvider.SamplingContext context) {
-        if (context.samples() > 0) {
+        if (shouldStore(context)) {
             rootRelativeSamplingContext.put(node, context);
         }
+    }
+
+    static boolean shouldStore(SubstrateInliningProvider.SamplingContext context) {
+        return context.rootRelativeHotness() > 0.0 || context.samples() > 0;
     }
 
     public SubstrateInliningProvider.SamplingContext samplingContext(CallTreeNode node) {

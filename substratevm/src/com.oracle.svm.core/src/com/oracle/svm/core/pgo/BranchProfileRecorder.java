@@ -235,10 +235,15 @@ public final class BranchProfileRecorder {
         try {
             List<StackSampleRecorder.DecodedSample> stackSamples = StackSampleRecorder.hasSamples() ? StackSampleRecorder.decodeSamples() : List.of();
             List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles = ReceiverProfileRecorder.isEnabled() ? ReceiverProfileRecorder.decodeProfiles() : List.of();
-            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles);
+            if (CallCountProfileRecorder.isEnabled()) {
+                CallCountProfileRecorder.prepareSnapshot();
+            }
+            List<CallCountProfileCounter> callCountProfiles = CallCountProfileRecorder.isEnabled() ? CallCountProfileRecorder.getCounters() : List.of();
+            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles, callCountProfiles);
             Log.log().string("[PGO] wrote profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
                             .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
                             .string(", receiver contexts=").signed(statistics.receiverProfiles())
+                            .string(", call-count contexts=").signed(statistics.callCountProfiles())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();
@@ -252,6 +257,12 @@ public final class BranchProfileRecorder {
                 ReceiverProfileRecorder.Statistics receivers = ReceiverProfileRecorder.statistics();
                 Log.log().string("[PGO] receiver profiles: physical sites=").signed(receivers.physicalSites()).string(", events=").signed(receivers.events())
                                 .string(", dropped=").signed(receivers.dropped()).string(", unknown=").signed(receivers.unknown()).newline();
+            }
+            if (CallCountProfileRecorder.isEnabled()) {
+                CallCountProfileRecorder.Statistics calls = CallCountProfileRecorder.statistics();
+                Log.log().string("[PGO] call counts: physical sites=").signed(calls.physicalSites()).string(", events=").signed(calls.events())
+                                .string(", attributed=").signed(calls.attributedEvents()).string(", keys=").signed(calls.keys()).string(", mapped keys=").signed(calls.mappedKeys())
+                                .string(", dropped=").signed(calls.dropped()).newline();
             }
         } catch (IOException | RuntimeException exception) {
             Log.log().string("[PGO] could not write conditional profile '").string(fileName).string("': ").exception(exception).newline();

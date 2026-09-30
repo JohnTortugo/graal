@@ -28,24 +28,20 @@ import com.oracle.svm.guest.staging.core.heap.UnknownObjectField;
 import com.oracle.svm.guest.staging.core.heap.UnknownPrimitiveField;
 import com.oracle.svm.shared.BuildPhaseProvider.AfterCompilation;
 
-/** Immutable metadata for one physical indirect-call receiver profile site. */
-public final class ReceiverProfileSite {
-    @UnknownPrimitiveField(availability = AfterCompilation.class) private final int siteIndex;
+/** Metadata for one physical method-entry call-count marker after inlining. */
+public final class CallCountProfileCounter {
+    @UnknownPrimitiveField(availability = AfterCompilation.class) private final int counterIndex;
     @UnknownObjectField(availability = AfterCompilation.class) private final String[] methodDescriptors;
     @UnknownObjectField(availability = AfterCompilation.class) private final int[] contextBcis;
-    @UnknownObjectField(availability = AfterCompilation.class) private final int[] receiverTypeIds;
-    @UnknownObjectField(availability = AfterCompilation.class) private final String[] receiverTypeDescriptors;
 
-    ReceiverProfileSite(int siteIndex, String[] methodDescriptors, int[] contextBcis, int[] receiverTypeIds, String[] receiverTypeDescriptors) {
-        this.siteIndex = siteIndex;
+    CallCountProfileCounter(int counterIndex, String[] methodDescriptors, int[] contextBcis) {
+        this.counterIndex = counterIndex;
         this.methodDescriptors = methodDescriptors.clone();
         this.contextBcis = contextBcis.clone();
-        this.receiverTypeIds = receiverTypeIds.clone();
-        this.receiverTypeDescriptors = receiverTypeDescriptors.clone();
     }
 
-    public int siteIndex() {
-        return siteIndex;
+    public int counterIndex() {
+        return counterIndex;
     }
 
     public String[] methodDescriptors() {
@@ -56,12 +52,7 @@ public final class ReceiverProfileSite {
         return contextBcis.clone();
     }
 
-    String receiverTypeDescriptor(int typeId) {
-        for (int i = 0; i < receiverTypeIds.length; i++) {
-            if (receiverTypeIds[i] == typeId) {
-                return receiverTypeDescriptors[i];
-            }
-        }
-        return null;
+    public long count() {
+        return CallCountProfileRecorder.getCount(counterIndex);
     }
 }
