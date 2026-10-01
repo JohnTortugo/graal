@@ -196,11 +196,12 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_COLD_EDGE = new java.util.concurrent.atomic.AtomicLong();
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_AT_LIMIT = new java.util.concurrent.atomic.AtomicLong();
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_UNSHARED = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_WRONG_BUCKET = new java.util.concurrent.atomic.AtomicLong();
 
         public static String hotLeafStatistics() {
-            return String.format("queries=%d, forced=%d, cold root=%d, cold edge=%d, unshared value=%d, at graph limit=%d",
+            return String.format("queries=%d, forced=%d, cold root=%d, cold edge=%d, not library-into-application=%d, unshared value=%d, at graph limit=%d",
                             HOT_LEAF_CONSIDERED.get(), HOT_LEAF_ABSORBED.get(), HOT_LEAF_COLD_ROOT.get(),
-                            HOT_LEAF_COLD_EDGE.get(), HOT_LEAF_UNSHARED.get(), HOT_LEAF_AT_LIMIT.get());
+                            HOT_LEAF_COLD_EDGE.get(), HOT_LEAF_WRONG_BUCKET.get(), HOT_LEAF_UNSHARED.get(), HOT_LEAF_AT_LIMIT.get());
         }
 
         /**
@@ -375,6 +376,16 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
                 HOT_LEAF_COLD_EDGE.incrementAndGet();
                 return false;
             }
+            if (inliningProvider.hotLeafLibraryOnly(options) && !isLibraryLeafIntoApplicationCaller(node, target)) {
+                /*
+                 * Per-bucket attribution of the remaining gap to a commercial native image put all of
+                 * it in JDK library leaves called from application code; application-to-application
+                 * and library-to-library edges were already cheaper. Restricting absorption to that
+                 * edge class is what the size and frequency rules measured before were missing.
+                 */
+                HOT_LEAF_WRONG_BUCKET.incrementAndGet();
+                return false;
+            }
             if (inliningProvider.hotLeafMinSharedCalls(options) > 1 && sharedArgumentCallCount(node) < inliningProvider.hotLeafMinSharedCalls(options)) {
                 /*
                  * Absorbing a callee pays when it unblocks optimization of a value that several calls
@@ -397,6 +408,17 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
             return true;
         }
 
+
+
+        private static boolean isLibraryLeafIntoApplicationCaller(CallTreeNode node, ResolvedJavaMethod target) {
+            ResolvedJavaMethod caller = node.callTree().root().getReadonlySubgraph().method();
+            return caller != null && isJdkLibrary(target) && !isJdkLibrary(caller);
+        }
+
+        private static boolean isJdkLibrary(ResolvedJavaMethod method) {
+            String name = method.getDeclaringClass().toJavaName();
+            return name.startsWith("java.") || name.startsWith("jdk.") || name.startsWith("sun.");
+        }
 
         /**
          * Counts the calls in the caller that pass the same value as this call's first argument, which

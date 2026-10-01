@@ -115,9 +115,15 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private SimpleConditionalProfilesLookup postInliningLookup;
     private HostedUniverse hostedUniverse;
     private static SimpleConditionalProfilesLookup codeLayoutLookup;
+    private static SamplingHotness codeLayoutHotness;
 
     public static PGOProfilesLookup codeLayoutProfiles() {
         return codeLayoutLookup;
+    }
+
+    /** Sampled self time for code layout, or null when the profile carries no samples. */
+    public static SamplingHotness codeLayoutHotness() {
+        return codeLayoutHotness;
     }
 
     private static String earlyProfilePath() {
@@ -199,6 +205,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             reportResolution("post-inlining", postInliningLookup);
         }
         codeLayoutLookup = earlyLookup != null ? earlyLookup : postInliningLookup;
+        codeLayoutHotness = samplingHotness != null && samplingHotness.totalSamples() > 0 ? samplingHotness : null;
         parsedEarlyProfile = null;
         parsedPostInliningProfile = null;
     }

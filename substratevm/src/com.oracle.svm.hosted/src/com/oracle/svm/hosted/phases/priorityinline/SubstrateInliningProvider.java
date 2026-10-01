@@ -253,6 +253,13 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return true;
     }
 
+    /// Whether hot-leaf absorption applies only to JDK library callees invoked from application code.
+    ///
+    /// @param options the options being used during expanding
+    protected boolean hotLeafLibraryOnly(@SuppressWarnings("unused") OptionValues options) {
+        return false;
+    }
+
     /// Gets how many calls must share a value before absorbing one of them; 1 disables the test.
     ///
     /// @param options the options being used during expanding

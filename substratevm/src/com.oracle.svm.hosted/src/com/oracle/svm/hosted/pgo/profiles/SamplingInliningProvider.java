@@ -102,6 +102,9 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
         @Option(help = "Require this many calls in the caller to pass the same value before hot-leaf absorption applies to one of them. 1 disables the test.")//
         public static final HostedOptionKey<Integer> PGOHotLeafMinSharedCalls = new HostedOptionKey<>(2, option -> requirePositive(option));
+
+        @Option(help = "Restrict hot-leaf absorption to JDK library callees (java.*, jdk.*, sun.*) invoked from application code.")//
+        public static final HostedOptionKey<Boolean> PGOHotLeafLibraryOnly = new HostedOptionKey<>(true);
         // @formatter:on
 
         private static void requirePositive(HostedOptionKey<Integer> option) {
@@ -204,6 +207,11 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
     @Override
     protected int hotLeafMinSharedCalls(OptionValues options) {
         return Options.PGOHotLeafMinSharedCalls.getValue(options);
+    }
+
+    @Override
+    protected boolean hotLeafLibraryOnly(OptionValues options) {
+        return Options.PGOHotLeafLibraryOnly.getValue(options);
     }
 
     private int selectedContextBonus(OptionValues options, double hotness, long samples, HostedOptionKey<Integer> bonusOption) {
