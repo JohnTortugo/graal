@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -38,6 +39,7 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.JavaType;
 
@@ -61,20 +63,45 @@ public final class SamplingHotness {
     private final PrefixTree methodRootedTree;
     private final Map<AnalysisMethod, Long> selfSamples = new HashMap<>();
     private final long totalSamples;
+    private final long idleSamples;
     private final AtomicLong hotCompilationUnits = new AtomicLong();
     private final AtomicLong coldCompilationUnits = new AtomicLong();
+
+    /**
+     * Leaf frames that consume no processor time. A sampler that walks every thread also samples
+     * threads parked in these, and on the reference workload a single idle monitoring thread
+     * accounted for half of all samples. Leaving them in the denominator halves every method's
+     * reported self time, which is the signal the compiler uses to decide what counts as globally
+     * hot code, so they are excluded. The blocking primitives are matched by declaring class as well
+     * as name, so an application method that happens to be called {@code sleep} still counts.
+     */
+    private static final Set<String> IDLE_LEAF_CLASSES = Set.of(
+                    "com.oracle.svm.core.thread.PlatformThreads",
+                    "com.oracle.svm.core.thread.JavaThreads",
+                    "java.lang.Thread",
+                    "jdk.internal.misc.Unsafe",
+                    "sun.misc.Unsafe",
+                    "java.util.concurrent.locks.LockSupport");
+
+    private static final Set<String> IDLE_LEAF_METHODS = Set.of("sleep", "sleep0", "sleepNanos", "sleepNanos0", "beforeSleep", "afterSleep",
+                    "park", "park0", "parkNanos", "parkUntil", "parkCurrentPlatformOrCarrierThread", "wait", "wait0", "onSpinWait", "yield", "yield0");
 
     public SamplingHotness(Map<NodeSourcePosition, Long> stackSamples) {
         Map<NodeSourcePosition, Long> suffixes = new HashMap<>();
         long total = 0;
+        long idle = 0;
         for (Map.Entry<NodeSourcePosition, Long> entry : stackSamples.entrySet()) {
             long count = entry.getValue();
-            total += count;
             List<NodeSourcePosition> outermostFirst = new ArrayList<>();
             for (NodeSourcePosition position : entry.getKey()) {
                 outermostFirst.add(position);
             }
             NodeSourcePosition leaf = outermostFirst.getLast();
+            if (isIdle(leaf)) {
+                idle += count;
+                continue;
+            }
+            total += count;
             selfSamples.merge((AnalysisMethod) leaf.getMethod(), count, Long::sum);
             /* Every frame's suffix (that frame down to the leaf) is a stack rooted at that frame. */
             for (int start = 0; start < outermostFirst.size(); start++) {
@@ -87,6 +114,7 @@ public final class SamplingHotness {
             }
         }
         this.totalSamples = total;
+        this.idleSamples = idle;
         this.methodRootedTree = new PrefixTree(new SampleSource(suffixes));
     }
 
@@ -111,6 +139,17 @@ public final class SamplingHotness {
             return 0.0;
         }
         return (double) selfSamples.getOrDefault(method.getWrapped(), 0L) / totalSamples;
+    }
+
+    private static boolean isIdle(NodeSourcePosition leaf) {
+        ResolvedJavaMethod method = leaf.getMethod();
+        return method != null && IDLE_LEAF_METHODS.contains(method.getName()) &&
+                        IDLE_LEAF_CLASSES.contains(method.getDeclaringClass().toJavaName());
+    }
+
+    /** Samples discarded because the sampled thread was parked in a method that uses no processor time. */
+    public long idleSamples() {
+        return idleSamples;
     }
 
     public long totalSamples() {

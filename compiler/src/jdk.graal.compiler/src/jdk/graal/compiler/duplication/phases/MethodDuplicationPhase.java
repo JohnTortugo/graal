@@ -97,6 +97,7 @@ import jdk.graal.compiler.nodes.spi.CoreProviders;
 import jdk.graal.compiler.nodes.util.GraphUtil;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.phases.common.util.GlobalProfilesOptimizationUtility;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.common.CanonicalizerPhase;
@@ -154,7 +155,15 @@ public class MethodDuplicationPhase extends BasePhase<CoreProviders> {
         @Option(help = "Skip n duplication anchors", type = OptionType.Debug)
         public static final OptionKey<Integer> MinDuplicationAnchor = new OptionKey<>(1);
 
+        @Option(help = "When an execution profile supplies self time, only duplicate compilation units the profile reports as globally significant.", type = OptionType.Expert)
+        public static final OptionKey<Boolean> OptMethodDuplicationHotOnly = new OptionKey<>(true);
+
         // @formatter:on
+    }
+
+    private static boolean isProfiledAsCold(StructuredGraph graph) {
+        boolean hasSelfTime = graph.globalProfileProvider().getGlobalSelfTimePercent() != StructuredGraph.GlobalProfileProvider.GLOBAL_PROFILE_PROVIDER_DISABLED;
+        return hasSelfTime && !GlobalProfilesOptimizationUtility.shouldPrioritizeForOptimization(graph);
     }
 
     private final CanonicalizerPhase canonicalizer;
@@ -170,6 +179,14 @@ public class MethodDuplicationPhase extends BasePhase<CoreProviders> {
 
     @Override
     protected void run(StructuredGraph graph, CoreProviders context) {
+        if (Options.OptMethodDuplicationHotOnly.getValue(graph.getOptions()) && isProfiledAsCold(graph)) {
+            /*
+             * Duplication trades code size for a denser hot path, so it is only worth paying for in
+             * compilation units the profile reports as significant. Without self-time data, as in a
+             * JIT, no unit can be ruled out and every unit is still considered.
+             */
+            return;
+        }
 
         int initialSize = graph.getNodeCount();
         DebugContext debug = graph.getDebug();

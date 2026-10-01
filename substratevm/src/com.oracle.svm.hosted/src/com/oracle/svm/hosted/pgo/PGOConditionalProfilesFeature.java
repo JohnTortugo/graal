@@ -183,7 +183,8 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             if (earlyLookup.getSampleCounts().isPresent()) {
                 samplingHotness = new SamplingHotness(earlyLookup.getSampleCounts().get());
                 // Checkstyle: stop
-                System.out.printf("[PGO:early] sampling hotness: %d samples over %d sampled methods%n", samplingHotness.totalSamples(), samplingHotness.sampledMethodCount());
+                System.out.printf("[PGO:early] sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)%n",
+                            samplingHotness.totalSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
                 // Checkstyle: resume
             } else if (earlyLookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
