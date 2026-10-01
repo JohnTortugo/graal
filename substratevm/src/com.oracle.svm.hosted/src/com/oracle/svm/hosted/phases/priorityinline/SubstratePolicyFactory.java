@@ -51,6 +51,11 @@ import com.oracle.svm.hosted.BytecodeHandlerFeature;
 import com.oracle.svm.shared.option.HostedOptionKey;
 
 import jdk.graal.compiler.debug.DebugCloseable;
+import jdk.graal.compiler.graph.Node;
+import jdk.graal.compiler.graph.NodeInputList;
+import jdk.graal.compiler.nodes.Invoke;
+import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.CallTargetNode;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.TimerKey;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
@@ -190,11 +195,12 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_COLD_ROOT = new java.util.concurrent.atomic.AtomicLong();
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_COLD_EDGE = new java.util.concurrent.atomic.AtomicLong();
         private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_AT_LIMIT = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_UNSHARED = new java.util.concurrent.atomic.AtomicLong();
 
         public static String hotLeafStatistics() {
-            return String.format("queries=%d, forced=%d, cold root=%d, cold edge=%d, at graph limit=%d",
+            return String.format("queries=%d, forced=%d, cold root=%d, cold edge=%d, unshared value=%d, at graph limit=%d",
                             HOT_LEAF_CONSIDERED.get(), HOT_LEAF_ABSORBED.get(), HOT_LEAF_COLD_ROOT.get(),
-                            HOT_LEAF_COLD_EDGE.get(), HOT_LEAF_AT_LIMIT.get());
+                            HOT_LEAF_COLD_EDGE.get(), HOT_LEAF_UNSHARED.get(), HOT_LEAF_AT_LIMIT.get());
         }
 
         /**
@@ -369,6 +375,16 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
                 HOT_LEAF_COLD_EDGE.incrementAndGet();
                 return false;
             }
+            if (inliningProvider.hotLeafMinSharedCalls(options) > 1 && sharedArgumentCallCount(node) < inliningProvider.hotLeafMinSharedCalls(options)) {
+                /*
+                 * Absorbing a callee pays when it unblocks optimization of a value that several calls
+                 * share, which is the measured case: inlining charAt and substring into a scanning
+                 * loop lets the coder and bounds checks fold and the substring allocation sink.
+                 * Callee size alone does not predict that, and forcing calls by size regresses.
+                 */
+                HOT_LEAF_UNSHARED.incrementAndGet();
+                return false;
+            }
             if (node instanceof CutoffNode cutoff && InliningMath.defaultRecursionPenalty(cutoff) > 0.0) {
                 /* Never force a recursive call: the expansion would not terminate. */
                 return false;
@@ -379,6 +395,34 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
             }
             HOT_LEAF_ABSORBED.incrementAndGet();
             return true;
+        }
+
+
+        /**
+         * Counts the calls in the caller that pass the same value as this call's first argument, which
+         * for an instance call is its receiver. A value handed to several calls is one whose
+         * representation the compiler cannot reason about while any of them stays out of line.
+         */
+        private static int sharedArgumentCallCount(CallTreeNode node) {
+            Invoke invoke = node.invoke();
+            if (invoke == null || !invoke.asNode().isAlive() || invoke.callTarget() == null) {
+                return 0;
+            }
+            NodeInputList<ValueNode> arguments = invoke.callTarget().arguments();
+            if (arguments.isEmpty()) {
+                return 0;
+            }
+            ValueNode shared = arguments.first();
+            if (shared == null || shared.isConstant()) {
+                return 0;
+            }
+            int calls = 0;
+            for (Node usage : shared.usages()) {
+                if (usage instanceof CallTargetNode callTarget && !callTarget.arguments().isEmpty() && callTarget.arguments().first() == shared) {
+                    calls++;
+                }
+            }
+            return calls;
         }
 
         @Override

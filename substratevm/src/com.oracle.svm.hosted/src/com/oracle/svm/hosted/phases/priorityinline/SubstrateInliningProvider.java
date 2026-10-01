@@ -253,4 +253,11 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return true;
     }
 
+    /// Gets how many calls must share a value before absorbing one of them; 1 disables the test.
+    ///
+    /// @param options the options being used during expanding
+    protected int hotLeafMinSharedCalls(@SuppressWarnings("unused") OptionValues options) {
+        return 1;
+    }
+
 }
