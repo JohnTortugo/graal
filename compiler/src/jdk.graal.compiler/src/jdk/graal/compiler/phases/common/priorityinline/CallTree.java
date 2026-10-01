@@ -833,6 +833,11 @@ public class CallTree extends Graph {
      * @param javaMethod the target method
      * @return {@code true} if the target method should always be inlined by the priority inliner
      */
+    /** Whether the consumed execution profile marks this call as one that must be inlined. */
+    public boolean profileForcesInline(CallTreeNode node) {
+        return policy.profileForcesInline(node);
+    }
+
     public boolean matchesForceInlineFilter(JavaMethod javaMethod) {
         return forceInlineFilter != null && javaMethod != null && forceInlineFilter.matches(javaMethod);
     }

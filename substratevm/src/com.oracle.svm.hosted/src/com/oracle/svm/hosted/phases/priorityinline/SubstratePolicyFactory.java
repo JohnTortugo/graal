@@ -61,6 +61,7 @@ import jdk.graal.compiler.phases.common.priorityinline.CallTreeState;
 import jdk.graal.compiler.phases.common.priorityinline.DefaultPolicyFactory;
 import jdk.graal.compiler.phases.common.priorityinline.Expander;
 import jdk.graal.compiler.phases.common.priorityinline.Inliner;
+import jdk.graal.compiler.phases.common.priorityinline.InliningMath;
 import jdk.graal.compiler.phases.common.priorityinline.Optimizer;
 import jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase;
 import jdk.graal.compiler.phases.common.priorityinline.TunableOptionKey;
@@ -182,6 +183,19 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
     }
 
     public static class SubstrateExpanderPolicy extends Expander.DefaultPolicy {
+
+        /** Hot-leaf absorption statistics, reported after compilation. */
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_CONSIDERED = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_ABSORBED = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_COLD_ROOT = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_COLD_EDGE = new java.util.concurrent.atomic.AtomicLong();
+        private static final java.util.concurrent.atomic.AtomicLong HOT_LEAF_AT_LIMIT = new java.util.concurrent.atomic.AtomicLong();
+
+        public static String hotLeafStatistics() {
+            return String.format("queries=%d, forced=%d, cold root=%d, cold edge=%d, at graph limit=%d",
+                            HOT_LEAF_CONSIDERED.get(), HOT_LEAF_ABSORBED.get(), HOT_LEAF_COLD_ROOT.get(),
+                            HOT_LEAF_COLD_EDGE.get(), HOT_LEAF_AT_LIMIT.get());
+        }
 
         /**
          * Minimum value when {@link #scaleOption(OptionValues, OptionKey, int, int, boolean)
@@ -307,6 +321,64 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
                 // TODO BS this should be done anytime the local benefit or priority is updated
                 node.setActiveCutoffCount(1);
             }
+        }
+
+        /**
+         * The adaptive expansion threshold grows exponentially with the size of the root graph, so in
+         * the largest methods, which are precisely the hottest ones, small callees are never expanded
+         * and therefore never offered to the inliner. Their calls then dominate the measured self time
+         * of those methods. When the profile shows that the root is hot and that this edge runs often,
+         * treat a small callee as force-inlined: merely expanding it is not enough, because the
+         * expansion would still compete for, and displace, other candidates in the same budget.
+         */
+        @Override
+        public boolean profileForcesInline(CallTreeNode node) {
+            CallTree callTree = node.callTree();
+            OptionValues options = node.getOptions();
+            if (!(callTree.inliningProvider() instanceof SubstrateInliningProvider inliningProvider)) {
+                return false;
+            }
+            int maxCodeSize = inliningProvider.hotLeafMaxCodeSize(options);
+            if (maxCodeSize <= 0) {
+                return false;
+            }
+            ResolvedJavaMethod target = node.targetMethod();
+            if (target == null || target.getCodeSize() > maxCodeSize) {
+                return false;
+            }
+            HOT_LEAF_CONSIDERED.incrementAndGet();
+            if (inliningProvider.hotLeafRequiresSampledRoot(options) && !callTree.root().getReadonlySubgraph().globalProfileProvider().hotCaller()) {
+                /*
+                 * Restricting absorption to sampled roots was measured to give up the whole benefit:
+                 * stack sampling covers a few hundred stacks, while the frequent leaf calls that
+                 * dominate self time also occur in roots sampling never observed.
+                 */
+                HOT_LEAF_COLD_ROOT.incrementAndGet();
+                return false;
+            }
+            /*
+             * Two profile signals qualify an edge. The call-site frequency is corrected by the
+             * consumed branch profiles and is available for every call site, which matters because
+             * these leaves are usually inlined in the instrumentation build and therefore have no
+             * call-count record of their own. Measured root-relative hotness qualifies an edge on its
+             * own when the profile does carry it.
+             */
+            boolean frequentEdge = node.getFrequency() >= inliningProvider.hotLeafMinFrequency(options);
+            boolean measuredHotEdge = SamplingCallTreeState.getSamplingCallTreeState(callTree).hotness(node) >= inliningProvider.hotLeafMinHotness(options);
+            if (!frequentEdge && !measuredHotEdge) {
+                HOT_LEAF_COLD_EDGE.incrementAndGet();
+                return false;
+            }
+            if (node instanceof CutoffNode cutoff && InliningMath.defaultRecursionPenalty(cutoff) > 0.0) {
+                /* Never force a recursive call: the expansion would not terminate. */
+                return false;
+            }
+            if (isCallGraphTooBig(callTree) || isInlinedGraphTooBig(callTree)) {
+                HOT_LEAF_AT_LIMIT.incrementAndGet();
+                return false;
+            }
+            HOT_LEAF_ABSORBED.incrementAndGet();
+            return true;
         }
 
         @Override

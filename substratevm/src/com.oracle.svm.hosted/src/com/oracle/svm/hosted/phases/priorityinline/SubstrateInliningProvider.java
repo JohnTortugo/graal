@@ -225,4 +225,32 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return 0;
     }
 
+    /// Gets the largest callee bytecode size eligible for hot-leaf absorption; 0 disables it.
+    ///
+    /// @param options the options being used during expanding
+    protected int hotLeafMaxCodeSize(@SuppressWarnings("unused") OptionValues options) {
+        return 0;
+    }
+
+    /// Gets the minimum root-relative hotness a call edge needs for hot-leaf absorption.
+    ///
+    /// @param options the options being used during expanding
+    protected double hotLeafMinHotness(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
+    /// Gets the minimum profile-corrected call-site frequency for hot-leaf absorption.
+    ///
+    /// @param options the options being used during expanding
+    protected double hotLeafMinFrequency(@SuppressWarnings("unused") OptionValues options) {
+        return Double.MAX_VALUE;
+    }
+
+    /// Whether hot-leaf absorption applies only to compilation roots present in the sampling profile.
+    ///
+    /// @param options the options being used during expanding
+    protected boolean hotLeafRequiresSampledRoot(@SuppressWarnings("unused") OptionValues options) {
+        return true;
+    }
+
 }

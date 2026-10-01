@@ -281,7 +281,7 @@ public class SubgraphNode extends ParentNode {
     @Override
     public boolean isForceInlined() {
         return targetMethod() != null && (targetMethod().shouldBeInlined() || callTree().matchesForceInlineFilter(targetMethod()) ||
-                        callTree().matchDirectedInline(this) != null);
+                        callTree().matchDirectedInline(this) != null || callTree().profileForcesInline(this));
     }
 
     @Override

@@ -46,6 +46,7 @@ import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileFilter;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
+import com.oracle.svm.hosted.phases.priorityinline.SubstratePolicyFactory;
 import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
 import com.oracle.svm.hosted.pgo.profiles.SamplingInliningProvider;
 import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup;
@@ -293,6 +294,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             System.out.printf("[PGO:early] sampling hotness: %d hot compilation roots, %d cold%n", samplingHotness.hotCompilationUnits(), samplingHotness.coldCompilationUnits());
             // Checkstyle: resume
         }
+        // Checkstyle: stop
+        System.out.printf("[PGO:early] hot-leaf absorption: %s%n", SubstratePolicyFactory.SubstrateExpanderPolicy.hotLeafStatistics());
+        // Checkstyle: resume
     }
 
     private static void reportApplication(String stage, SimpleConditionalProfilesLookup lookup) {

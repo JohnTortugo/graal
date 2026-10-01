@@ -86,6 +86,19 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
         @Option(help = "Expose sampled self time to the compiler (enables hot-code duplication budgets).")//
         public static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
+
+        @Option(help = "Largest callee bytecode size that is force-inlined purely because the profile shows the call edge runs often, so leaf calls can be absorbed into hot callers. " +
+                        "Measured neutral on its own (see PGO documentation), so it is disabled by default; 0 disables.")//
+        public static final HostedOptionKey<Integer> PGOHotLeafMaxCodeSize = new HostedOptionKey<>(0, option -> requireNonNegative(option));
+
+        @Option(help = "Minimum measured root-relative hotness a call edge needs before hot-leaf absorption applies.")//
+        public static final HostedOptionKey<Double> PGOHotLeafMinHotness = new HostedOptionKey<>(0.1, option -> requireProbability(option));
+
+        @Option(help = "Minimum profile-corrected call-site frequency, in executions per root invocation, before hot-leaf absorption applies.")//
+        public static final HostedOptionKey<Double> PGOHotLeafMinFrequency = new HostedOptionKey<>(1.0);
+
+        @Option(help = "Restrict hot-leaf absorption to compilation roots that appear in the sampling profile.")//
+        public static final HostedOptionKey<Boolean> PGOHotLeafSampledRootsOnly = new HostedOptionKey<>(false);
         // @formatter:on
 
         private static void requirePositive(HostedOptionKey<Integer> option) {
@@ -163,6 +176,26 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
     @Override
     protected int selectedContextBonusWhileExpanding(OptionValues options, double hotness, long samples) {
         return selectedContextBonus(options, hotness, samples, Options.PGOHotContextExpansionBonus);
+    }
+
+    @Override
+    protected int hotLeafMaxCodeSize(OptionValues options) {
+        return Options.PGOHotLeafMaxCodeSize.getValue(options);
+    }
+
+    @Override
+    protected double hotLeafMinHotness(OptionValues options) {
+        return Options.PGOHotLeafMinHotness.getValue(options);
+    }
+
+    @Override
+    protected double hotLeafMinFrequency(OptionValues options) {
+        return Options.PGOHotLeafMinFrequency.getValue(options);
+    }
+
+    @Override
+    protected boolean hotLeafRequiresSampledRoot(OptionValues options) {
+        return Options.PGOHotLeafSampledRootsOnly.getValue(options);
     }
 
     private int selectedContextBonus(OptionValues options, double hotness, long samples, HostedOptionKey<Integer> bonusOption) {
