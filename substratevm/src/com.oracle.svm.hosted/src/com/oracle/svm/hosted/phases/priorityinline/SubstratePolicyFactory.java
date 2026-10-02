@@ -39,6 +39,7 @@ import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPh
 import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase.Options.TypicalGraphSize;
 import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase.Options.TypicalGraphSizeInvokeBonus;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.graalvm.nativeimage.ImageInfo;
@@ -48,6 +49,7 @@ import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.interpreter.InterpreterSupport;
 import com.oracle.svm.hosted.BytecodeHandlerFeature;
+import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.shared.option.HostedOptionKey;
 
 import jdk.graal.compiler.debug.DebugCloseable;
@@ -101,11 +103,78 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
 
     @Override
     public TuningPolicy createTuningPolicy(OptionValues options) {
-        TuningPolicy defaultPolicy = super.createTuningPolicy(options);
-        if (!InterpreterSupport.isEnabled() || !ImageSingletons.contains(BytecodeHandlerFeature.class)) {
-            return defaultPolicy;
+        List<TuningPolicy> policies = new ArrayList<>();
+        policies.add(super.createTuningPolicy(options));
+        policies.add(new HotRootTuningPolicy());
+        if (InterpreterSupport.isEnabled() && ImageSingletons.contains(BytecodeHandlerFeature.class)) {
+            policies.add(new CremaBytecodeHandlerStubTuningPolicy());
         }
-        return new CompositeTuningPolicy(List.of(defaultPolicy, new CremaBytecodeHandlerStubTuningPolicy()));
+        return new CompositeTuningPolicy(policies);
+    }
+
+    /**
+     * Gives every call in a hot compilation root a larger inlining budget. The inliner values a call
+     * by its frequency relative to one entry of the root and charges code size in absolute terms,
+     * so in a root that the whole program runs millions of times a callee invoked once per entry is
+     * worth as little as in a root that runs once; the exploration budget of such a root is then
+     * spent on a few large callees whose own calls stay unexpanded and whose inlining is judged
+     * harmful, and most calls are never even evaluated. The sampling profile knows which roots are
+     * hot: for those, benefits are multiplied and the size penalties on the expansion threshold
+     * divided by the configured boost, which is equivalent to pricing their code at a fraction of
+     * its size. Code growth stays bounded by the number of hot roots.
+     */
+    static final class HotRootTuningPolicy extends TuningPolicy {
+        private static double boost(CallTreeNode node) {
+            CallTree callTree = node.callTree();
+            if (!(callTree.inliningProvider() instanceof SubstrateInliningProvider inliningProvider)) {
+                return 1.0;
+            }
+            OptionValues options = node.getOptions();
+            double boost = inliningProvider.hotRootInliningBoost(options);
+            if (boost <= 1.0) {
+                return 1.0;
+            }
+            ResolvedJavaMethod rootMethod = callTree.root().getReadonlySubgraph().method();
+            if (!(rootMethod instanceof HostedMethod root) || inliningProvider.inclusiveTimeShare(root) < inliningProvider.hotRootMinInclusiveShare(options)) {
+                return 1.0;
+            }
+            return boost;
+        }
+
+        @Override
+        public double cutoffLocalBenefitAmplifier(CutoffNode node) {
+            return boost(node);
+        }
+
+        @Override
+        public double parentLocalBenefitAmplifier(ParentNode node) {
+            return boost(node);
+        }
+
+        @Override
+        public boolean mustInline(ParentNode node) {
+            return false;
+        }
+
+        @Override
+        public double callGraphSizePenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double smallRootIrPenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double largeChildrenCountPenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double rootSizePenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
     }
 
     @Override

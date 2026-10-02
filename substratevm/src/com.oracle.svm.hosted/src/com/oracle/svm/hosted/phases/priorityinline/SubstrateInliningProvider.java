@@ -267,4 +267,24 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return 1;
     }
 
+    /// Gets the benefit multiplier for every call in a compilation root that the sampling profile
+    /// shows to be hot; 1 disables the boost.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootInliningBoost(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
+    /// Gets the inclusive sample share a compilation root needs to count as hot.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootMinInclusiveShare(@SuppressWarnings("unused") OptionValues options) {
+        return Double.MAX_VALUE;
+    }
+
+    /// Gets the fraction in [0, 1] of all samples with {@code root} on the stack; 0 without a profile.
+    public double inclusiveTimeShare(@SuppressWarnings("unused") HostedMethod root) {
+        return 0.0;
+    }
+
 }

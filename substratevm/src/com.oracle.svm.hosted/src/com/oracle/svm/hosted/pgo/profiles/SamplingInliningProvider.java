@@ -57,6 +57,14 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         @Option(help = "Priority bonus, scaled by root-relative hotness, added to hot cutoff nodes while expanding the call tree. 0 disables.")//
         public static final HostedOptionKey<Integer> PGOHotExpansionBonus = new HostedOptionKey<>(0);
 
+        @Option(help = "Multiplier on the inlining benefit of every call inside a compilation root whose inclusive sample share reaches " +
+                       "PGOHotRootMinInclusiveShare. The inliner values a call by its frequency relative to the root's entry, so a method " +
+                       "that runs millions of times gets the same budget as one that runs once; the profile tells them apart. 1 disables.")//
+        public static final HostedOptionKey<Double> PGOHotRootInliningBoost = new HostedOptionKey<>(4.0, option -> requireAtLeastOne(option));
+
+        @Option(help = "Fraction of all samples that must have a compilation root on their stack for PGOHotRootInliningBoost to apply.")//
+        public static final HostedOptionKey<Double> PGOHotRootMinInclusiveShare = new HostedOptionKey<>(0.01, option -> requireProbability(option));
+
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
         public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
 
@@ -119,6 +127,13 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
             }
         }
 
+        private static void requireAtLeastOne(HostedOptionKey<Double> option) {
+            double value = option.getValue();
+            if (!(value >= 1.0)) {
+                throw UserError.invalidOptionValue(option, value, "The value must be at least one.");
+            }
+        }
+
         private static void requireProbability(HostedOptionKey<Double> option) {
             double value = option.getValue();
             if (!(value > 0.0 && value <= 1.0)) {
@@ -127,10 +142,28 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         }
     }
 
+    private final SamplingHotness hotness;
+
     public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness, SimpleConditionalProfilesLookup profiles) {
         super(universe, hotness::cursorFor);
+        this.hotness = hotness;
         this.profileSamples = hotness.totalSamples();
         this.profiles = profiles;
+    }
+
+    @Override
+    public double hotRootInliningBoost(OptionValues options) {
+        return Options.PGOHotRootInliningBoost.getValue(options);
+    }
+
+    @Override
+    public double hotRootMinInclusiveShare(OptionValues options) {
+        return Options.PGOHotRootMinInclusiveShare.getValue(options);
+    }
+
+    @Override
+    public double inclusiveTimeShare(HostedMethod root) {
+        return hotness.inclusiveTimeShare(root);
     }
 
     @Override

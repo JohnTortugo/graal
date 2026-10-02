@@ -26,6 +26,7 @@ package com.oracle.svm.hosted.pgo.profiles;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,6 +63,8 @@ public final class SamplingHotness {
 
     private final PrefixTree methodRootedTree;
     private final Map<AnalysisMethod, Long> selfSamples = new HashMap<>();
+    /** Samples with the method anywhere on the stack, counted once per sample. */
+    private final Map<AnalysisMethod, Long> inclusiveSamples = new HashMap<>();
     private final long totalSamples;
     private final long idleSamples;
     private final AtomicLong hotCompilationUnits = new AtomicLong();
@@ -103,6 +106,12 @@ public final class SamplingHotness {
             }
             total += count;
             selfSamples.merge((AnalysisMethod) leaf.getMethod(), count, Long::sum);
+            Set<AnalysisMethod> onStack = new HashSet<>();
+            for (NodeSourcePosition frame : outermostFirst) {
+                if (frame.getMethod() instanceof AnalysisMethod frameMethod && onStack.add(frameMethod)) {
+                    inclusiveSamples.merge(frameMethod, count, Long::sum);
+                }
+            }
             /* Every frame's suffix (that frame down to the leaf) is a stack rooted at that frame. */
             for (int start = 0; start < outermostFirst.size(); start++) {
                 NodeSourcePosition suffix = null;
@@ -131,6 +140,17 @@ public final class SamplingHotness {
 
     public boolean isSampled(HostedMethod method) {
         return methodRootedTree.hasMethod(method);
+    }
+
+    /**
+     * Fraction in [0, 1] of all samples that have {@code method} somewhere on their stack, i.e. the
+     * share of processor time spent in the method or in its callees.
+     */
+    public double inclusiveTimeShare(HostedMethod method) {
+        if (totalSamples == 0) {
+            return 0.0;
+        }
+        return (double) inclusiveSamples.getOrDefault(method.getWrapped(), 0L) / totalSamples;
     }
 
     /** Fraction in [0, 1] of all samples whose innermost frame lies in {@code method}. */
