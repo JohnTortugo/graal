@@ -922,6 +922,11 @@ public class AArch64Move {
                         CompressEncoding encoding, boolean nonNull, Register base, boolean uncompress32To64Bits) {
             // result = base + (ptr << shift)
             if (nonNull || !encoding.hasBase()) {
+                if (uncompress32To64Bits && encoding.hasBase() && encoding.getShift() <= 4) {
+                    /* The extended-register add zero-extends the 32-bit input itself. */
+                    masm.add(64, resultRegister, base, inputRegister, AArch64Assembler.ExtendType.UXTW, encoding.getShift());
+                    return;
+                }
                 Register src;
                 if (uncompress32To64Bits) {
                     masm.mov(32, resultRegister, inputRegister);
