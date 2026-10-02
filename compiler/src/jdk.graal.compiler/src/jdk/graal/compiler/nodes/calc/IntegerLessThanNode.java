@@ -357,10 +357,21 @@ public final class IntegerLessThanNode extends IntegerLowerThanNode {
      */
     private TriState tryProveNotLessThanImpliesNotBelow(IntegerBelowNode other) {
         IntegerStamp yStamp = (IntegerStamp) getY().stamp(NodeView.DEFAULT);
-        if (yStamp.isPositive() && sameValue(getX(), other.getX()) && sameValue(getY(), other.getY())) {
-            return TriState.FALSE;
+        if (yStamp.isPositive() && sameValue(getX(), other.getX())) {
+            if (sameValue(getY(), other.getY())) {
+                return TriState.FALSE;
+            }
+            // 0 <= B <= A <= x, therefore !(x |<| B)
+            IntegerStamp otherYStamp = (IntegerStamp) other.getY().stamp(NodeView.DEFAULT);
+            if (otherYStamp.isPositive() && structuralImplication() && neverGreater(true, other.getY(), getY(), NodeView.DEFAULT)) {
+                return TriState.FALSE;
+            }
         }
         return TriState.UNKNOWN;
+    }
+
+    private boolean structuralImplication() {
+        return getOptions() != null && GraalOptions.StructuralCompareImplication.getValue(getOptions());
     }
 
     /**
@@ -370,8 +381,14 @@ public final class IntegerLessThanNode extends IntegerLowerThanNode {
      */
     private TriState tryProveLessThanImpliesBelow(IntegerBelowNode other) {
         IntegerStamp xStamp = (IntegerStamp) getX().stamp(NodeView.DEFAULT);
-        if (xStamp.isPositive() && sameValue(getX(), other.getX()) && sameValue(getY(), other.getY())) {
-            return TriState.TRUE;
+        if (xStamp.isPositive() && sameValue(getX(), other.getX())) {
+            if (sameValue(getY(), other.getY())) {
+                return TriState.TRUE;
+            }
+            // 0 <= x < A <= B, therefore x |<| B
+            if (structuralImplication() && neverGreater(true, getY(), other.getY(), NodeView.DEFAULT)) {
+                return TriState.TRUE;
+            }
         }
         return TriState.UNKNOWN;
     }

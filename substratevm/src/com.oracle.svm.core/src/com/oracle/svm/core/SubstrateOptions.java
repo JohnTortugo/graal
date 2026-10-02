@@ -115,6 +115,10 @@ public class SubstrateOptions {
 
     @Option(help = "Check for stack overflow in method prologue")//
     public static final HostedOptionKey<Boolean> StackOverflowCheckInPrologue = new HostedOptionKey<>(true);
+
+    @Option(help = "Treat final instance fields that the closed-world analysis saw written only during object construction as immutable afterwards, so loads of them survive calls and float early. " +
+                    "Assumes objects passed as arguments are fully constructed.")//
+    public static final HostedOptionKey<Boolean> TrustFinalInstanceFields = new HostedOptionKey<>(true);
     @Option(help = "Check for safepoints in method epilogue")//
     public static final HostedOptionKey<Boolean> SafepointCheckInEpilogue = new HostedOptionKey<>(true);
     @Option(help = "Enable use of priority inlining during AOT compilation.")//

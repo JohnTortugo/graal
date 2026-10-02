@@ -26,6 +26,7 @@ package jdk.graal.compiler.nodes.calc;
 
 import static jdk.vm.ci.code.CodeUtil.mask;
 
+import jdk.graal.compiler.core.common.GraalOptions;
 import jdk.graal.compiler.core.common.calc.CanonicalCondition;
 import jdk.graal.compiler.core.common.type.ArithmeticOpTable;
 import jdk.graal.compiler.core.common.type.IntegerStamp;
@@ -465,6 +466,16 @@ public abstract class IntegerLowerThanNode extends CompareNode {
         protected abstract boolean leftShiftCanOverflow(IntegerStamp a, long shift);
 
         /**
+         * Return {@code true} if {@code a <= b} holds in this op's ordering by the structure of
+         * {@code a} alone.
+         *
+         * @see IntegerLowerThanNode#neverGreater(boolean, ValueNode, ValueNode, NodeView)
+         */
+        protected boolean neverGreater(ValueNode a, ValueNode b, NodeView view) {
+            return IntegerLowerThanNode.neverGreater(getCondition() == CanonicalCondition.LT, a, b, view);
+        }
+
+        /**
          * Exploit the fact that adding the (signed) MIN_VALUE on both side flips signed and
          * unsigned comparison.
          *
@@ -659,6 +670,62 @@ public abstract class IntegerLowerThanNode extends CompareNode {
         }
     }
 
+    /**
+     * Return {@code true} if {@code a <= b} holds in the signed or unsigned ordering by the
+     * structure of {@code a} alone, for cases that stamps cannot express because they relate two
+     * non-constant values: {@code b >>> s}, {@code b >> s}, {@code b & m}, {@code min(b, c)} and
+     * {@code b + c} for a constant {@code c <= 0} are never greater than {@code b}, with sign
+     * restrictions where the ordering requires them. This lets a known {@code x < a} prove
+     * {@code x < b}, e.g. {@code i < value.length >>> coder} proves the bounds check
+     * {@code i |<| value.length} of {@code String.charAt} inside a loop over
+     * {@code String.length()}.
+     */
+    protected static boolean neverGreater(boolean signed, ValueNode aNode, ValueNode bNode, NodeView view) {
+        ValueNode a = GraphUtil.skipPi(aNode);
+        ValueNode b = GraphUtil.skipPi(bNode);
+        if (a == b) {
+            return true;
+        }
+        if (!(bNode.stamp(view) instanceof IntegerStamp bStamp)) {
+            return false;
+        }
+        // The stamp of bNode itself may carry a guard-refined sign that the Pi-skipped value lacks.
+        boolean bNonNegative = bStamp.isPositive();
+        if (a instanceof UnsignedRightShiftNode shift && sameValue(shift.getX(), b)) {
+            // b >>> s is at most b as an unsigned value, and as a signed value if b >= 0
+            return !signed || bNonNegative;
+        }
+        if (a instanceof RightShiftNode shift && sameValue(shift.getX(), b)) {
+            // b >> s is at most b if b >= 0 (a negative b grows towards -1)
+            return bNonNegative;
+        }
+        if (a instanceof AndNode and && (sameValue(and.getX(), b) || sameValue(and.getY(), b))) {
+            // clearing bits never increases an unsigned value, nor a non-negative signed one
+            return !signed || bNonNegative;
+        }
+        if (a instanceof MinMaxNode<?> minMax && (sameValue(minMax.getX(), b) || sameValue(minMax.getY(), b))) {
+            if (a instanceof MinNode) {
+                if (signed) {
+                    return true;
+                }
+            } else if (a instanceof UnsignedMinNode) {
+                if (!signed) {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+            // mixed signedness: both orderings agree when both operands are non-negative
+            return minMax.getX().stamp(view) instanceof IntegerStamp xs && xs.isPositive() && minMax.getY().stamp(view) instanceof IntegerStamp ys && ys.isPositive();
+        }
+        if (signed && a instanceof AddNode add && add.getY().isJavaConstant() && sameValue(add.getX(), b)) {
+            // b + c <= b for c <= 0 as long as the addition cannot overflow
+            IntegerStamp cStamp = (IntegerStamp) add.getY().stamp(view);
+            return add.getY().asJavaConstant().asLong() <= 0 && !IntegerStamp.addCanOverflow(bStamp, cStamp);
+        }
+        return false;
+    }
+
     @Override
     public TriState implies(boolean thisNegated, LogicNode other) {
         if (other instanceof IntegerLowerThanNode) {
@@ -666,10 +733,11 @@ public abstract class IntegerLowerThanNode extends CompareNode {
             if (getOp() == otherLowerThan.getOp() && getX() == otherLowerThan.getX()) {
                 // x < A => x < B?
                 LogicNode compareYs = getOp().create(getY(), otherLowerThan.getY(), NodeView.DEFAULT);
-                if (!thisNegated && compareYs.isTautology()) {
-                    // A < B, therefore x < A => x < B
+                boolean structural = getOptions() != null && GraalOptions.StructuralCompareImplication.getValue(getOptions());
+                if (!thisNegated && (compareYs.isTautology() || (structural && getOp().neverGreater(getY(), otherLowerThan.getY(), NodeView.DEFAULT)))) {
+                    // A <= B, therefore x < A => x < B
                     return TriState.TRUE;
-                } else if (thisNegated && compareYs.isContradiction()) {
+                } else if (thisNegated && (compareYs.isContradiction() || (structural && getOp().neverGreater(otherLowerThan.getY(), getY(), NodeView.DEFAULT)))) {
                     // !(A < B) [== A >= B], therefore !(x < A) [== x >= A] => !(x < B) [== x >= B]
                     return TriState.FALSE;
                 }

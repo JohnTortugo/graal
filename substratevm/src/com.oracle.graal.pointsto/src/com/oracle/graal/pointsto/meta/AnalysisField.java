@@ -46,6 +46,7 @@ import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.ResolvedJavaField;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
 public abstract class AnalysisField extends AnalysisElement implements WrappedJavaField, OriginalFieldProvider {
@@ -85,6 +86,12 @@ public abstract class AnalysisField extends AnalysisElement implements WrappedJa
 
     private ConcurrentMap<Object, Boolean> readBy;
     private ConcurrentMap<Object, Boolean> writtenBy;
+    /**
+     * Set when a write is registered that is not known to initialize a freshly constructed object:
+     * a field store outside an instance initializer of the declaring class, or a write registered
+     * without a bytecode position (JNI, unsafe access, image layers).
+     */
+    private volatile boolean writtenOutsideInitialization;
 
     /**
      * Field's position in the list of declaring type's fields, including inherited fields. The
@@ -213,6 +220,14 @@ public abstract class AnalysisField extends AnalysisElement implements WrappedJa
         writtenBy = null;
     }
 
+    /**
+     * Registers that the field is read and written by means that are not visible as bytecode: the
+     * image heap writer, the runtime, or a {@code Feature}. This keeps the field from being folded
+     * but does not enable a write path at run time: writes outside bytecode stores are registered
+     * through {@link #registerAsWritten} (JNI) or {@link #registerAsUnsafeAccessed} (Unsafe,
+     * reflection, method and var handles), so this does not affect
+     * {@link #isWrittenOnlyByInitialization()}.
+     */
     public boolean registerAsAccessed(Object reason) {
         checkGuaranteeFolded();
         getDeclaringClass().registerAsReachable(this);
@@ -249,12 +264,31 @@ public abstract class AnalysisField extends AnalysisElement implements WrappedJa
      * @param reason the reason why this field is written, non-null
      */
     public boolean registerAsWritten(Object reason) {
+        return registerAsWritten(reason, isWrittenByOwnConstructor(reason));
+    }
+
+    /**
+     * Registers a write that initializes a freshly allocated object before any other code can
+     * observe it, such as the field values of a {@code CommitAllocationNode}. Unlike
+     * {@link #registerAsWritten(Object)} this does not count as a write after construction,
+     * regardless of the method the reason points to.
+     *
+     * @param reason the reason why this field is written, non-null
+     */
+    public boolean registerAsWrittenByInitialization(Object reason) {
+        return registerAsWritten(reason, true);
+    }
+
+    private boolean registerAsWritten(Object reason, boolean initializingWrite) {
         checkGuaranteeFolded();
         getDeclaringClass().registerAsReachable(this);
 
         assert isValidReason(reason) : "Registering a field as written needs to provide a valid reason.";
         if (writtenBy != null) {
             writtenBy.put(reason, Boolean.TRUE);
+        }
+        if (!initializingWrite) {
+            writtenOutsideInitialization = true;
         }
         return AtomicUtils.atomicSetAndRun(this, reason, isWrittenUpdater, () -> {
             onReachable(reason);
@@ -368,6 +402,33 @@ public abstract class AnalysisField extends AnalysisElement implements WrappedJa
 
     public Object getReadReason() {
         return isRead;
+    }
+
+    /**
+     * Whether every registered write to this field initializes a freshly constructed object: a
+     * field store inside an instance initializer of the declaring class, or the field value of an
+     * allocation materialized by escape analysis. The JVM verifier only permits bytecode stores to
+     * {@code final} instance fields in such initializers; every other write path (Unsafe, core
+     * reflection, JNI, method and var handles) registers a reason that is not attributed to
+     * initialization. Reliable only once the analysis has finished and only for analyses that
+     * register every bytecode field store.
+     */
+    public boolean isWrittenOnlyByInitialization() {
+        return !writtenOutsideInitialization;
+    }
+
+    /**
+     * A write is attributed to construction only when it is a bytecode-position reason inside an
+     * instance initializer of this field's declaring class. Any other reason, including string
+     * reasons from registration APIs and synthetic positions of methods a constructor was inlined
+     * into, is conservatively treated as a write after construction.
+     */
+    private boolean isWrittenByOwnConstructor(Object reason) {
+        if (reason instanceof BytecodePosition position && position.getMethod() != null) {
+            ResolvedJavaMethod writer = position.getMethod();
+            return writer.isConstructor() && writer.getDeclaringClass().equals(getDeclaringClass());
+        }
+        return false;
     }
 
     public boolean isWritten() {
