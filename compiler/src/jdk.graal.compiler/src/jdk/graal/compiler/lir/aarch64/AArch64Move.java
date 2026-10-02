@@ -168,7 +168,12 @@ public class AArch64Move {
         @Override
         public void emitCode(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
             Register dst = asRegister(result);
-            masm.loadAddress(dst, address.toAddress());
+            if (address.needsScratchRegister()) {
+                /* The result register holds the intermediate sum; no scratch register is needed. */
+                masm.loadAddress(dst, address.toAddress(masm, dst));
+            } else {
+                masm.loadAddress(dst, address.toAddress());
+            }
         }
     }
 
@@ -269,7 +274,7 @@ public class AArch64Move {
          *         the same as the position of the memory access; however, if the memory access was
          *         merged with a previous access, then it will be the position after the access.
          */
-        protected abstract int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm);
+        protected abstract int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address);
 
         /**
          * Checks whether the current memory access could be merged with the prior memory access.
@@ -280,7 +285,14 @@ public class AArch64Move {
 
         @Override
         public void emitCode(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
-            int memPosition = emitMemAccess(crb, masm);
+            int memPosition;
+            if (addressValue.needsScratchRegister()) {
+                try (ScratchRegister scratch = masm.getScratchRegister()) {
+                    memPosition = emitMemAccess(crb, masm, addressValue.toAddress(masm, scratch.getRegister()));
+                }
+            } else {
+                memPosition = emitMemAccess(crb, masm, addressValue.toAddress());
+            }
             if (state != null) {
                 // Adjust implicit exception position if a ldr/str has been merged into a ldp/stp.
                 if (memPosition == masm.position()) {
@@ -336,8 +348,7 @@ public class AArch64Move {
         }
 
         @Override
-        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
-            AArch64Address address = addressValue.toAddress();
+        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address) {
             Register dst = asRegister(result);
 
             int srcBitSize = accessKind.getSizeInBytes() * Byte.SIZE;
@@ -391,7 +402,7 @@ public class AArch64Move {
         }
 
         @Override
-        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
+        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address) {
             int srcBitSize = accessKind.getSizeInBytes() * Byte.SIZE;
             if (extend.isExtended()) {
                 assert accessKind.isInteger();
@@ -402,7 +413,6 @@ public class AArch64Move {
             Register dst = asRegister(result);
 
             try (ScratchRegister scratch1 = masm.getScratchRegister()) {
-                AArch64Address address = addressValue.toAddress();
                 final Register addrReg;
                 if (address.isBaseRegisterOnly()) {
                     // Can directly use the base register as the address
@@ -441,9 +451,8 @@ public class AArch64Move {
         }
 
         @Override
-        public int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
+        public int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address) {
             int destSize = accessKind.getSizeInBytes() * Byte.SIZE;
-            AArch64Address address = addressValue.toAddress();
             int memPosition = masm.position();
             masm.str(destSize, zr, address, mergingAllowed(crb, memPosition));
             return memPosition;
@@ -477,9 +486,8 @@ public class AArch64Move {
         }
 
         @Override
-        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
+        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address) {
             int destSize = accessKind.getSizeInBytes() * Byte.SIZE;
-            AArch64Address address = addressValue.toAddress();
             return moveSPAndEmitStore(masm, asRegister(input), src -> {
                 int memPosition = masm.position();
                 boolean tryMerge = mergingAllowed(crb, memPosition);
@@ -503,12 +511,11 @@ public class AArch64Move {
         }
 
         @Override
-        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm) {
+        protected int emitMemAccess(CompilationResultBuilder crb, AArch64MacroAssembler masm, AArch64Address address) {
             int destSize = accessKind.getSizeInBytes() * Byte.SIZE;
 
             return moveSPAndEmitStore(masm, asRegister(input), src -> {
                 try (ScratchRegister scratch1 = masm.getScratchRegister()) {
-                    AArch64Address address = addressValue.toAddress();
                     final Register addrReg;
                     if (address.isBaseRegisterOnly()) {
                         // Can directly use the base register as the address

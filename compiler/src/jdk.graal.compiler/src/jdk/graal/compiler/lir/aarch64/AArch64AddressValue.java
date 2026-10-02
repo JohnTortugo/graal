@@ -33,6 +33,9 @@ import java.util.EnumSet;
 
 import jdk.graal.compiler.asm.aarch64.AArch64Address;
 import jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode;
+import jdk.graal.compiler.asm.aarch64.AArch64Assembler.ExtendType;
+import jdk.graal.compiler.asm.aarch64.AArch64Assembler.ShiftType;
+import jdk.graal.compiler.asm.aarch64.AArch64MacroAssembler;
 import jdk.graal.compiler.debug.Assertions;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.lir.CompositeValue;
@@ -60,11 +63,27 @@ public final class AArch64AddressValue extends CompositeValue {
     private final int scaleFactor;
     private final AddressingMode addressingMode;
 
+    /**
+     * Extension applied to a 32-bit {@link #offset} before it is added to the base, or null when the
+     * offset is already 64 bits wide. Only used by addresses that {@link #needsScratchRegister()}.
+     */
+    private final ExtendType offsetExtend;
+    /** Left shift applied to the (extended) {@link #offset}; see {@link #needsScratchRegister()}. */
+    private final int offsetShift;
+
     public AArch64AddressValue(ValueKind<?> kind, int bitMemoryTransferSize, AllocatableValue base, AllocatableValue offset, int displacement, int scaleFactor, AddressingMode addressingMode) {
+        this(kind, bitMemoryTransferSize, base, offset, displacement, scaleFactor, addressingMode, null, 0);
+    }
+
+    public AArch64AddressValue(ValueKind<?> kind, int bitMemoryTransferSize, AllocatableValue base, AllocatableValue offset, int displacement, int scaleFactor, AddressingMode addressingMode,
+                    ExtendType offsetExtend, int offsetShift) {
         super(kind);
 
         /* If scale factor is present, it must be equal to the memory operation size. */
         assert scaleFactor == 1 || bitMemoryTransferSize / Byte.SIZE == scaleFactor : Assertions.errorMessage(scaleFactor, bitMemoryTransferSize);
+        assert offsetExtend == null && offsetShift == 0 || addressingMode == REGISTER_OFFSET && displacement != 0 && scaleFactor == 1 : Assertions.errorMessage(addressingMode, displacement,
+                        offsetExtend, offsetShift);
+        assert offsetShift >= 0 && offsetShift <= 4 : offsetShift;
 
         this.bitMemoryTransferSize = bitMemoryTransferSize;
         this.base = base;
@@ -72,6 +91,8 @@ public final class AArch64AddressValue extends CompositeValue {
         this.displacement = displacement;
         this.scaleFactor = scaleFactor;
         this.addressingMode = addressingMode;
+        this.offsetExtend = offsetExtend;
+        this.offsetShift = offsetShift;
     }
 
     /**
@@ -140,8 +161,51 @@ public final class AArch64AddressValue extends CompositeValue {
         return bitMemoryTransferSize;
     }
 
+    public ExtendType getOffsetExtend() {
+        return offsetExtend;
+    }
+
+    public int getOffsetShift() {
+        return offsetShift;
+    }
+
+    /**
+     * An address of the form {@code base + (extend(offset) << shift) + displacement} has no
+     * AArch64 addressing mode. It is emitted as an add into a scratch register followed by an
+     * immediate access from that register, see {@link #toAddress(AArch64MacroAssembler, Register)},
+     * so that the intermediate pointer into the object never outlives the instruction and never
+     * has to be described in a reference map.
+     */
+    public boolean needsScratchRegister() {
+        return addressingMode == REGISTER_OFFSET && displacement != 0;
+    }
+
+    /**
+     * Emits the index addition of an address that {@link #needsScratchRegister()} into
+     * {@code scratch} and returns the immediate address to use for the access. For every other
+     * address this is {@link #toAddress()}.
+     */
+    public AArch64Address toAddress(AArch64MacroAssembler masm, Register scratch) {
+        if (!needsScratchRegister()) {
+            return toAddress();
+        }
+        Register baseReg = toRegister(base);
+        Register offsetReg = toRegister(offset);
+        if (offsetExtend != null) {
+            masm.add(64, scratch, baseReg, offsetReg, offsetExtend, offsetShift);
+        } else if (offsetShift != 0) {
+            masm.add(64, scratch, baseReg, offsetReg, ShiftType.LSL, offsetShift);
+        } else {
+            masm.add(64, scratch, baseReg, offsetReg);
+        }
+        AddressingMode immediateMode = displacement >= 0 && AArch64Address.isOffsetAligned(bitMemoryTransferSize, displacement) &&
+                        AArch64Address.isValidImmediateAddress(bitMemoryTransferSize, IMMEDIATE_UNSIGNED_SCALED, displacement) ? IMMEDIATE_UNSIGNED_SCALED : IMMEDIATE_SIGNED_UNSCALED;
+        return AArch64Address.createImmediateAddress(bitMemoryTransferSize, immediateMode, scratch, displacement);
+    }
+
     public AArch64Address toAddress() {
         assert addressingMode != AddressingMode.EXTENDED_REGISTER_OFFSET : addressingMode;
+        GraalError.guarantee(!needsScratchRegister(), "address needs a scratch register: %s", this);
         Register baseReg = toRegister(base);
         Register offsetReg = toRegister(offset);
         boolean registerOffsetScaled = addressingMode == REGISTER_OFFSET && scaleFactor > 1;
@@ -153,7 +217,7 @@ public final class AArch64AddressValue extends CompositeValue {
         AllocatableValue newBase = (AllocatableValue) proc.doValue(inst, base, mode, flags);
         AllocatableValue newOffset = (AllocatableValue) proc.doValue(inst, offset, mode, flags);
         if (!base.identityEquals(newBase) || !offset.identityEquals(newOffset)) {
-            return new AArch64AddressValue(getValueKind(), bitMemoryTransferSize, newBase, newOffset, displacement, scaleFactor, addressingMode);
+            return new AArch64AddressValue(getValueKind(), bitMemoryTransferSize, newBase, newOffset, displacement, scaleFactor, addressingMode, offsetExtend, offsetShift);
         }
         return this;
     }
@@ -166,7 +230,8 @@ public final class AArch64AddressValue extends CompositeValue {
 
     @Override
     public String toString() {
-        return String.format("{base: %s, offset: %s} bitMemoryTransferSize: %s displacement: %s scaleFactor: %s addressingMode: %s",
-                        base, offset, bitMemoryTransferSize, displacement, scaleFactor, addressingMode);
+        return String.format("{base: %s, offset: %s} bitMemoryTransferSize: %s displacement: %s scaleFactor: %s addressingMode: %s%s",
+                        base, offset, bitMemoryTransferSize, displacement, scaleFactor, addressingMode,
+                        needsScratchRegister() ? String.format(" offsetExtend: %s offsetShift: %s (scratch)", offsetExtend, offsetShift) : "");
     }
 }
