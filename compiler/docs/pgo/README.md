@@ -72,6 +72,15 @@ Type and method ids are remapped by identity and the counts of identical context
 only files from the same instrumented image (or images whose contexts still resolve) merge
 usefully; unresolved contexts are reported and dropped as for a single file.
 
+To collect from many runs or processes without an extra step, let every run write its own file
+(`%p` is the process id, `%t` the time in milliseconds) and pass the directory:
+
+```bash
+./app-instrumented -XX:ProfilesDumpFile=profiles/run-%p-%t.iprof <input A>
+./app-instrumented -XX:ProfilesDumpFile=profiles/run-%p-%t.iprof <input B>
+native-image --pgo=profiles/ -cp <classpath> <main-class> -o app-pgo
+```
+
 `--pgo` applies conditional profiles to root graphs before priority inlining and to decoded
 priority-inliner expansion graphs. Sampling profiles provide root-relative call-tree hotness,
 sampled callee method profiles, and global hot-caller/self-time data.

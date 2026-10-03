@@ -54,7 +54,8 @@ import jdk.internal.misc.Unsafe;
 public final class BranchProfileRecorder {
 
     public static final class Options {
-        @Option(help = "File path for the conditional branch profile produced by a --pgo-instrument image.")//
+        @Option(help = "File path for the profile produced by a --pgo-instrument image. %p is replaced by the process id and %t by the start time in " +
+                       "milliseconds, so that several training runs can write into one directory without overwriting each other; pass that directory to --pgo.")//
         public static final RuntimeOptionKey<String> ProfilesDumpFile = new RuntimeOptionKey<>("default.iprof");
     }
 
@@ -222,6 +223,14 @@ public final class BranchProfileRecorder {
         return _ -> dumpProfile();
     }
 
+    /** Replaces {@code %p} with the process id and {@code %t} with the current time in milliseconds. */
+    static String expandDumpFilePattern(String pattern) {
+        if (pattern.indexOf('%') < 0) {
+            return pattern;
+        }
+        return pattern.replace("%p", Long.toString(ProcessHandle.current().pid())).replace("%t", Long.toString(System.currentTimeMillis()));
+    }
+
     public static void dumpProfile() {
         /* The placeholder site is excluded from output; touching it keeps the path analysis-visible. */
         increment(unusedCounter.getCounterIndex(), true);
@@ -232,6 +241,7 @@ public final class BranchProfileRecorder {
         if (fileName == null || fileName.isEmpty()) {
             fileName = "default.iprof";
         }
+        fileName = expandDumpFilePattern(fileName);
         try {
             List<StackSampleRecorder.DecodedSample> stackSamples = StackSampleRecorder.hasSamples() ? StackSampleRecorder.decodeSamples() : List.of();
             List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles = ReceiverProfileRecorder.isEnabled() ? ReceiverProfileRecorder.decodeProfiles() : List.of();

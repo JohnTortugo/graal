@@ -168,6 +168,21 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
     private static ParsedProfile parseProfile(String optionValue, String optionName) {
         List<IprofProfileMerger.WeightedProfile> inputs = new ArrayList<>();
         for (String spec : optionValue.split(",")) {
+            if (Files.isDirectory(Path.of(spec.strip()))) {
+                /* A directory of training runs, e.g. written with -XX:ProfilesDumpFile=dir/%p.iprof. */
+                try (var files = Files.list(Path.of(spec.strip()))) {
+                    List<Path> iprofs = files.filter(f -> f.toString().endsWith(".iprof")).sorted().toList();
+                    if (iprofs.isEmpty()) {
+                        throw UserError.abort("The directory passed to %s contains no .iprof files: %s", optionName, spec);
+                    }
+                    for (Path iprof : iprofs) {
+                        inputs.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(iprof.toString(), optionName), 1.0));
+                    }
+                } catch (IOException e) {
+                    throw UserError.abort("Could not list the directory passed to %s: %s (%s)", optionName, spec, e.getMessage());
+                }
+                continue;
+            }
             String profilePath = spec;
             double weight = 1.0;
             int separator = spec.lastIndexOf(':');
