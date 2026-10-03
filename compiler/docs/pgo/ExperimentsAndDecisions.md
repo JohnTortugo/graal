@@ -514,6 +514,98 @@ ties and absent profiles. Early and post-inlining-only profiles work, LLVM is un
 Latest-mainline same-profile isolation improved the fixed workload by **1.01%** (99.189 versus 100.202
 seconds) with identical image size and comparable GC. The mechanism remains independently gated.
 
+## Hot-leaf absorption (opt-in)
+
+A cross-runtime profile comparison (C2, Oracle GraalVM EE Native Image with PGO, CE Native Image
+with PGO) attributed the whole remaining CE-to-EE gap to small JDK leaves (`String.hashCode`,
+`trim`, `charAt`, `substring`, `Long.parseLong`, map lookups) that CE left out of line inside the
+hottest methods while EE's context-specialized method clones absorbed them. `-H:+TraceInlining`
+showed the cause: the same callee was inlined at some sites of a hot method and left "unspecified"
+at others, because the expansion threshold grows exponentially with root size and the largest roots
+are the hottest.
+
+A profile-driven force-inline hook (`-H:PGOHotLeafMaxCodeSize`, `-H:PGOHotLeafMinFrequency`,
+`-H:PGOHotLeafMinSharedCalls`) was measured in six variants. The best generic setting was within
+noise (−0.16% for +2.4% image); a library-only rule gave −0.92% once but added nothing on top of the
+later fixes below.
+
+Decision: keep the mechanism, **off by default**. Also from this round: idle samples (sleep, park,
+wait) are excluded from hotness, and profile-guided method duplication is restricted to sampled-hot
+code.
+
+## Trusted finals and structural compare implication
+
+Reading CE's own IR for the hottest loop showed two defects: final instance fields of a closed-world
+type were re-read after every call, and a bounds check `i < value.length` survived next to the loop
+condition `i < value.length >>> coder` because the implication is not a stamp fact.
+
+`-H:+TrustFinalInstanceFields` (default on) makes the Substrate constant field provider report final
+instance fields as trusted when every recorded write initializes a fresh object (constructor stores
+by bytecode position; `CommitAllocationNode` field values are initialization by construction).
+Unsafe, reflection and JNI writes, image layers and the reachability engine disable the trust.
+`StructuralCompareImplication` (default on) lets a dominating `x < A` prove `x < B` when `A` is
+`B >>> s`, `B >> s`, `B & m`, `min(B, c)` or `B + c` with `c <= 0`.
+
+Hot loop 11 → 9 instructions per byte; fixed workload **−1.49%**, image −0.14%. Eleven unit tests.
+
+## Range-check elimination by loop versioning
+
+Native Image cannot deoptimize, so `LoopPredication` and `SpeculativeGuardMovement` do not apply and
+every bounds check whose bound is not provable from the loop condition stays in the body — three of
+ten instructions per character in the workload's newline scan, whose bound is a field.
+
+`LoopRangeCheckVersioningPhase` (`-H:LoopRangeCheckVersioning`, default on) versions hot innermost
+counted loops: the entry test `init(iv) < bound && extremum(iv) < bound && no overflow`, computed in
+64 bits from `InductionVariable.computeEndpoints`, selects a check-free copy; array-length bounds
+read behind an in-loop null check are re-read behind a hoisted one. The loop must be small (≤ 400
+nodes) and hot by a **profiled** frequency: default frequencies of unprofiled loops claim billions of
+iterations and would version 1,354 loops (+1.07% image, −0.27%); with the rule 122 loops, +0.07%.
+
+Scan loop 10 → 8 instructions per character; fixed workload **−0.88%**. Twelve unit tests.
+
+## Inlining budget for sampled-hot roots
+
+With the collector ruled out as the gap (both images Serial GC; under Epsilon the gap was unchanged
+while CE allocated 5.5% more bytes), per-class allocation deltas pointed at iterators, small lists
+and substrings — objects escape analysis removes only when allocator and consumer share a
+compilation unit. Forcing the obvious callees in changed nothing. Inlining statistics showed the
+real cause: the priority inliner values a call by its frequency *relative to one entry of the root*
+and charges size in absolute terms, so a root the program enters millions of times gets the budget
+of one that runs once; in the hottest root 3 of 33 invokes were inlined and 685 calls were never
+evaluated.
+
+`HotRootTuningPolicy` multiplies the local benefit of every call in a root whose inclusive sample
+share reaches `-H:PGOHotRootMinInclusiveShare` (1%) by `-H:PGOHotRootInliningBoost` (4.0) and
+divides the size penalties by it. Boost sweep on the fixed workload: 2 −5.8%, 3 −8.2%, 4 −7.7%,
+5 −8.0%, 6 −3.5%, 8 −4.3%, 16 −5.2%. A self-time gate that kept the boost off thread entry points
+cost 0.8% and was removed.
+
+Result: fixed workload **−7.75%** (image +0.21%, allocation −2.8%, GC time −6%); the CE image is now
+**4.0% faster than the EE image with PGO** on this workload. Public suites (scala-doku, fj-kmeans,
+scrabble, image+run) neutral.
+
+Lesson recorded: Native Image builds are not deterministic in the inlining decisions of several
+hundred cold roots between two builds of identical source; compare hot roots or total instruction
+counts, never per-symbol sizes.
+
+## AArch64 code generation (independent of PGO)
+
+Two backend fixes found by reading CE's hot loop; both apply to every Native Image on AArch64.
+
+Array addressing: `base + (ext(i) << k) + header` has no addressing mode and, without derived
+references, was emitted as `mov tmp, #header; add tmp, tmp, i, ext #k; ldr [base, tmp]`. The
+lowering now emits `add scratch, base, i, ext #k; ldr [scratch, #header]` inside one LIR
+instruction, for plain loads and stores whose address and index sum have a single user (a shared
+index, as in the card-table barrier, is cheaper computed once; without that rule the text grew
+0.4%). Instructions −0.37%, fixed workload **−0.86%**. Ten unit tests.
+
+Compressed reference decode: `UncompressPointerOp` widened a 32-bit input with `mov w, w` before the
+shifted add; the extended-register add (`add x, base, w, uxtw #3`) widens itself. Instructions
+**−2.5%**, image −1.5%, fixed workload **−0.40%**. Three unit tests.
+
+Standing after these: the CE image is **5.3% faster than the EE image with PGO** on the fixed
+workload, from 25% slower at the start of this work.
+
 ## Validation standard
 
 Each accepted iteration requires:

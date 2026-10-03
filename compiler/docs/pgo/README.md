@@ -122,6 +122,20 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:-PGOProfileSwitches                do not instrument switch successors
 -H:-PGOUseSwitchProfiles              do not apply switch successor probabilities
 -H:-PGOUseCodeLayout                  retain deterministic method-name code order
+-H:PGOHotLeafMaxCodeSize=<bytes>       profile-driven force-inlining of small hot leaves (default 0 = off)
+-H:PGOHotLeafMinFrequency=<n>          minimum call frequency for hot-leaf absorption
+-H:PGOHotLeafMinSharedCalls=<n>        require values shared by this many calls
+-H:PGOHotRootInliningBoost=<k>         inlining budget multiplier for sampled-hot roots (default 4.0; 1 = off)
+-H:PGOHotRootMinInclusiveShare=<share> inclusive sample share a root needs for the boost (default 0.01)
+```
+
+Two optimizations added during this work are not profile specific but are gated by frequencies
+that only a profile makes trustworthy:
+
+```text
+-H:-TrustFinalInstanceFields           do not treat closed-world final instance fields as constants after construction
+-H:-LoopRangeCheckVersioning           do not version hot counted loops to remove body range checks
+-H:-LoopRangeCheckVersioningRequireProfile  version loops with default (unprofiled) frequencies too
 ```
 
 Receiver-based hot-callee devirtualization additionally requires a dynamic receiver type profile.
