@@ -75,6 +75,13 @@ public final class ReceiverProfileRecorder implements ThreadListener {
     private static final AtomicInteger NEXT_SITE = new AtomicInteger();
     private static final ConcurrentMap<Long, Long> HOSTED_COUNTS = SubstrateUtil.HOSTED ? new ConcurrentHashMap<>() : null;
 
+    /**
+     * Descriptor of every image type by type id, registered after compilation. Lets sites whose
+     * receiver type state was unknown to the static analysis (saturated or absent static type
+     * profile) still be decoded: the recorder keys by the dynamic hub id, this table names it.
+     */
+    private static final ConcurrentMap<Integer, String> TYPE_DESCRIPTORS_BY_ID = new ConcurrentHashMap<>();
+
     /** Makes metadata allocated after analysis visible to the image-heap scanner. */
     private static final ReceiverProfileSite UNUSED_SITE = createSite(new String[]{"Lcom/oracle/svm/core/pgo/ReceiverProfileRecorder;.__unused__()V"}, new int[]{-1}, new int[]{-1},
                     new String[]{"Ljava/lang/Object;"});
@@ -99,8 +106,8 @@ public final class ReceiverProfileRecorder implements ThreadListener {
     }
 
     public static ReceiverProfileSite createSite(String[] methodDescriptors, int[] contextBcis, int[] receiverTypeIds, String[] receiverTypeDescriptors) {
-        if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length || receiverTypeIds.length == 0 || receiverTypeIds.length != receiverTypeDescriptors.length) {
-            throw new IllegalArgumentException("Receiver profile site metadata must contain matching non-empty arrays");
+        if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length || receiverTypeIds.length != receiverTypeDescriptors.length) {
+            throw new IllegalArgumentException("Receiver profile site metadata must contain matching arrays and a non-empty context");
         }
         int index = NEXT_SITE.getAndIncrement();
         if (index >= MAX_SITES) {
@@ -128,6 +135,11 @@ public final class ReceiverProfileRecorder implements ThreadListener {
             TABLE.set(isolateThread, Word.nullPointer());
             UntrackedNullableNativeMemory.free(table);
         }
+    }
+
+    /** Registers the descriptor of an image type so that receivers unknown to a site's static profile can be named. */
+    public static void registerTypeDescriptor(int typeId, String descriptor) {
+        TYPE_DESCRIPTORS_BY_ID.putIfAbsent(typeId, descriptor);
     }
 
     public static void record(int siteIndex, Object receiver) {
@@ -279,6 +291,9 @@ public final class ReceiverProfileRecorder implements ThreadListener {
             int typeId = (int) key;
             ReceiverProfileSite site = SITES.get(siteIndex);
             String descriptor = site == null ? null : site.receiverTypeDescriptor(typeId);
+            if (descriptor == null && site != null) {
+                descriptor = TYPE_DESCRIPTORS_BY_ID.get(typeId);
+            }
             if (descriptor == null) {
                 unknown += entry.getValue();
                 continue;

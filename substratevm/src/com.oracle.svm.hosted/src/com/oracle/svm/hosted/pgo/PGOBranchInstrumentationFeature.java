@@ -45,6 +45,8 @@ import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.guest.staging.jdk.RuntimeSupport;
+import com.oracle.svm.hosted.FeatureImpl;
+import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.FeatureImpl.BeforeAnalysisAccessImpl;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
@@ -260,6 +262,14 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             return;
         }
         BranchProfileRecorder.sealRegistry();
+        if (Options.PGOProfileReceivers.getValue()) {
+            /* Name every image type by its hub id so receivers outside a site's static profile decode. */
+            for (HostedType type : ((FeatureImpl.AfterCompilationAccessImpl) access).getUniverse().getTypes()) {
+                if (type.getWrapped().isReachable() && type.getHub() != null) {
+                    ReceiverProfileRecorder.registerTypeDescriptor(type.getHub().getTypeID(), type.getName());
+                }
+            }
+        }
         // Checkstyle: stop
         System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped; switches=%d, skipped=%d; receiver invokes=%d, skipped=%d; call edges=%d, skipped=%d%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",

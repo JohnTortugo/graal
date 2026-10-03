@@ -50,4 +50,23 @@ public class ReceiverProfileRecorderTest {
         Assert.assertEquals(Long.valueOf(3), profile.countsByTypeDescriptor().get("Ljava/lang/String;"));
         Assert.assertEquals(Long.valueOf(1), profile.countsByTypeDescriptor().get("Ljava/lang/Integer;"));
     }
+
+    @Test
+    public void namesReceiversOutsideTheStaticProfileThroughTheTypeTable() {
+        String[] methods = {"Lexample/ReceiverRecorderTest;.saturated()V"};
+        int[] bcis = {23};
+        /* A site whose static type profile was absent or saturated carries no pre-named receivers. */
+        ReceiverProfileSite site = ReceiverProfileRecorder.createSite(methods, bcis, new int[0], new String[0]);
+        ReceiverProfileRecorder.registerTypeDescriptor(4201, "Lexample/Impl;");
+
+        ReceiverProfileRecorder.recordType(site.siteIndex(), 4201);
+        ReceiverProfileRecorder.recordType(site.siteIndex(), 4201);
+        ReceiverProfileRecorder.recordType(site.siteIndex(), 4202);
+
+        ReceiverProfileRecorder.DecodedReceiverProfile profile = ReceiverProfileRecorder.decodeProfiles().stream()
+                        .filter(candidate -> candidate.methodDescriptors()[0].contains("saturated"))
+                        .findFirst().orElseThrow();
+        Assert.assertEquals(Long.valueOf(2), profile.countsByTypeDescriptor().get("Lexample/Impl;"));
+        Assert.assertEquals("the unregistered type id stays unknown", 1, profile.countsByTypeDescriptor().size());
+    }
 }

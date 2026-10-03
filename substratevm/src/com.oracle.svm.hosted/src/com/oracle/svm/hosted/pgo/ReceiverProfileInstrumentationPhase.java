@@ -57,23 +57,27 @@ final class ReceiverProfileInstrumentationPhase extends BasePhase<HighTierContex
             if (!callTarget.invokeKind().isIndirect() || callTarget.receiver() == null || !(callTarget instanceof SubstrateMethodCallTargetNode substrateTarget)) {
                 continue;
             }
-            JavaTypeProfile staticProfile = substrateTarget.getStaticTypeProfile();
             NodeSourcePosition position = PGOApplyProfilesPhase.createPointContext(callTarget.getNodeSourcePosition(), null);
-            if (staticProfile == null || staticProfile.getTypes().length == 0 || position == null || callTarget.invoke() == null) {
+            if (position == null || callTarget.invoke() == null) {
                 SKIPPED_INVOKES.incrementAndGet();
                 continue;
             }
+            /*
+             * The static type profile only pre-names the receiver types the analysis expects; the
+             * recorder keys by the dynamic hub id and names any other receiver through the global
+             * type table, so a site with a saturated or absent static profile is instrumented too.
+             * Those are exactly the sites where a dynamic receiver profile is worth the most.
+             */
+            JavaTypeProfile staticProfile = substrateTarget.getStaticTypeProfile();
             List<Integer> typeIds = new ArrayList<>();
             List<String> typeDescriptors = new ArrayList<>();
-            for (ProfiledType profiledType : staticProfile.getTypes()) {
-                if (profiledType.getType() instanceof HostedType type) {
-                    typeIds.add(type.getHub().getTypeID());
-                    typeDescriptors.add(type.getName());
+            if (staticProfile != null) {
+                for (ProfiledType profiledType : staticProfile.getTypes()) {
+                    if (profiledType.getType() instanceof HostedType type) {
+                        typeIds.add(type.getHub().getTypeID());
+                        typeDescriptors.add(type.getName());
+                    }
                 }
-            }
-            if (typeIds.isEmpty()) {
-                SKIPPED_INVOKES.incrementAndGet();
-                continue;
             }
             List<String> methods = new ArrayList<>();
             List<Integer> bcis = new ArrayList<>();
