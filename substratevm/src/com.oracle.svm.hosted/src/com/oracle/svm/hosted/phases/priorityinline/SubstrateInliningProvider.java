@@ -275,6 +275,21 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return 1.0;
     }
 
+    /// Relative block frequency (to the callee entry) below which a callee block counts as cold
+    /// for the cold-code discount in hot roots.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootColdBlockFrequency(@SuppressWarnings("unused") OptionValues options) {
+        return 0.01;
+    }
+
+    /// Largest benefit multiplier the cold-code discount may apply in a hot root; 1 disables it.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootMaxColdCodeDiscount(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
     /// Gets the inclusive sample share a compilation root needs to count as hot.
     ///
     /// @param options the options being used during inlining

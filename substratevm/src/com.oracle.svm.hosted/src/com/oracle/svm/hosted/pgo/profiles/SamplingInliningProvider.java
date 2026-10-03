@@ -62,6 +62,14 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
                        "that runs millions of times gets the same budget as one that runs once; the profile tells them apart. 1 disables.")//
         public static final HostedOptionKey<Double> PGOHotRootInliningBoost = new HostedOptionKey<>(4.0, option -> requireAtLeastOne(option));
 
+        @Option(help = "In hot roots, price an expanded callee by its hot blocks only: its inlining benefit is multiplied by (fixed nodes) / (fixed nodes in blocks " +
+                       "whose relative frequency reaches PGOHotRootColdBlockFrequency), up to this value. A large callee whose profile shows a small hot path " +
+                       "(exception and slow paths cold) is then inlined like the small method it is at run time. 1 disables.")//
+        public static final HostedOptionKey<Double> PGOHotRootMaxColdCodeDiscount = new HostedOptionKey<>(4.0, option -> requireAtLeastOne(option));
+
+        @Option(help = "Relative block frequency below which a callee block counts as cold for PGOHotRootMaxColdCodeDiscount.")//
+        public static final HostedOptionKey<Double> PGOHotRootColdBlockFrequency = new HostedOptionKey<>(0.01, option -> requireProbability(option));
+
         @Option(help = "Fraction of all samples that must have a compilation root on their stack for PGOHotRootInliningBoost to apply.")//
         public static final HostedOptionKey<Double> PGOHotRootMinInclusiveShare = new HostedOptionKey<>(0.01, option -> requireProbability(option));
 
@@ -154,6 +162,16 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
     @Override
     public double hotRootInliningBoost(OptionValues options) {
         return Options.PGOHotRootInliningBoost.getValue(options);
+    }
+
+    @Override
+    public double hotRootColdBlockFrequency(OptionValues options) {
+        return Options.PGOHotRootColdBlockFrequency.getValue(options);
+    }
+
+    @Override
+    public double hotRootMaxColdCodeDiscount(OptionValues options) {
+        return Options.PGOHotRootMaxColdCodeDiscount.getValue(options);
     }
 
     @Override

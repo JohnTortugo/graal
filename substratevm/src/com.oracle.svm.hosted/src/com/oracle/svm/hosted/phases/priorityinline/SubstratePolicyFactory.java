@@ -74,6 +74,11 @@ import jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase;
 import jdk.graal.compiler.phases.common.priorityinline.TunableOptionKey;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CallTreeNode;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CutoffNode;
+import jdk.graal.compiler.phases.common.priorityinline.nodes.SubgraphNode;
+import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.FixedNode;
+import jdk.graal.compiler.nodes.cfg.HIRBlock;
+import jdk.graal.compiler.nodes.cfg.ControlFlowGraph;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.ParentNode;
 import jdk.graal.compiler.phases.common.priorityinline.tuning.BytecodeInterpreterTuningPolicy;
 import jdk.graal.compiler.phases.common.priorityinline.tuning.CompositeTuningPolicy;
@@ -148,7 +153,44 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
 
         @Override
         public double parentLocalBenefitAmplifier(ParentNode node) {
-            return boost(node);
+            double boost = boost(node);
+            if (boost <= 1.0) {
+                return 1.0;
+            }
+            SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
+            return boost * coldCodeDiscount(node, inliningProvider.hotRootColdBlockFrequency(node.getOptions()), inliningProvider.hotRootMaxColdCodeDiscount(node.getOptions()));
+        }
+
+        /**
+         * The inliner charges a callee its whole node count, but the blocks of a callee that the
+         * profile shows are almost never executed (exception paths, slow paths) cost the hot path
+         * nothing once laid out of line. In a hot root, discount them: the inlining benefit is
+         * multiplied by (fixed nodes) / (fixed nodes in blocks at or above the cold frequency),
+         * capped, so that a large callee with a small hot path is priced by its hot path. Floating
+         * nodes are not scheduled here; the fixed-node ratio is the estimate.
+         */
+        private static double coldCodeDiscount(ParentNode node, double coldBlockFrequency, double maxDiscount) {
+            if (maxDiscount <= 1.0 || !(node instanceof SubgraphNode subgraph)) {
+                return 1.0;
+            }
+            StructuredGraph graph = subgraph.getReadonlySubgraph();
+            ControlFlowGraph cfg = ControlFlowGraph.newBuilder(graph).connectBlocks(true).computeFrequency(true).build();
+            int fixedNodes = 0;
+            int hotFixedNodes = 0;
+            for (HIRBlock block : cfg.getBlocks()) {
+                int count = 0;
+                for (FixedNode ignored : block.getNodes()) {
+                    count++;
+                }
+                fixedNodes += count;
+                if (block.getRelativeFrequency() >= coldBlockFrequency) {
+                    hotFixedNodes += count;
+                }
+            }
+            if (hotFixedNodes == 0) {
+                return 1.0;
+            }
+            return Math.min(maxDiscount, (double) fixedNodes / hotFixedNodes);
         }
 
         @Override
