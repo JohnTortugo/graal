@@ -126,7 +126,7 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:PGOHotLeafMinFrequency=<n>          minimum call frequency for hot-leaf absorption
 -H:PGOHotLeafMinSharedCalls=<n>        require values shared by this many calls
 -H:PGOHotRootInliningBoost=<k>         inlining budget multiplier for sampled-hot roots (default 4.0; 1 = off)
--H:PGOHotRootMinInclusiveShare=<share> inclusive sample share a root needs for the boost (default 0.01)
+-H:PGOHotRootMinInclusiveShare=<share> inclusive sample share a root needs for the boost (default 0.002)
 ```
 
 Two optimizations added during this work are not profile specific but are gated by frequencies

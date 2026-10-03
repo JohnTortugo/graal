@@ -70,8 +70,10 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         @Option(help = "Relative block frequency below which a callee block counts as cold for PGOHotRootMaxColdCodeDiscount.")//
         public static final HostedOptionKey<Double> PGOHotRootColdBlockFrequency = new HostedOptionKey<>(0.01, option -> requireProbability(option));
 
-        @Option(help = "Fraction of all samples that must have a compilation root on their stack for PGOHotRootInliningBoost to apply.")//
-        public static final HostedOptionKey<Double> PGOHotRootMinInclusiveShare = new HostedOptionKey<>(0.01, option -> requireProbability(option));
+        @Option(help = "Fraction of all samples that must have a compilation root on their stack for PGOHotRootInliningBoost to apply. The share is of the whole " +
+                       "profile, so a profile merged from several workloads divides every root's share by roughly the number of workloads; the default is low " +
+                       "enough that a root carrying 1% of one of five merged workloads still qualifies.")//
+        public static final HostedOptionKey<Double> PGOHotRootMinInclusiveShare = new HostedOptionKey<>(0.002, option -> requireProbability(option));
 
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
         public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
