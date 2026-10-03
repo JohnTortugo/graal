@@ -29,6 +29,8 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ListIterator;
 
 import org.graalvm.collections.EconomicMap;
@@ -157,7 +159,39 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         }
     }
 
-    private static ParsedProfile parseProfile(String profilePath, String optionName) {
+    /**
+     * Parses the option value {@code path[:weight][,path[:weight]...]}: one iprof file, or several
+     * that are merged with their counts scaled by the given weights (default 1), as
+     * {@code llvm-profdata merge --weighted-input} and {@code gcov-tool merge -w} do for training
+     * runs of different workloads or lengths.
+     */
+    private static ParsedProfile parseProfile(String optionValue, String optionName) {
+        List<IprofProfileMerger.WeightedProfile> inputs = new ArrayList<>();
+        for (String spec : optionValue.split(",")) {
+            String profilePath = spec;
+            double weight = 1.0;
+            int separator = spec.lastIndexOf(':');
+            if (separator > 0) {
+                try {
+                    weight = Double.parseDouble(spec.substring(separator + 1));
+                    profilePath = spec.substring(0, separator);
+                } catch (NumberFormatException e) {
+                    /* Not a weight suffix; the whole value is the path. */
+                }
+            }
+            if (!(weight > 0.0)) {
+                throw UserError.abort("The profile weight passed to %s must be positive: %s", optionName, spec);
+            }
+            inputs.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(profilePath.strip(), optionName), weight));
+        }
+        try {
+            return IprofProfileMerger.merge(inputs);
+        } catch (IprofFormatException e) {
+            throw UserError.abort("The iprof files passed to %s cannot be merged: %s", optionName, e.getMessage());
+        }
+    }
+
+    private static ParsedProfile parseSingleProfile(String profilePath, String optionName) {
         Path path = Path.of(profilePath);
         if (!Files.isReadable(path)) {
             throw UserError.abort("The iprof file passed to %s is not readable: %s", optionName, path);

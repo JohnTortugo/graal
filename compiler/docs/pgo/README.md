@@ -60,6 +60,18 @@ Build the optimized image:
 native-image --pgo=app.iprof -cp <classpath> <main-class> -o app-pgo
 ```
 
+Several training runs — different inputs, different lengths, several processes — are combined by
+listing their files; an optional `:weight` scales a file's counts, as `llvm-profdata merge
+--weighted-input` and `gcov-tool merge -w` do. Without weights a longer run weighs more:
+
+```bash
+native-image --pgo=text.iprof,binary-format.iprof:4 -cp <classpath> <main-class> -o app-pgo
+```
+
+Type and method ids are remapped by identity and the counts of identical contexts are added, so
+only files from the same instrumented image (or images whose contexts still resolve) merge
+usefully; unresolved contexts are reported and dropped as for a single file.
+
 `--pgo` applies conditional profiles to root graphs before priority inlining and to decoded
 priority-inliner expansion graphs. Sampling profiles provide root-relative call-tree hotness,
 sampled callee method profiles, and global hot-caller/self-time data.
