@@ -148,6 +148,7 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:PGOHotLeafMinSharedCalls=<n>        require values shared by this many calls
 -H:PGOHotRootInliningBoost=<k>         inlining budget multiplier for sampled-hot roots (default 4.0; 1 = off)
 -H:PGOHotRootMinInclusiveShare=<share> inclusive sample share a root needs for the boost (default 0.002)
+-H:-PGOInlineIntrinsicsInHotRoots      call the shared array/string intrinsic stubs in hot roots too (default: emit inline)
 ```
 
 Two optimizations added during this work are not profile specific but are gated by frequencies

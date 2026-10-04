@@ -91,6 +91,7 @@ import com.oracle.svm.core.interpreter.InterpreterSupport;
 import com.oracle.svm.core.jni.CallVariant;
 import com.oracle.svm.core.meta.CompressedNullConstant;
 import com.oracle.svm.core.meta.MethodPointer;
+import com.oracle.svm.core.pgo.IntrinsicInliningPolicy;
 import com.oracle.svm.jvmci.shared.meta.SharedField;
 import com.oracle.svm.jvmci.shared.meta.SharedMethod;
 import com.oracle.svm.core.meta.SubstrateMethodOffsetConstant;
@@ -1106,6 +1107,10 @@ public class SubstrateAArch64Backend extends SubstrateBackendWithAssembler<Subst
             SharedMethod method = (SharedMethod) valueNode.graph().method();
             if (method != null && method.isForeignCallTarget()) {
                 // Emit assembly for snippet stubs
+                return null;
+            }
+            if (method != null && ImageSingletons.contains(IntrinsicInliningPolicy.class) && ImageSingletons.lookup(IntrinsicInliningPolicy.class).emitIntrinsicsInline(method)) {
+                // Emit the intrinsic inline instead of calling the stub.
                 return null;
             }
             // Assume the SVM ForeignCallSignature are identical to the Graal ones.

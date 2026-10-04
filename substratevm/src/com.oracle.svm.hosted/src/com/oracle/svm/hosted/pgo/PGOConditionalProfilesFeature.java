@@ -47,7 +47,12 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileFilter;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileSiteDescriptor.Stage;
+import com.oracle.svm.core.pgo.IntrinsicInliningPolicy;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.hosted.phases.priorityinline.SubstratePolicyFactory;
 import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
 import com.oracle.svm.hosted.pgo.profiles.SamplingInliningProvider;
@@ -91,6 +96,10 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         @Option(help = "Ignore matched conditional profiles whose dominant successor share is below this value in [0,1]; the site keeps its static probability. 0 disables.")//
         public static final HostedOptionKey<Double> PGOConditionalMinBias = new HostedOptionKey<>(0.0);
 
+        @Option(help = "Emit array and string intrinsics inline instead of calling the shared stubs in compilation roots whose inclusive sample share reaches " +
+                       "PGOHotRootMinInclusiveShare. Saves the call and stub prologue, which dominates on short strings, at a code-size cost confined to hot roots.")//
+        public static final HostedOptionKey<Boolean> PGOInlineIntrinsicsInHotRoots = new HostedOptionKey<>(true);
+
         @Option(help = "Expose callCountProfiles to call-count optimization consumers. Disable with -H:-PGOUseCallCounts.")//
         public static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
         // @formatter:on
@@ -107,6 +116,23 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
                     GraalOptions.TrackNodeSourcePosition.update(values, true);
                 }
             }
+        }
+    }
+
+    /** Emits intrinsics inline in compilation roots the sampling profile shows to be hot. */
+    @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
+    private static final class HotRootIntrinsicInliningPolicy implements IntrinsicInliningPolicy {
+        private final SamplingHotness hotness;
+        private final double minInclusiveShare;
+
+        HotRootIntrinsicInliningPolicy(SamplingHotness hotness, double minInclusiveShare) {
+            this.hotness = hotness;
+            this.minInclusiveShare = minInclusiveShare;
+        }
+
+        @Override
+        public boolean emitIntrinsicsInline(ResolvedJavaMethod compilationRoot) {
+            return compilationRoot instanceof HostedMethod hosted && hotness.inclusiveTimeShare(hosted) >= minInclusiveShare;
         }
     }
 
@@ -241,6 +267,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
                 System.out.printf("[PGO:early] sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)%n",
                             samplingHotness.totalSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
                 // Checkstyle: resume
+                if (Options.PGOInlineIntrinsicsInHotRoots.getValue() && !ImageSingletons.contains(IntrinsicInliningPolicy.class)) {
+                    ImageSingletons.add(IntrinsicInliningPolicy.class, new HotRootIntrinsicInliningPolicy(samplingHotness, SamplingInliningProvider.Options.PGOHotRootMinInclusiveShare.getValue()));
+                }
             } else if (earlyLookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
                 samplingHotness = new SamplingHotness(java.util.Map.of());

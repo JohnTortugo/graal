@@ -606,6 +606,27 @@ shifted add; the extended-register add (`add x, base, w, uxtw #3`) widens itself
 Standing after these: the CE image is **5.3% faster than the EE image with PGO** on the fixed
 workload, from 25% slower at the start of this work.
 
+## Prior-art experiments: hot call sites and inline intrinsics
+
+Two ideas from other PGO implementations were tried on the fixed workload and on a second,
+binary-format workload with its own profile.
+
+LLVM-style hot call sites (benefit boost for calls whose absolute call-edge count reaches the
+profile-summary hot threshold, ×4–8 at 99–99.9% coverage, with or without the root-level boost):
+neutral to −1% on the binary-format workload, +3% to +8% on the fixed workload, and worse still with
+a context-insensitive edge-count fallback. In the priority inliner the call-edge count is already
+folded into root-relative hotness, so a per-site boost re-boosts the same calls and over-inlines in
+roots whose budget was already right. Rejected; the root-level boost plus the cold-code discount
+stay.
+
+Inline intrinsics in hot roots (`-H:±PGOInlineIntrinsicsInHotRoots`, default on): Substrate emits
+array and string intrinsics (indexOf, equals, hashCode, compress, inflate, ...) as calls to shared
+stubs to keep images small; on short strings the call and stub prologue dominate. Inlining every
+stub had measured −2.0%/−3.4% at +5% code. Confining it to compilation roots whose sampled
+inclusive share reaches `PGOHotRootMinInclusiveShare` keeps the gain and drops the cost: binary
+format −2.0%, fixed workload short input −1.4% and full input **−1.8%** (73.98 → 72.64 s), image size
+unchanged, scala-doku neutral.
+
 ## Validation standard
 
 Each accepted iteration requires:
