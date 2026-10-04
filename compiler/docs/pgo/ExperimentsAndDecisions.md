@@ -627,6 +627,32 @@ inclusive share reaches `PGOHotRootMinInclusiveShare` keeps the gain and drops t
 format −2.0%, fixed workload short input −1.4% and full input **−1.8%** (73.98 → 72.64 s), image size
 unchanged, scala-doku neutral.
 
+## More prior-art experiments (rejected, with numbers)
+
+All measured on the fixed workload and a binary-format workload, each with its own profile, and on
+the fixed-workload profile applied to the binary-format input (the "untrained path" case).
+
+- Cumulative-coverage selection of hot roots (Go: top 99% of edge weights; LLVM profile summary)
+  in place of the fixed 0.2% inclusive share: within noise at 99.9% and 99.99% coverage on both
+  workloads; the fixed share already covers more than 99% of samples. Not adopted.
+- Intrinsics inline in every *sampled* root instead of hot roots only: binary format −0.5%, fixed
+  workload +0.6%, i.e. noise; the hot-root rule already captures what inlining every intrinsic
+  gives. The planned short-length fast path for cold roots therefore has ≤0.5% to gain and was not
+  built.
+- GCC `-fprofile-partial-training` check — does gating method duplication on profiled hotness
+  penalize unprofiled code? Ungating it on the untrained binary-format path: +1% slower and +17%
+  image. The gate is not what makes unprofiled paths slow; the default behaviour already matches
+  the partial-training principle (unprofiled code keeps the default heuristics).
+- Damping the inlining benefit in roots the profile never saw (LLVM lowers its threshold at cold
+  sites): fixed workload neutral, untrained path +1.4% / +5.6% slower at ×0.5 / ×0.25, and the
+  image *grew* 1.6% / 4.9% — less inlining makes callees standalone compilation units. Rejected.
+
+Adopted from the survey: weighted profile merging and per-run dump files (LLVM/GCC), the lower
+hot-root share for merged profiles, the sampling-overlap diagnostic (`gcov-tool overlap`), and
+intrinsics inline in hot roots. The merged text+binary-format image now matches the specialized
+images on both inputs (fixed workload 72.59 vs 72.74 s; binary format 108.1 vs the text-only
+image's 139.7 s).
+
 ## Validation standard
 
 Each accepted iteration requires:
