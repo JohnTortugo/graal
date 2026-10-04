@@ -105,6 +105,10 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final AtomicLong virtualInvokeHitCount = new AtomicLong();
     private final AtomicLong virtualInvokeMissCount = new AtomicLong();
     private final Set<List<FrameKey>> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
+    /** Receiver-profile hits obtained by dropping outermost frames of the query context. */
+    private final AtomicLong virtualInvokeFallbackCount = new AtomicLong();
+    private final AtomicLong virtualInvokeFallbackDroppedFrames = new AtomicLong();
+    private volatile boolean receiverContextFallback;
     private final AtomicLong impossibleReceiverRecords = new AtomicLong();
     private final AtomicLong impossibleReceiverEvents = new AtomicLong();
     private final boolean preferPrecise;
@@ -205,6 +209,18 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     public void setContextFallback(boolean enabled) {
         this.contextFallback = enabled;
+    }
+
+    public void setReceiverContextFallback(boolean enabled) {
+        this.receiverContextFallback = enabled;
+    }
+
+    public long virtualInvokeFallbackCount() {
+        return virtualInvokeFallbackCount.get();
+    }
+
+    public long virtualInvokeFallbackDroppedFrames() {
+        return virtualInvokeFallbackDroppedFrames.get();
     }
 
     public long contextFallbackCount() {
@@ -579,6 +595,25 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         }
         List<FrameKey> key = canonicalize(callingContext);
         Map<AnalysisType, Long> receivers = virtualInvokeData.get(key);
+        if (receivers == null && receiverContextFallback) {
+            /*
+             * The same indirect call recorded under a shorter inlining chain: the instrumented image
+             * compiled the callee standalone (or inlined it less deeply) while this image inlines
+             * it into a new caller. The receiver distribution is a property of the call site and
+             * its data flow, which the extra callers do not change for a site whose recorded
+             * receivers agree, so the shorter context is the best available estimate. A type guard
+             * with a fallback keeps a wrong estimate a performance question, not a correctness one.
+             */
+            for (int depth = key.size() - 1; depth >= 1 && receivers == null; depth--) {
+                List<FrameKey> shorter = key.subList(0, depth);
+                receivers = virtualInvokeData.get(shorter);
+                if (receivers != null) {
+                    key = List.copyOf(shorter);
+                    virtualInvokeFallbackCount.incrementAndGet();
+                    virtualInvokeFallbackDroppedFrames.addAndGet(callingContextDepth(callingContext) - depth);
+                }
+            }
+        }
         if (receivers == null) {
             virtualInvokeMissCount.incrementAndGet();
             return Optional.empty();
@@ -586,6 +621,14 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         virtualInvokeHitCount.incrementAndGet();
         matchedVirtualInvokeContexts.add(key);
         return Optional.of(receivers);
+    }
+
+    private static int callingContextDepth(BytecodePosition position) {
+        int depth = 0;
+        for (BytecodePosition current = position; current != null; current = current.getCaller()) {
+            depth++;
+        }
+        return depth;
     }
 
     @Override

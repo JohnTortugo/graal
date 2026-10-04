@@ -26,6 +26,8 @@ package com.oracle.svm.hosted.pgo.profiles;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -39,8 +41,10 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver.VirtualInvokeDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
 
 import jdk.vm.ci.code.BytecodePosition;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 public class VirtualInvokeProfileResolutionTest {
 
@@ -110,5 +114,36 @@ public class VirtualInvokeProfileResolutionTest {
         Assert.assertFalse(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.VIRTUAL_INVOKE_PROFILES_CATEGORY));
         Optional<Map<AnalysisType, Long>> result = lookup.getVirtualInvokeProfile(new BytecodePosition(null, ConditionalProfileContextResolverTest.mockBarMethod(), 9));
         Assert.assertTrue(result.isEmpty());
+    }
+
+    /**
+     * A receiver profile recorded for a call compiled standalone must also serve the same call once
+     * the compiled image inlines its method into a caller (deeper query context), when the fallback
+     * is enabled; an exact-only lookup misses it.
+     */
+    @Test
+    public void shortenedContextFallbackServesInlinedCopies() {
+        ResolvedJavaMethod bar = ConditionalProfileContextResolverTest.mockBarMethod();
+        Map<AnalysisType, Long> receivers = Collections.singletonMap(null, 7L);
+        Map<List<FrameKey>, Map<AnalysisType, Long>> data = Map.of(List.of(new FrameKey(ConditionalProfileContextResolverTest.BAR_DESC, 9)), receivers);
+        BytecodePosition inlinedTwice = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 14), bar, 9);
+
+        SimpleConditionalProfilesLookup exactOnly = new SimpleConditionalProfilesLookup(Map.of(), Map.of(), null, data, null);
+        Assert.assertTrue(exactOnly.getVirtualInvokeProfile(inlinedTwice).isEmpty());
+        Assert.assertEquals(1, exactOnly.virtualInvokeMissCount());
+        Assert.assertEquals(0, exactOnly.virtualInvokeFallbackCount());
+
+        SimpleConditionalProfilesLookup withFallback = new SimpleConditionalProfilesLookup(Map.of(), Map.of(), null, data, null);
+        withFallback.setReceiverContextFallback(true);
+        Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(inlinedTwice).orElseThrow());
+        Assert.assertEquals(1, withFallback.virtualInvokeHitCount());
+        Assert.assertEquals(1, withFallback.virtualInvokeFallbackCount());
+        Assert.assertEquals(2, withFallback.virtualInvokeFallbackDroppedFrames());
+        Assert.assertEquals(1, withFallback.matchedVirtualInvokeContextCount());
+        /* An exact match does not count as a fallback. */
+        Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(new BytecodePosition(null, bar, 9)).orElseThrow());
+        Assert.assertEquals(1, withFallback.virtualInvokeFallbackCount());
+        /* A different call site in the same method is never served by the fallback. */
+        Assert.assertTrue(withFallback.getVirtualInvokeProfile(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 10)).isEmpty());
     }
 }

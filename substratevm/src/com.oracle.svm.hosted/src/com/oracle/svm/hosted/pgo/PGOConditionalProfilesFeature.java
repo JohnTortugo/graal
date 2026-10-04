@@ -90,6 +90,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         @Option(help = "When a conditional site's full inlining context has no profile, fall back to the profile of the same branch under a shorter context (outermost callers dropped).")//
         public static final HostedOptionKey<Boolean> PGOContextFallback = new HostedOptionKey<>(true);
 
+        @Option(help = "When an indirect call's full inlining context has no receiver profile, fall back to the receiver profile of the same call under a shorter context (outermost callers dropped).")//
+        public static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
+
         @Option(help = "Ignore matched conditional profiles with fewer than this many recorded successor events; the site keeps its static probability. 0 disables.")//
         public static final HostedOptionKey<Long> PGOConditionalMinEvents = new HostedOptionKey<>(0L);
 
@@ -269,6 +272,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             earlyLookup = ConditionalProfileContextResolver.resolve(parsedEarlyProfile, hostedUniverse);
             earlyLookup.setFilter(filter);
             earlyLookup.setContextFallback(Options.PGOContextFallback.getValue());
+            earlyLookup.setReceiverContextFallback(Options.PGOReceiverContextFallback.getValue());
             earlyLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             ImageSingletons.add(PGOProfilesLookup.class, earlyLookup);
             reportResolution("early", earlyLookup);
@@ -290,6 +294,7 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             postInliningLookup = ConditionalProfileContextResolver.resolve(parsedPostInliningProfile, hostedUniverse);
             postInliningLookup.setFilter(filter);
             postInliningLookup.setContextFallback(Options.PGOContextFallback.getValue());
+            postInliningLookup.setReceiverContextFallback(Options.PGOReceiverContextFallback.getValue());
             postInliningLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             reportResolution("post-inlining", postInliningLookup);
         }
@@ -412,8 +417,9 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
                         stage, queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
                         lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
         if (lookup.availableVirtualInvokeContextCount() > 0) {
-            System.out.printf("[PGO:%s] virtual invokes: %d queries, %d hits, %d misses; contexts: %d/%d used; impossible receivers dropped: %d records, %d events%n", stage,
-                            lookup.virtualInvokeHitCount() + lookup.virtualInvokeMissCount(), lookup.virtualInvokeHitCount(), lookup.virtualInvokeMissCount(),
+            System.out.printf("[PGO:%s] virtual invokes: %d queries, %d hits (%d via shortened context, avg %.1f frames dropped), %d misses; contexts: %d/%d used; impossible receivers dropped: %d records, %d events%n", stage,
+                            lookup.virtualInvokeHitCount() + lookup.virtualInvokeMissCount(), lookup.virtualInvokeHitCount(), lookup.virtualInvokeFallbackCount(),
+                            lookup.virtualInvokeFallbackCount() == 0 ? 0.0 : (double) lookup.virtualInvokeFallbackDroppedFrames() / lookup.virtualInvokeFallbackCount(), lookup.virtualInvokeMissCount(),
                             lookup.matchedVirtualInvokeContextCount(), lookup.availableVirtualInvokeContextCount(),
                             lookup.impossibleReceiverRecords(), lookup.impossibleReceiverEvents());
         }
