@@ -84,6 +84,52 @@ public final class IprofProfileMerger {
     private IprofProfileMerger() {
     }
 
+    /**
+     * Similarity of two profiles' sampling data in [0, 1], as {@code gcov-tool overlap} defines it
+     * for arc counters: the sum over all methods of {@code min(a_i / sum(a), b_i / sum(b))} where
+     * {@code a_i} is the inclusive sample count of method {@code i}. 1 means the two runs spent
+     * their time in the same methods in the same proportions; values well below 1 mean the runs
+     * exercise different code and the merged profile is a compromise between them.
+     */
+    public static double samplingOverlap(ParsedProfile a, ParsedProfile b) {
+        Map<MethodIdentity, Long> countsA = inclusiveSamplesByMethod(a);
+        Map<MethodIdentity, Long> countsB = inclusiveSamplesByMethod(b);
+        double totalA = countsA.values().stream().mapToLong(Long::longValue).sum();
+        double totalB = countsB.values().stream().mapToLong(Long::longValue).sum();
+        if (totalA == 0 || totalB == 0) {
+            return 0.0;
+        }
+        double overlap = 0.0;
+        for (Map.Entry<MethodIdentity, Long> entry : countsA.entrySet()) {
+            Long other = countsB.get(entry.getKey());
+            if (other != null) {
+                overlap += Math.min(entry.getValue() / totalA, other / totalB);
+            }
+        }
+        return overlap;
+    }
+
+    private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedProfile profile) {
+        Map<MethodIdentity, Long> counts = new HashMap<>();
+        for (SamplingEntry entry : profile.samplingEntries()) {
+            java.util.Set<Integer> seen = new java.util.HashSet<>();
+            for (ContextFrame frame : entry.context()) {
+                if (seen.add(frame.methodId())) {
+                    MethodDescriptor method = profile.methodsById().get(frame.methodId());
+                    if (method != null) {
+                        counts.merge(identity(profile, method), entry.count(), Long::sum);
+                    }
+                }
+            }
+        }
+        return counts;
+    }
+
+    private static MethodIdentity identity(ParsedProfile profile, MethodDescriptor method) {
+        return new MethodIdentity(typeName(profile, method.declaringTypeId()), method.name(), typeName(profile, method.returnTypeId()),
+                        Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
+    }
+
     public static ParsedProfile merge(List<WeightedProfile> inputs) {
         if (inputs.isEmpty()) {
             throw new IllegalArgumentException("At least one profile is required");
@@ -110,8 +156,7 @@ public final class IprofProfileMerger {
         }
         Map<Integer, Integer> methodMap = new HashMap<>();
         for (MethodDescriptor method : profile.methodsById().values()) {
-            MethodIdentity identity = new MethodIdentity(typeName(profile, method.declaringTypeId()), method.name(), typeName(profile, method.returnTypeId()),
-                            Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
+            MethodIdentity identity = identity(profile, method);
             Integer id = methodIds.get(identity);
             if (id == null) {
                 id = methodIds.size();

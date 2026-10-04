@@ -226,6 +226,17 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             inputs.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(profilePath.strip(), optionName), weight));
         }
         try {
+            if (inputs.size() > 1) {
+                /* Tell the user how alike the training runs are; a low overlap means the merged profile is a compromise. */
+                StringBuilder overlaps = new StringBuilder();
+                for (int i = 1; i < inputs.size(); i++) {
+                    overlaps.append(i > 1 ? ", " : "").append(String.format("%d-%d: %.2f", 0, i, IprofProfileMerger.samplingOverlap(inputs.get(0).profile(), inputs.get(i).profile())));
+                }
+                // Checkstyle: stop
+                System.out.printf("[PGO:%s] merging %d profiles; sampling overlap with the first (1 = same hot methods in the same proportions): %s%n",
+                                optionName.replace("--", ""), inputs.size(), overlaps);
+                // Checkstyle: resume
+            }
             return IprofProfileMerger.merge(inputs);
         } catch (IprofFormatException e) {
             throw UserError.abort("The iprof files passed to %s cannot be merged: %s", optionName, e.getMessage());

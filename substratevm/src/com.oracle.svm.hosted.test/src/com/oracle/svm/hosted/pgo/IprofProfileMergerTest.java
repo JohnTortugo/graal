@@ -110,6 +110,16 @@ public class IprofProfileMergerTest {
     }
 
     @Test
+    public void overlapIsOneForTheSameRunAndSmallerForDifferentHotMethods() throws IOException {
+        ParsedProfile first = parse(FIRST);
+        ParsedProfile second = parse(SECOND);
+        Assert.assertEquals(1.0, IprofProfileMerger.samplingOverlap(first, first), 1e-9);
+        /* FIRST: bar 3, baz 3 (one stack). SECOND: bar 1, baz 1, qux 4. Shared share per method: min(0.5, 1/6) * 2. */
+        Assert.assertEquals(2.0 / 6.0, IprofProfileMerger.samplingOverlap(first, second), 1e-9);
+        Assert.assertEquals(IprofProfileMerger.samplingOverlap(first, second), IprofProfileMerger.samplingOverlap(second, first), 1e-9);
+    }
+
+    @Test
     public void singleUnweightedProfileIsReturnedAsIs() throws IOException {
         ParsedProfile first = parse(FIRST);
         Assert.assertSame(first, IprofProfileMerger.merge(List.of(new WeightedProfile(first, 1.0))));
