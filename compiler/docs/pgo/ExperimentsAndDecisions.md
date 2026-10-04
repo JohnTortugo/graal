@@ -653,6 +653,50 @@ intrinsics inline in hot roots. The merged text+binary-format image now matches 
 images on both inputs (fixed workload 72.59 vs 72.74 s; binary format 108.1 vs the text-only
 image's 139.7 s).
 
+## Binary-format reader: why the gap to C2 remained and what closed part of it
+
+With every improvement above, the binary-format workload stayed 5–20% behind HotSpot C2 while the
+text workload was 10–19% ahead. A characterization with hardware counters (process-wide, per pass)
+ruled out allocation, GC, branch prediction and TLB behaviour: the image retired 18.8% more
+instructions at a higher IPC, all of it in the reader, and made 23% more calls and 43% more
+indirect branches. Two defects were found and one was fixed:
+
+1. **Receiver profiles missed by context** (fixed, default on, see README "Context fallback"):
+   −2.0% binary format, −1.4% text, scala-doku neutral. It removed the indirect-call excess over C2
+   entirely but only 1% of the instructions — devirtualization was not the gap.
+2. **Branch records taken on a different graph shape** (see README "Profile shape and the
+   instrumentation stage"). A 70-line program that reads the same file with the Ion library alone
+   reproduces the gap (CE+PGO 109 G instructions and 1 232 M calls per pass vs C2 76 G and 321 M;
+   8.3 vs 6.4 s) and shows the mechanism in the priority inliner's call tree: a post-high-tier record
+   for a loop exit whose real exit lives in an inlined callee says "never exits", the loop's slow
+   path is priced at 100× the method's frequency, the expansion budget goes there, and the hot
+   `nextValue()` subtree ends up with a negative benefit (−2349 for 2254 nodes). Instrumenting with
+   `--pgo-instrument-aligned` gives the record its real counts; the reader then reaches 447 M calls
+   and 6.6 s with a boost of 16, and the full workload improves 2.8% at the default boost — but the
+   same profile costs the text workload 4%, so the stage stays a per-workload choice. A consumer-side
+   flow-consistency check (`-H:+PGOConditionalFlowCheck`) recovers part of it on the reader and loses
+   5% on the full workload; kept as an experimental option, off.
+
+Rejected on measurement in the same investigation:
+
+- A larger uniform hot-root boost (8 or 16) for the full workload: −13% on the standalone reader, but
+  +1.4% / +3.4% on the full binary-format workload (more inlining into an already large root: fewer
+  instructions per cycle, more instruction-cache misses, calls not reduced).
+- A size-aware boost (`PGOHotSmallRootInliningBoost=16`: full boost while the root is at or below the
+  typical graph size, decaying to 4 at four times that size): standalone reader −20% (6.6 s), text
+  workload −2.2% (72.9 → 71.3 s), but the full binary-format workload +3% to +11% — the boost decays
+  while the root grows through the typical size, so early expansions get the large boost and the hot
+  calls expanded later do not; calls per pass *rose* 1.50 → 1.86 G. Kept as an experimental option,
+  off; a boost keyed on the root's initial size or on the sampled self-time distribution is the open
+  design question.
+- Expansion-side bonuses (`PGOHotExpansionBonus`, `PGOHotInliningBonus`, `PGOHotContextInliningBonus`,
+  hot-leaf absorption at 300 bytes): all within noise on the standalone reader; the binding constraint
+  is the inlining decision's benefit/cost, not expansion priority.
+- String-leaf code quality was investigated and is *not* a cause: a micro-benchmark of fresh-string
+  `hashCode`, `HashMap.get`, `toLowerCase` and the unit-validation method shows parity with C2 when
+  the image is built with PGO (1.05× for the whole method; `toLowerCase` 1.55× is the one outlier). A
+  first run without PGO had shown 1.4–1.9× and was wrong for that reason.
+
 ## Validation standard
 
 Each accepted iteration requires:

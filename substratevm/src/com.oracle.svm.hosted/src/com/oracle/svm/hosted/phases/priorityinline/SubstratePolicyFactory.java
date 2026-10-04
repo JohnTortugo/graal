@@ -143,7 +143,20 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
             if (!(rootMethod instanceof HostedMethod root) || inliningProvider.inclusiveTimeShare(root) < inliningProvider.hotRootMinInclusiveShare(options)) {
                 return 1.0;
             }
-            return boost;
+            double smallRootBoost = inliningProvider.hotSmallRootInliningBoost(options);
+            if (smallRootBoost <= boost) {
+                return boost;
+            }
+            /*
+             * The expansion and inlining thresholds already grow exponentially with the root's size,
+             * so a uniform boost either starves a small hot root (its callees are big relative to
+             * their benefit) or over-inlines into a large one. Scale with the root's current size:
+             * the full small-root boost up to the typical graph size, decaying hyperbolically to the
+             * base boost at four times that size.
+             */
+            double typicalSize = TypicalGraphSize.getValue(options);
+            int currentSize = callTree.root().getSubtreeTotalCompilerNodeCount();
+            return Math.max(boost, smallRootBoost * typicalSize / Math.max(typicalSize, currentSize));
         }
 
         @Override

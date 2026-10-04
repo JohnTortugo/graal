@@ -146,4 +146,20 @@ public class VirtualInvokeProfileResolutionTest {
         /* A different call site in the same method is never served by the fallback. */
         Assert.assertTrue(withFallback.getVirtualInvokeProfile(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 10)).isEmpty());
     }
+
+    /** The entry count of an inlined copy comes from the longest recorded caller chain. */
+    @Test
+    public void entryCountFallsBackToShorterContexts() {
+        ResolvedJavaMethod bar = ConditionalProfileContextResolverTest.mockBarMethod();
+        FrameKey entry = new FrameKey(ConditionalProfileContextResolverTest.BAR_DESC, 0);
+        FrameKey callSite = new FrameKey(ConditionalProfileContextResolverTest.BAR_DESC, 30);
+        Map<List<FrameKey>, Long> byContext = Map.of(List.of(entry, callSite), 5L);
+        SimpleConditionalProfilesLookup lookup = new SimpleConditionalProfilesLookup(Map.of(), Map.of(), null, Map.of(), null, Map.of(), null, Map.of(), byContext, null);
+        BytecodePosition deep = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 99), bar, 30), bar, 0);
+        /* The exact 3-frame chain is unknown; the 2-frame prefix [entry, callSite] is. */
+        Assert.assertEquals(5L, lookup.getEntryCountOrZero(null, deep));
+        Assert.assertEquals(5L, lookup.getEntryCountOrZero(null, new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 0)));
+        /* No recorded chain and no method: nothing is known. */
+        Assert.assertEquals(0L, lookup.getEntryCountOrZero(null, new BytecodePosition(new BytecodePosition(null, bar, 31), bar, 0)));
+    }
 }

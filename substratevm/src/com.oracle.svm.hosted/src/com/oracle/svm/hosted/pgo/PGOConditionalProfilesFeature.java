@@ -424,6 +424,8 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
                             lookup.impossibleReceiverRecords(), lookup.impossibleReceiverEvents());
         }
         System.out.printf("[PGO:%s] prior comparison by events (agree/flip(injected-prior flips)): %s%n", stage, lookup.priorComparisonSummary());
+        System.out.printf("[PGO:%s] flow check: %d applied conditionals checked, %d reverted as under-covering their branch%n", stage,
+                        PGOApplyProfilesPhase.flowCheckedConditionals(), PGOApplyProfilesPhase.flowRevertedConditionals());
         if (lookup.filter().isActive()) {
             System.out.printf("[PGO:%s] usefulness filter minEvents=%d minBias=%.2f withheld %d distinct sites: %d queries too few events, %d queries too even%n",
                             stage, lookup.filter().minEvents(), lookup.filter().minBias(), lookup.filteredContextCount(), lookup.filteredFewEventsCount(), lookup.filteredEvenCount());

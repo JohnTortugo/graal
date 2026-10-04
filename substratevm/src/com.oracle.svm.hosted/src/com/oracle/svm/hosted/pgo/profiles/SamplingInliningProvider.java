@@ -62,6 +62,12 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
                        "that runs millions of times gets the same budget as one that runs once; the profile tells them apart. 1 disables.")//
         public static final HostedOptionKey<Double> PGOHotRootInliningBoost = new HostedOptionKey<>(4.0, option -> requireAtLeastOne(option));
 
+        @Option(help = "Inlining benefit multiplier for a hot root while its inlined size is at or below the typical graph size; it decays " +
+                       "with the root's growth until it reaches PGOHotRootInliningBoost at four times that size. A small hot loop can absorb " +
+                       "a library's call chain the way a JIT compiles it into one unit, while a root that is already large does not grow further. " +
+                       "Values at or below PGOHotRootInliningBoost disable the extra boost.")//
+        public static final HostedOptionKey<Double> PGOHotSmallRootInliningBoost = new HostedOptionKey<>(1.0, option -> requireAtLeastOne(option));
+
         @Option(help = "In hot roots, price an expanded callee by its hot blocks only: its inlining benefit is multiplied by (fixed nodes) / (fixed nodes in blocks " +
                        "whose relative frequency reaches PGOHotRootColdBlockFrequency), up to this value. A large callee whose profile shows a small hot path " +
                        "(exception and slow paths cold) is then inlined like the small method it is at run time. 1 disables.")//
@@ -164,6 +170,11 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
     @Override
     public double hotRootInliningBoost(OptionValues options) {
         return Options.PGOHotRootInliningBoost.getValue(options);
+    }
+
+    @Override
+    public double hotSmallRootInliningBoost(OptionValues options) {
+        return Options.PGOHotSmallRootInliningBoost.getValue(options);
     }
 
     @Override

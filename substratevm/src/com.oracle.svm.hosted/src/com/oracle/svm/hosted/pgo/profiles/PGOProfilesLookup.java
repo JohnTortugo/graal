@@ -90,6 +90,15 @@ public interface PGOProfilesLookup {
     long getCallCountOrZero(HostedMethod method);
 
     /**
+     * Profiled entry count of a method body as inlined under {@code callingContext} (the method's
+     * entry position with its caller chain), falling back to shorter caller chains and finally to
+     * the method's total count. Returns 0 when nothing is known.
+     */
+    default long getEntryCountOrZero(HostedMethod method, BytecodePosition callingContext) {
+        return getCallCountOrZero(method);
+    }
+
+    /**
      * Returns true if <code>method</code>'s body was executed in the profiles collected on the same
      * codebase or inferred to be executed by the ML model, depending on the profiles lookup
      * implementation.

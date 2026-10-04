@@ -271,6 +271,14 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
     /// shows to be hot; 1 disables the boost.
     ///
     /// @param options the options being used during inlining
+    /**
+     * Boost for hot roots that are still small (at or below the typical graph size); decays to
+     * {@link #hotRootInliningBoost} as the root grows. 1 means no extra boost for small roots.
+     */
+    public double hotSmallRootInliningBoost(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
     public double hotRootInliningBoost(@SuppressWarnings("unused") OptionValues options) {
         return 1.0;
     }

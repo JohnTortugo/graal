@@ -33,6 +33,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -63,11 +64,14 @@ import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.AbstractBeginNode;
 import jdk.graal.compiler.nodes.CallTargetNode;
 import jdk.graal.compiler.nodes.ControlSplitNode;
+import jdk.graal.compiler.nodes.IfNode;
 import jdk.graal.compiler.nodes.IndirectCallTargetNode;
 import jdk.graal.compiler.nodes.ProfileData;
 import jdk.graal.compiler.nodes.ProfileData.BranchProbabilityData;
 import jdk.graal.compiler.nodes.ProfileData.SwitchProbabilityData;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.cfg.ControlFlowGraph;
+import jdk.graal.compiler.nodes.cfg.HIRBlock;
 import jdk.graal.compiler.nodes.extended.SwitchNode;
 import jdk.graal.compiler.nodes.java.InstanceOfNode;
 import jdk.graal.compiler.nodes.java.MethodCallTargetNode;
@@ -96,6 +100,17 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
         @Option(help = "Apply conditionalProfiles to SwitchNode successors. Disable with -H:-PGOUseSwitchProfiles.")//
         public static final HostedOptionKey<Boolean> PGOUseSwitchProfiles = new HostedOptionKey<>(true);
+
+        @Option(help = "After applying conditional profiles to a graph, revert a branch whose recorded event total is far below the executions the " +
+                        "profiled graph implies for it (method call count times the branch block's relative frequency); such a record was taken on a " +
+                        "different graph shape and would otherwise make the compiler believe its loop never exits. Disable with -H:-PGOConditionalFlowCheck.")//
+        public static final HostedOptionKey<Boolean> PGOConditionalFlowCheck = new HostedOptionKey<>(false);
+
+        @Option(help = "PGOConditionalFlowCheck: a record is reverted when its event total is below this fraction of the implied executions.")//
+        public static final HostedOptionKey<Double> PGOConditionalFlowCheckRatio = new HostedOptionKey<>(0.1);
+
+        @Option(help = "PGOConditionalFlowCheck: minimum implied executions before a record may be reverted.")//
+        public static final HostedOptionKey<Long> PGOConditionalFlowCheckMinEvents = new HostedOptionKey<>(1000L);
         // @formatter:on
     }
 
@@ -108,6 +123,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     public static final int CONDITIONAL_RECORD_SIZE = 3;
     private static final int CONDITIONAL_RECORD_BCI_POSITION = 0;
     public static final int CONDITIONAL_RECORD_KEY_POSITION = 1;
+    private static final int CONDITIONAL_RECORD_COUNT_POSITION = 2;
     public static final int CONDITIONAL_RECORD_COUNTER_POSITION = 2;
     private final PGOProfilesLookup pgoProfiles;
     private final NodeSourcePosition inliningContext;
@@ -296,11 +312,128 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
                 updateConditionalProbabilitiesBasedOnSamples(site.node());
             }
         }
+        List<AppliedConditional> applied = new ArrayList<>();
         for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, conditionalStage, inliningContext)) {
             if (shouldApplyConditional(site.node())) {
-                updateConditionalProbabilities(site);
+                AppliedConditional application = updateConditionalProbabilities(site);
+                if (application != null) {
+                    applied.add(application);
+                }
             }
         }
+        if (Options.PGOConditionalFlowCheck.getValue() && !applied.isEmpty()) {
+            revertUndercoveredConditionals(graph, applied);
+        }
+    }
+
+    /** A conditional profile applied to {@code node} and the event total of its record. */
+    private record AppliedConditional(ControlSplitNode node, long recordedEvents) {
+    }
+
+    private static final AtomicLong FLOW_CHECKED = new AtomicLong();
+    private static final AtomicLong FLOW_REVERTED = new AtomicLong();
+
+    public static long flowCheckedConditionals() {
+        return FLOW_CHECKED.get();
+    }
+
+    public static long flowRevertedConditionals() {
+        return FLOW_REVERTED.get();
+    }
+
+    /**
+     * A conditional record is a count per successor of one branch, taken on the instrumented image's
+     * graph. If that graph had already inlined a call before the branch and split the branch into
+     * the inlined paths, the record only covers the executions left on the residual branch; applied
+     * to a graph where the call is not inlined, it describes a small fraction of the branch's
+     * executions and can say, e.g., that a loop exit is never taken when in fact almost every
+     * execution exits there. The method's call count and the relative frequency of the branch's
+     * block in the graph as profiled give the executions the record should account for; when it
+     * accounts for far fewer, the record is not about this branch and is withdrawn.
+     */
+    private void revertUndercoveredConditionals(StructuredGraph graph, List<AppliedConditional> applied) {
+        if (!(graph.method() instanceof HostedMethod method)) {
+            return;
+        }
+        /* The entry count of this graph instance: the callee as inlined here, not the method overall. */
+        long callCount = pgoProfiles.getEntryCountOrZero(method, createPointContext(new NodeSourcePosition(null, method, 0), inliningContext));
+        if (callCount <= 0) {
+            return;
+        }
+        double ratio = Options.PGOConditionalFlowCheckRatio.getValue();
+        long minEvents = Options.PGOConditionalFlowCheckMinEvents.getValue();
+        /*
+         * One under-covering record inflates the frequency of everything below it (a loop whose exit
+         * it hides runs "forever"), so all records in that region look under-covering too. Withdraw
+         * only one per round and re-derive the frequencies; the legitimate records come back into
+         * agreement once the culprit is gone. The culprit is the record with the fewest events: it is
+         * the residual branch left after the instrumented graph split the real one, while the
+         * legitimate records in the same region carry the region's true counts.
+         */
+        for (int round = 0; round < MAX_FLOW_CHECK_ROUNDS && !applied.isEmpty(); round++) {
+            /* Probability changes do not invalidate the graph's cached CFG; its frequencies must be recomputed. */
+            graph.clearLastCFG();
+            ControlFlowGraph cfg = ControlFlowGraph.newBuilder(graph).connectBlocks(true).computeFrequency(true).build();
+            AppliedConditional worst = null;
+            double worstCoverage = Double.MAX_VALUE;
+            long worstEvents = Long.MAX_VALUE;
+            for (Iterator<AppliedConditional> it = applied.iterator(); it.hasNext();) {
+                AppliedConditional application = it.next();
+                if (!application.node().isAlive()) {
+                    it.remove();
+                    continue;
+                }
+                HIRBlock block = cfg.blockFor(application.node());
+                if (block == null) {
+                    continue;
+                }
+                if (round == 0) {
+                    FLOW_CHECKED.incrementAndGet();
+                }
+                double implied = callCount * block.getRelativeFrequency();
+                if (implied >= minEvents) {
+                    double coverage = application.recordedEvents() / implied;
+                    if (coverage < ratio && (application.recordedEvents() < worstEvents || (application.recordedEvents() == worstEvents && coverage < worstCoverage))) {
+                        worst = application;
+                        worstCoverage = coverage;
+                        worstEvents = application.recordedEvents();
+                    }
+                }
+            }
+            if (worst == null) {
+                return;
+            }
+            restoreProfile(worst);
+            graph.getDebug().log("Flow check: reverted conditional profile at %s (%d recorded events, coverage %.3g)", worst.node(), worst.recordedEvents(), worstCoverage);
+            FLOW_REVERTED.incrementAndGet();
+            applied.remove(worst);
+        }
+    }
+
+    private static final int MAX_FLOW_CHECK_ROUNDS = 16;
+
+    /**
+     * The withdrawn record leaves the branch with no trustworthy information: the pre-application
+     * value may itself be a profile applied earlier to this cached graph, so the branch is reset to
+     * unknown rather than to its previous value.
+     */
+    private static void restoreProfile(AppliedConditional application) {
+        if (application.node() instanceof IfNode ifNode) {
+            ifNode.setTrueSuccessorProbability(BranchProbabilityData.unknown());
+        } else if (application.node() instanceof SwitchNode switchNode) {
+            double[] uniform = new double[switchNode.keyCount() + 1];
+            Arrays.fill(uniform, 1.0 / uniform.length);
+            switchNode.setProfileData(SwitchProbabilityData.unknown(uniform));
+        }
+    }
+
+
+    public static long recordedEvents(long[] records) {
+        long total = 0;
+        for (int i = CONDITIONAL_RECORD_COUNT_POSITION; i < records.length; i += CONDITIONAL_RECORD_SIZE) {
+            total += records[i];
+        }
+        return total;
     }
 
     private static boolean shouldApplyConditional(ControlSplitNode node) {
@@ -591,16 +724,20 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         // TODO GR-51733 BS Infer conditional based on samples.
     }
 
-    private void updateConditionalProbabilities(ConditionalSite site) {
+    private AppliedConditional updateConditionalProbabilities(ConditionalSite site) {
         NodeSourcePosition context = site.context();
         ConditionalProfileSiteDescriptor descriptor = site.descriptor();
         ControlSplitNode conditionalNode = site.node();
         Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context, descriptor);
-        conditionalSuccessors.ifPresentOrElse(s -> {
-            ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode, pgoProfiles);
-            pgoProfiles.recordConditionalProfileApplication(context, descriptor, application.profiledSuccessors(), application.appliedSuccessors());
-            countSuccess();
-        }, () -> countFailure(context));
+        if (conditionalSuccessors.isEmpty()) {
+            countFailure(context);
+            return null;
+        }
+        PGOProfilesLookup.ProfiledValue<long[]> s = conditionalSuccessors.get();
+        ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode, pgoProfiles);
+        pgoProfiles.recordConditionalProfileApplication(context, descriptor, application.profiledSuccessors(), application.appliedSuccessors());
+        countSuccess();
+        return application.appliedSuccessors() > 0 ? new AppliedConditional(conditionalNode, recordedEvents(s.value())) : null;
     }
 
     private record ConditionalApplication(int profiledSuccessors, int appliedSuccessors) {

@@ -561,6 +561,23 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         return Optional.ofNullable(callCountsByContext.get(canonicalize(callingContext)));
     }
 
+    @Override
+    public long getEntryCountOrZero(HostedMethod method, BytecodePosition callingContext) {
+        if (cleared || !useCallCounts) {
+            return 0;
+        }
+        if (callingContext != null) {
+            List<FrameKey> key = canonicalize(callingContext);
+            for (int depth = key.size(); depth >= 1; depth--) {
+                Long count = callCountsByContext.get(depth == key.size() ? key : key.subList(0, depth));
+                if (count != null) {
+                    return count;
+                }
+            }
+        }
+        return method == null ? 0 : getCallCountOrZero(method);
+    }
+
     long getMethodCallCount(String methodDescriptor) {
         return callCountsByMethod.getOrDefault(methodDescriptor, 0L);
     }

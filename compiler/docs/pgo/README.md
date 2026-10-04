@@ -148,6 +148,9 @@ The sampling consumer mechanisms remain independently gateable for experiments:
 -H:PGOHotLeafMinSharedCalls=<n>        require values shared by this many calls
 -H:PGOHotRootInliningBoost=<k>         inlining budget multiplier for sampled-hot roots (default 4.0; 1 = off)
 -H:PGOHotRootMinInclusiveShare=<share> inclusive sample share a root needs for the boost (default 0.002)
+-H:PGOHotSmallRootInliningBoost=<k>    larger boost for hot roots at or below the typical graph size, decaying to the base boost (default 1 = off; experimental)
+-H:-PGOReceiverContextFallback         receiver profiles: do not fall back to the same call under a shorter inlining context
+-H:+PGOConditionalFlowCheck            withdraw branch records that cover far fewer executions than the graph implies (default off; experimental)
 -H:-PGOInlineIntrinsicsInHotRoots      call the shared array/string intrinsic stubs in hot roots too (default: emit inline)
 ```
 
@@ -187,6 +190,50 @@ When a conditional site's full inlining context has no profile entry, the consum
 same branch under progressively shorter contexts (outermost callers dropped). This covers callees that
 the profile changed inlining for. `-H:-PGOContextFallback` disables it; the number of such fallbacks
 is reported per stage.
+
+The same rule applies to receiver profiles (`virtualInvokeProfiles`): the instrumented image records a
+call's receivers under its own inlining decisions, which cannot include the sampling-driven hot-root
+budget the optimized image uses, so a callee the instrumented image compiled standalone is inlined
+several frames deep in the optimized image and would otherwise never find its receiver profile. In a
+binary-format reader workload this left the hottest interface calls (monomorphic in the profile)
+indirect and turned two-type static profiles into 0.5/0.5 type switches: 793 of 115 061 receiver
+queries hit; with the fallback 21 761 hit and the calls became guarded direct calls. Measured on the
+same build, option off/on: binary-format input −2.0%, text input −1.4%, image +0.36%, scala-doku
+within noise. `-H:-PGOReceiverContextFallback` disables it; the build summary reports how many
+receiver hits used a shortened context.
+
+## Profile shape and the instrumentation stage
+
+A conditional record is a per-successor count of one `IfNode` as it existed in the instrumented
+image's graph. `--pgo-instrument` records after hosted high tier, i.e. after inlining and
+canonicalization. When the instrumented graph inlined a call before a branch and `IfNode`
+canonicalization split the branch into the inlined paths, the record only covers the executions left
+on the residual branch. Applied to a graph where that call is *not* inlined — the callee graph the
+priority inliner expands, or a root before inlining — such a record under-counts the branch by orders
+of magnitude. In the binary-format reader this made a loop whose real exit lives in an inlined
+callee look like it never exits (record 0 : 60 against 3 000 061 : 60 in reality), the inliner
+priced the loop's never-executed slow path at 100× the method's frequency, spent its budget there and
+judged the reader's hot `nextValue()`/`stringValue()` chain not worth inlining: the standalone
+reader of the format ran 1 232 M calls per pass against C2's 321 M.
+
+`--pgo-instrument-aligned` records at the stages where the consumer applies profiles (root before
+inlining, callee at expansion) and does not have this problem: the standalone reader drops to 447 M
+calls and 6.6 s per pass (C2 6.4 s) with `-H:PGOHotRootInliningBoost=16`, and the full binary-format
+workload improves 2.8% at the default boost. It is **not** the default because the same change costs
+the text workload 4% (72.9 → 75.8 s): the inlining shape of its hot roots changes (`readLine` and
+field validation stay out of the stream loop). Applying the post-high-tier profile additionally at
+the end of high tier (`--pgo-post-inlining`) does not recover it (77.0 s). Choosing the stage per
+workload is therefore still a user decision; the long-term fix is to make the aligned shape at least
+as good on the text workload, after which it becomes the default.
+
+`-H:+PGOConditionalFlowCheck` is a consumer-side mitigation for post-high-tier profiles: after
+applying the records of a graph it rebuilds the control-flow frequencies and withdraws, one per round
+and fewest-events first, any record whose event total is below `PGOConditionalFlowCheckRatio` (0.1)
+of the executions the graph implies for its branch (the graph instance's profiled entry count times
+the branch block's relative frequency; `PGOConditionalFlowCheckMinEvents` = 1000 guards small
+counts). On the standalone reader it recovers part of the aligned result (returns 1 236 M → 847 M,
+−4.8% time) but on the full agent it withdraws 5–16% of all applied records and costs 5%, so it is
+off by default; the build summary reports how many records it checked and withdrew.
 
 ## Usefulness filter (opt-in)
 
