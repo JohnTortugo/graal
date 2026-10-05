@@ -278,7 +278,8 @@ GraalTags = Tags([
     'check_libcontainer_namespace',
     'check_svm_invariants',
     'java_agent',
-    'pgo'
+    'pgo',
+    'pgo_unittests'
 ])
 
 NATIVE_UNITTEST_CUSTOM_BATCHES = ('1/2', '2/2')
@@ -589,6 +590,10 @@ def svm_gate_body(args, tasks):
     with Task('pgo end-to-end', tasks, tags=[GraalTags.pgo]) as t:
         if t:
             pgo_e2e_test_task(args.extra_image_builder_arguments)
+
+    with Task('pgo native unittests', tasks, tags=[GraalTags.pgo_unittests]) as t:
+        if t:
+            pgo_native_unittests_task(args.extra_image_builder_arguments)
 
     with Task('runtime classpath resource lookup', tasks, tags=[GraalTags.native_unittests]) as t:
         if t:
@@ -1053,7 +1058,11 @@ def pgo_e2e_test_task(extra_image_args=None):
     and graph verification. Every optimized variant must print exactly what the JDK and the
     instrumented image print, on the training input and on an input the profile never saw; the
     build summaries must show that the profile resolved completely and that the optional mechanisms
-    did engage.
+    did engage; and the graph dumps of the instrumented, unprofiled and profiled builds must show
+    the effects PGO is supposed to have (PgoEffectsCheck: counters on every branch and indirect
+    call, profiled probabilities equal to the recorded counts on the right successor, recorded
+    counts equal to what the program itself counted, the monomorphic interface call devirtualized,
+    the switch distribution applied, and nothing profiled without a profile).
     """
     test_dir = join(suite.dir, 'src', 'native-image-tests', 'pgo')
     output_dir = join(svmbuild_dir(), 'pgo-e2e-test')
@@ -1062,11 +1071,23 @@ def pgo_e2e_test_task(extra_image_args=None):
     mx_util.ensure_dir_exists(output_dir)
     mx.run([mx.get_jdk().javac, '-d', output_dir, join(test_dir, 'PgoWorkload.java')])
     main_class = 'pgoworkload.PgoWorkload'
+    # The effects checker reads graph dumps with the compiler's own graph-file reader.
+    checker_classpath = mx.classpath(['compiler:GRAAL_IGVUTIL', 'compiler:GRAAL'], unique=True)
+    checker_dir = join(output_dir, 'effects-check')
+    mx_util.ensure_dir_exists(checker_dir)
+    mx.run([mx.get_jdk().javac, '-cp', checker_classpath, '-d', checker_dir, join(test_dir, 'PgoEffectsCheck.java')])
 
     train_a = ['1', '200000']
     train_b = ['2', '200000']
-    unseen = ['3', '70000']
+    # An odd record count sends the other receiver through the monomorphic site's guard fallback.
+    unseen = ['3', '70001']
     inputs = [train_a, train_b, unseen]
+
+    def dump_options(name):
+        return svm_experimental_options(['-H:Dump=:1', '-H:MethodFilter=PgoWorkload.*,PgoWorkload$Reader.*', '-H:DumpPath=' + join(output_dir, 'dump-' + name), '-H:PrintGraph=File'])
+
+    def check_effects(mode, name, *checker_args):
+        mx.run_java(['-cp', checker_classpath + os.pathsep + checker_dir, 'pgoworkload.PgoEffectsCheck', mode, join(output_dir, 'dump-' + name)] + list(checker_args), jdk=mx.get_jdk())
 
     def run_lines(cmd, args):
         lines = []
@@ -1078,7 +1099,7 @@ def pgo_e2e_test_task(extra_image_args=None):
 
     expected = outputs_of([mx.get_jdk().java, '-cp', output_dir, main_class])
     for args, lines in expected.items():
-        if len(lines) != 3 or not lines[0].startswith('records=' + args[1] + ' '):
+        if len(lines) != 4 or not lines[0].startswith('records=' + args[1] + ' '):
             mx.abort('PGO workload reference output is malformed for ' + str(args) + ': ' + str(lines))
 
     def check_output(name, cmd):
@@ -1119,12 +1140,16 @@ def pgo_e2e_test_task(extra_image_args=None):
         # 1. Instrumented images, post-high-tier and consumer-aligned; each trains on two inputs.
         # Instrumented images write a profile on every run; functional runs direct it to a scratch file.
         scratch_profile = '-XX:ProfilesDumpFile=' + join(output_dir, 'scratch.iprof')
-        instrumented, _ = build('pgo-instrumented', ['--pgo-instrument'])
+        instrumented, _ = build('pgo-instrumented', ['--pgo-instrument'] + dump_options('instrumented'))
         check_output('instrumented image', [instrumented, scratch_profile])
+        check_effects('instrumented', 'instrumented')
         profile_a = join(output_dir, 'train-a.iprof')
         profile_b = join(output_dir, 'train-b.iprof')
-        mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_a] + train_a, out=lambda _: None)
+        training_output = run_lines([instrumented, '-XX:ProfilesDumpFile=' + profile_a], train_a)
         mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_b] + train_b, out=lambda _: None)
+        # What the program counted while training; the profile must record exactly these.
+        shape_counts = dict(re.findall(r'(circles|squares|triangles)=(\d+)', training_output[-1]))
+        expect(len(shape_counts) == 3, 'the training run did not print its shape counts: ' + str(training_output))
         aligned_instrumented, _ = build('pgo-instrumented-aligned', ['--pgo-instrument-aligned'])
         check_output('aligned instrumented image', [aligned_instrumented, scratch_profile])
         profile_aligned = join(output_dir, 'train-aligned.iprof')
@@ -1150,12 +1175,13 @@ def pgo_e2e_test_task(extra_image_args=None):
         expect(summary_int(histogram[0], r'total=(\d+)') > 0, 'split histogram counted nothing: ' + histogram[0])
 
         # 2. Reference without a profile.
-        plain, _ = build('pgo-none', [])
+        plain, _ = build('pgo-none', dump_options('none'))
         check_output('image without profile', [plain])
+        check_effects('unprofiled', 'none')
 
         # 3. Optimized variants. Each must resolve the whole profile and reproduce the JDK output.
         variants = [
-            ('pgo-default', ['--pgo=' + profile_a], {}),
+            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': True}),
             ('pgo-merged', ['--pgo=' + profile_a + ',' + profile_b + ':2'], {}),
             ('pgo-aligned', ['--pgo=' + profile_aligned], {}),
             ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'fallback': True}),
@@ -1186,6 +1212,55 @@ def pgo_e2e_test_task(extra_image_args=None):
             else:
                 expect(checked == 0, name + ': flow check disabled but ran: ' + flow)
             check_output(name, [image])
+            if checks.get('effects'):
+                check_effects('profiled', 'default', profile_a, train_a[1], shape_counts['circles'], shape_counts['squares'], shape_counts['triangles'])
+
+
+def pgo_native_unittests_task(extra_image_args=None):
+    """
+    Runs the native unit test corpus three times: as a plain image, as a --pgo-instrument image
+    (which also trains), and as an image optimized with the profile of that training run. PGO must
+    not change which tests pass: the instrumented and the optimized image may fail only tests the
+    plain image fails too, except for the documented interference below.
+    """
+    output_dir = join(svmbuild_dir(), 'pgo-native-unittests')
+    if exists(output_dir):
+        mx.rmtree(output_dir)
+    mx_util.ensure_dir_exists(output_dir)
+    profile = join(output_dir, 'tests.iprof')
+    # The instrumentation's stack sampler occupies the per-thread recurring callback that JFR's
+    # recurring-callback execution sampler also needs, so an instrumented image records no JFR
+    # execution samples for virtual threads. Known and documented; -H:-PGOSampleStacks avoids it.
+    instrumented_tolerated = {'com.oracle.svm.test.jfr.TestVirtualThreadsExecutionSample'}
+
+    def run_corpus(name, build_args, run_args):
+        lines = []
+        cmd = ['native-unittest'] + (['--build-args'] + build_args if build_args else []) + (['--run-args'] + run_args if run_args else [])
+        if extra_image_args:
+            cmd += ['--build-args'] + extra_image_args
+        mx.run_mx(cmd, suite=suite, nonZeroIsFatal=False, out=lambda line: lines.append(line.rstrip()), err=lambda line: lines.append(line.rstrip()))
+        tests_run = [int(m.group(1)) for m in (re.match(r'(?:Tests run: |OK \()(\d+)', line) for line in lines) if m]
+        if not tests_run:
+            mx.abort(name + ': the native unit tests did not run:\n' + '\n'.join(lines[-60:]))
+        failed = {m.group(1) for m in (re.match(r'\d+\) (\S+)#', line) for line in lines) if m}
+        mx.log(name + ': ' + str(sum(tests_run)) + ' tests run, ' + str(len(failed)) + ' failing classes' + (': ' + ', '.join(sorted(failed)) if failed else ''))
+        return failed
+
+    plain = run_corpus('plain image', [], [])
+    instrumented = run_corpus('instrumented image', ['--pgo-instrument'], ['-XX:ProfilesDumpFile=' + profile])
+    if not exists(profile):
+        mx.abort('the instrumented test image wrote no profile to ' + profile)
+    optimized = run_corpus('optimized image', ['--pgo=' + profile], [])
+
+    regressions = (instrumented - plain) - instrumented_tolerated
+    if regressions:
+        mx.abort('tests that pass in the plain image fail in the instrumented image: ' + ', '.join(sorted(regressions)))
+    regressions = optimized - plain
+    if regressions:
+        mx.abort('tests that pass in the plain image fail in the profile-optimized image: ' + ', '.join(sorted(regressions)))
+    fixed = plain - optimized
+    if fixed:
+        mx.log('note: tests failing in the plain image but passing with the profile: ' + ', '.join(sorted(fixed)))
 
 
 def runtime_assertions_test_task(extra_image_args=None):
@@ -3990,9 +4065,16 @@ def native_unittest(args):
     arg_list = list(args)
     # Decide whether to include the SVM test feature injections based on the selectors provided.
     # If no selectors were provided, native-unittest will default to SVM tests, so include features.
+    # Options and their values (--build-args, --run-args, -p, ...) are not selectors: without this
+    # distinction `mx native-unittest --build-args <x>` silently built the default SVM tests
+    # without their features and failed the tests that depend on them.
     def _is_svm_selector(a: str) -> bool:
         return a.startswith('com.oracle.svm.test')
-    include_svm_test_features = True if not arg_list else any(_is_svm_selector(a) for a in arg_list)
+
+    def _looks_like_selector(a: str) -> bool:
+        return re.match(r'^[A-Za-z_][\w$.]*$', a) is not None
+    selectors = [a for a in arg_list if _looks_like_selector(a)]
+    include_svm_test_features = True if not selectors else any(_is_svm_selector(a) for a in selectors)
     computed = _compute_native_unittest_args(include_svm_test_features=include_svm_test_features)
     # Merge computed build args into an existing --build-args block if present, otherwise append.
     if '--build-args' in arg_list:

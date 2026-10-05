@@ -122,6 +122,14 @@ instrumentation modes are also mutually exclusive.
 
 ## Sampling controls
 
+The producer's stack sampler (`-H:±PGOSampleStacks`, default on in instrumented images) takes a
+stack at the thread's next safepoint check through the per-thread recurring callback. Two
+consequences: a leaf method without a safepoint check (a counted loop, straight-line code) is never
+sampled itself and its time is attributed to the caller frame that polls next; and JFR's
+recurring-callback execution sampler, which uses the same per-thread slot, records no samples in
+an instrumented image. Build the instrumented image with `-H:-PGOSampleStacks` when JFR execution
+sampling of it matters (sampling-based hotness is then unavailable).
+
 The sampling consumer mechanisms remain independently gateable for experiments:
 
 ```text
@@ -299,9 +307,10 @@ mx gate --tags pgo
 
 The gate compiles `substratevm/src/native-image-tests/pgo/PgoWorkload.java`, a deterministic
 program whose output depends on the mechanisms PGO acts on (a context-dependent interface
-receiver, a loop whose exit sits in an inlined helper, a small-method reader with a refill
-path, recursion, an exception-driven unwind loop, fresh strings, a `HashMap` lookup, a string
-switch and `Number.doubleValue` on mixed boxes), and then:
+receiver, a monomorphic interface call in a sampled-hot loop, a loop whose exit sits in an
+inlined helper, a small-method reader with a refill path, recursion, an exception-driven unwind
+loop, fresh strings, a `HashMap` lookup, a string switch and `Number.doubleValue` on mixed
+boxes) and prints what it counted (records, shapes of each kind), and then:
 
 1. builds `--pgo-instrument`, `--pgo-instrument-aligned`, an instrumented image whose
    interface-call wrappers are compiled standalone (`-H:NeverInline=...`), and an instrumented
@@ -313,8 +322,45 @@ switch and `Number.doubleValue` on mixed boxes), and then:
 3. checks every optimized build summary: zero unresolved conditional contexts, receiver profiles
    applied, the fallback engaged on the shallow profile (and only there when disabled), the flow
    check ran only when enabled;
-4. runs every image on the two training inputs and on an input the profile never saw and
-   requires its output to be identical to the JDK's.
+4. runs every image on the two training inputs and on an input the profile never saw (with an
+   odd record count, so the monomorphic site's guard fails and its fallback runs) and requires
+   its output to be identical to the JDK's;
+5. checks the *effects* of PGO on the compiled graphs. The instrumented, the unprofiled and the
+   default profiled build dump the workload's graphs (`-H:Dump=:1 -H:MethodFilter=...`), and
+   `PgoEffectsCheck.java` reads the dumps with the compiler's graph-file reader and verifies:
+   - instrumented: every branch carries one counter per successor, every indirect call a receiver
+     counter, every graph with direct calls a call-count marker;
+   - unprofiled: no node carries a profiled probability, the interface call in the hot loop is an
+     interface call;
+   - profiled: every branch probability marked `PROFILED` equals, on the right successor, the
+     count ratio the profile file records for that branch under the consumer's context lookup
+     (exact chain, then outermost frames dropped), including the clamping of never-taken
+     successors; the profile records exactly the counts the program printed (one end-of-input
+     exit after `records` records, the square/triangle/circle split, the receivers of both
+     interface call sites); the two shape-distribution branches and the end-of-input branch
+     carry the program's own ratios; the monomorphic interface call is a guarded direct call to
+     the recorded implementation with the interface call left only on a cold path; the string
+     switch carries the recorded distribution.
+
+Then run the corpus gate, which answers "does PGO break anything" on code that is not the
+workload: the whole native unit test corpus (`mx native-unittest`, several hundred tests of
+reflection, JNI, threads, JFR, serialization and so on) is built and run as a plain image, as a
+`--pgo-instrument` image (which also trains), and as an image optimized with that profile:
+
+```bash
+mx gate --tags pgo_unittests
+```
+
+The instrumented and the optimized image may fail only tests the plain image fails too. One
+documented exception is tolerated for the instrumented image: `TestVirtualThreadsExecutionSample`,
+because the instrumentation's stack sampler occupies the per-thread recurring callback that
+JFR's recurring-callback execution sampler needs (see "Sampling controls"). This gate takes
+about 7 minutes. To reproduce a single step by hand:
+
+```bash
+mx native-unittest --build-args --pgo-instrument --run-args -XX:ProfilesDumpFile=/tmp/tests.iprof
+mx native-unittest --build-args --pgo=/tmp/tests.iprof
+```
 
 Also run:
 

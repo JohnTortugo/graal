@@ -61,6 +61,23 @@ public final class PgoWorkload {
         String kind();
     }
 
+    /**
+     * Gives an area computation enough self time for the stack sampler to attribute samples to the
+     * implementation itself; hot-callee devirtualization only guards an interface call whose callee
+     * was sampled under the compilation root. Samples are taken at safepoint checks, so the loop must
+     * not be a counted one (counted loops carry no safepoint check): it runs about 16 iterations for
+     * any positive area.
+     */
+    static double weigh(double area) {
+        double total = 0;
+        int k = 1;
+        while (total < area * 3.3) {
+            total += area / k;
+            k++;
+        }
+        return total;
+    }
+
     static final class Circle implements Shape {
         final double r;
 
@@ -70,7 +87,7 @@ public final class PgoWorkload {
 
         @Override
         public double area() {
-            return 3.0 * r * r;
+            return weigh(3.0 * r * r);
         }
 
         @Override
@@ -88,7 +105,7 @@ public final class PgoWorkload {
 
         @Override
         public double area() {
-            return s * s;
+            return weigh(s * s);
         }
 
         @Override
@@ -148,23 +165,55 @@ public final class PgoWorkload {
         return n;
     }
 
+    /** How many shapes of each kind were built; printed so that recorded profiles can be checked against them. */
+    static long circles;
+    static long squares;
+    static long triangles;
+
     /** Context A: all circles. */
     static double circlesOnly(int n, long seed) {
         Shape[] shapes = new Shape[n];
         for (int i = 0; i < n; i++) {
-            shapes[i] = new Circle((seed + i) % 7);
+            shapes[i] = new Circle(Math.floorMod(seed + i, 7));
         }
+        circles += n;
         return sumAreas(shapes) + countKinds(shapes, "circle");
     }
 
-    /** Context B: mostly squares, some triangles, a few circles. */
+    /** Context B: 70% squares, 20% triangles, 10% circles (the residues 0-6, 7-8 and 9). */
     static double mixed(int n, long seed) {
         Shape[] shapes = new Shape[n];
         for (int i = 0; i < n; i++) {
-            long v = (seed * 31 + i) % 10;
-            shapes[i] = v < 7 ? new Square(v) : v < 9 ? new Triangle(v) : new Circle(v);
+            long v = Math.floorMod(seed * 31 + i, 10);
+            if (v < 7) {
+                shapes[i] = new Square(v);
+                squares++;
+            } else if (v < 9) {
+                shapes[i] = new Triangle(v);
+                triangles++;
+            } else {
+                shapes[i] = new Circle(v);
+                circles++;
+            }
         }
         return sumAreas(shapes) + countKinds(shapes, "square") * 1000 + countKinds(shapes, "triangle") * 1_000_000;
+    }
+
+    /**
+     * An interface call whose receiver is one type for every even record count and another for odd
+     * ones; the array load keeps the type unknown to the static analysis. A profile trained on an
+     * even count is monomorphic here, and an image built from it must still be right on an odd one.
+     */
+    static double unitAreas(int records) {
+        Shape[] units = {new Square(1.5), new Circle(1.5)};
+        Shape unit = units[records % 2];
+        double total = 0;
+        /* Long enough for the stack sampler to see this root and the area implementation under it. */
+        long iterations = 20L * records;
+        for (long i = 0; i < iterations; i++) {
+            total += areaOf(unit);
+        }
+        return total;
     }
 
     // ---------------------------------------------------------------- the reader
@@ -477,7 +526,9 @@ public final class PgoWorkload {
         }
         System.out.println("records=" + count + " malformed=" + malformed + " markers=" + markers + " tokens=" + reader.tokens);
         System.out.println("recordSum=" + recordSum + " units=" + unitChecksum + " strings=" + stringChecksum + " boxed=" + boxedChecksum);
-        System.out.println("shapes=" + shapes + " bytes=" + data.length + " splits=" + splits);
+        double units = unitAreas(records);
+        System.out.println("shapes=" + shapes + " bytes=" + data.length + " splits=" + splits + " units=" + units);
+        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles);
     }
 
     /**

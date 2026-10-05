@@ -735,6 +735,58 @@ gate now builds a second instrumented image whose interface-call wrappers are co
 sites under deeper contexts; that profile must be served through the fallback (and must not be when
 the fallback is disabled), and both images must still match the JDK.
 
+## What checking the compiled graphs found
+
+Identical program output does not show whether a profile was *applied as recorded*, so the gate
+also reads the graph dumps of the instrumented, unprofiled and profiled builds
+(`PgoEffectsCheck.java`, README "Validation"). Its first run on graphs that printed the right
+output found:
+
+- 18 of 72 profiled branches in the workload's graphs carried values that matched no record:
+  branches whose successors have no bytecode position — the three conditions inside the inlined
+  `String.equals` intrinsic (bci −1) and the type tests on exception edges (bci −4). The producer
+  summed the distinct intrinsic conditions into one legacy entry because their unknown successors
+  look identical (115 408:0 plus 0:57 704 became 0.5), and the consumer keyed successors by
+  bytecode index, so both successors of such a branch received the same probability, replacing
+  the injected 0.99/0.01 prior with 0.5 (or 0.41, or 0.999999 on both sides of an exception-edge
+  test). Fixed on both sides: unknown-successor copies merge into a legacy entry only when they
+  test the same condition, and a record applies only to successors that have a bytecode position
+  (`validConditionalBci`), so these branches keep their prior. Unit tests
+  `differentConditionsWithUnknownSuccessorsGetNoLegacyEntry`,
+  `sameConditionCopiesWithUnknownSuccessorsStillSum`,
+  `successorsWithoutBytecodePositionReceiveNoProbability`.
+- The remaining 54 profiled branches equal the recorded ratios on the right successor, the string
+  switch carries the recorded distribution, and the recorded counts equal what the program
+  counted (one end-of-input exit after 200 000 records; 89 600 squares, 25 600 triangles, 12 800
+  circles; 4 000 000 receivers at the monomorphic site).
+- A monomorphic receiver profile alone does not devirtualize: the inline cache the inliner
+  builds from the profile is expanded only in a sampled-hot root and only for a callee the
+  samples attribute time to (`devirtualizeHotCallees`, `isCallSiteToHotCaller`). Samples are
+  taken at safepoint checks, so a callee whose body is a counted loop is never sampled itself; the
+  workload's area computation is an uncounted loop for that reason. With the callee sampled, the
+  interface call becomes a guarded direct call and the interface call survives only on a path of
+  frequency 1e-151 — which the gate checks; on the unseen odd input the guard fails every time
+  and the output still equals the JDK's.
+- The workload's own "mixed" distribution was wrong (`%` on negative seeds made it 99.96% squares
+  instead of 70/20/10); the ratio check against the program's printed counts caught it.
+
+## What running the test corpus found
+
+`mx gate --tags pgo_unittests` builds and runs the 267 native unit tests plain, instrumented and
+profile-optimized (about 7 minutes). All 267 pass in the plain image and in the image optimized with
+the profile the instrumented run wrote. The instrumented image fails exactly one class, the three
+`TestVirtualThreadsExecutionSample` tests: the PGO stack sampler occupies the per-thread recurring
+callback that JFR's recurring-callback execution sampler installs only when the slot is free
+(`JfrRecurringCallbackExecutionSampler.install`). Confirmed by rebuilding the instrumented image
+with `-H:-PGOSampleStacks`, which makes all 267 pass. Documented in the README; the gate tolerates
+exactly that class for the instrumented image and nothing else.
+
+Setting this up found a trap in the `mx native-unittest` command itself: any argument, including
+`--build-args`, counted as a "selector" and switched off the injection of the SVM test features, so
+`mx native-unittest --build-args --pgo-instrument` built the default test group without its
+features and 15 tests (`BootstrapMethodTest`, `ImageInfoTest`, `ForeignTests`, the service tests)
+failed for that reason alone, with or without PGO. The command now recognizes selectors by shape.
+
 ## Validation standard
 
 Each accepted iteration requires:
