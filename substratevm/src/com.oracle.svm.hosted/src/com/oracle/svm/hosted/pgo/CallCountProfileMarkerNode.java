@@ -28,8 +28,6 @@ import static jdk.graal.compiler.nodeinfo.NodeCycles.CYCLES_0;
 import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_0;
 import static jdk.graal.compiler.replacements.SnippetTemplate.DEFAULT_REPLACER;
 
-import org.graalvm.word.LocationIdentity;
-
 import com.oracle.svm.core.graal.snippets.SubstrateTemplates;
 import com.oracle.svm.core.pgo.CallCountProfileCounter;
 import com.oracle.svm.core.pgo.CallCountProfileRecorder;
@@ -40,9 +38,7 @@ import jdk.graal.compiler.core.common.type.StampFactory;
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
 import jdk.graal.compiler.nodes.FixedWithNextNode;
-import jdk.graal.compiler.nodes.NamedLocationIdentity;
 import jdk.graal.compiler.nodes.StructuredGraph;
-import jdk.graal.compiler.nodes.memory.SingleMemoryKill;
 import jdk.graal.compiler.nodes.spi.Lowerable;
 import jdk.graal.compiler.nodes.spi.LoweringTool;
 import jdk.graal.compiler.options.OptionValues;
@@ -53,9 +49,8 @@ import jdk.graal.compiler.replacements.Snippets;
 
 /** Zero-cost method-entry marker assigned a physical counter after all hosted inlining. */
 @NodeInfo(cycles = CYCLES_0, size = SIZE_0)
-public final class CallCountProfileMarkerNode extends FixedWithNextNode implements Lowerable, SingleMemoryKill {
-    static final NodeClass<CallCountProfileMarkerNode> TYPE = NodeClass.create(CallCountProfileMarkerNode.class);
-    private static final LocationIdentity LOCATION = NamedLocationIdentity.mutable("PGOCallCountMarker");
+public final class CallCountProfileMarkerNode extends FixedWithNextNode implements Lowerable {
+    public static final NodeClass<CallCountProfileMarkerNode> TYPE = NodeClass.create(CallCountProfileMarkerNode.class);
 
     private final int counterIndex;
 
@@ -69,11 +64,6 @@ public final class CallCountProfileMarkerNode extends FixedWithNextNode implemen
     }
 
     @Override
-    public LocationIdentity getKilledLocationIdentity() {
-        return LOCATION;
-    }
-
-    @Override
     public void lower(LoweringTool tool) {
         if (graph().getGuardsStage().areFrameStatesAtDeopts()) {
             tool.getReplacements().getSnippetTemplateCache(Templates.class).lower(this, tool);
@@ -83,7 +73,7 @@ public final class CallCountProfileMarkerNode extends FixedWithNextNode implemen
     private static final class CounterSnippet implements Snippets {
         @Snippet
         private static void increment(@ConstantParameter int counterIndex) {
-            CallCountProfileRecorder.increment(counterIndex);
+            CallCountProfileRecorder.incrementRuntime(counterIndex);
         }
     }
 
@@ -92,7 +82,7 @@ public final class CallCountProfileMarkerNode extends FixedWithNextNode implemen
 
         Templates(OptionValues options, Providers providers) {
             super(options, providers);
-            increment = snippet(providers, CounterSnippet.class, "increment");
+            increment = snippet(providers, CounterSnippet.class, "increment", CallCountProfileRecorder.tablePointerLocation(), CallCountProfileRecorder.TABLE_LOCATION);
         }
 
         void lower(CallCountProfileMarkerNode node, LoweringTool tool) {

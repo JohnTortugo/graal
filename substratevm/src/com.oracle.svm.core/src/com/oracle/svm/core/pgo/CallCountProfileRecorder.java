@@ -24,6 +24,9 @@
  */
 package com.oracle.svm.core.pgo;
 
+import static com.oracle.svm.core.snippets.SnippetRuntime.findForeignCall;
+import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideEffect.NO_SIDE_EFFECT;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -34,10 +37,13 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.graalvm.nativeimage.IsolateThread;
+import org.graalvm.word.LocationIdentity;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.heap.VMOperationInfos;
+import com.oracle.svm.core.snippets.SnippetRuntime.SubstrateForeignCallDescriptor;
+import com.oracle.svm.core.snippets.SubstrateForeignCallTarget;
 import com.oracle.svm.core.thread.JavaVMOperation;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.guest.staging.c.CGlobalData;
@@ -49,6 +55,11 @@ import com.oracle.svm.guest.staging.core.threadlocal.FastThreadLocalWord;
 import com.oracle.svm.shared.Uninterruptible;
 import com.oracle.svm.shared.util.SubstrateUtil;
 
+import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;
+import jdk.graal.compiler.graph.Node.ConstantNodeParameter;
+import jdk.graal.compiler.graph.Node.NodeIntrinsic;
+import jdk.graal.compiler.nodes.NamedLocationIdentity;
+import jdk.graal.compiler.nodes.extended.ForeignCallNode;
 import jdk.internal.misc.Unsafe;
 
 /** Sparse per-thread runtime storage for exact post-inlining call-edge counts. */
@@ -67,6 +78,21 @@ public final class CallCountProfileRecorder implements ThreadListener {
 
     private static final Unsafe UNSAFE = Unsafe.getUnsafe();
     private static final FastThreadLocalWord<Pointer> TABLE = FastThreadLocalFactory.createWord("CallCountProfileRecorder.table");
+
+    /** Location of the per-thread table pointer; a snippet that reads it must declare it private. */
+    public static LocationIdentity tablePointerLocation() {
+        return TABLE.getLocationIdentity();
+    }
+
+    /**
+     * Location of the table contents. The tables are native memory that is never aliased with any
+     * Java-visible memory, so the fast path accesses them under this name and a snippet that contains
+     * the fast path declares it private. The slow path runs as {@link #INCREMENT_SLOW_PATH}, which
+     * kills only this location.
+     */
+    public static final LocationIdentity TABLE_LOCATION = NamedLocationIdentity.mutable("PGOCallCountTables");
+
+    public static final SubstrateForeignCallDescriptor INCREMENT_SLOW_PATH = findForeignCall(CallCountProfileRecorder.class, "incrementSlowPath", NO_SIDE_EFFECT, TABLE_LOCATION);
     private static final CGlobalData<Pointer> SHARED = CGlobalDataFactory.createBytes(() -> SHARED_TABLE_BYTES, "__svm_pgo_call_counts");
     private static final CGlobalData<Pointer> SHARED_LOCK = CGlobalDataFactory.createWord();
     private static final ConcurrentMap<Integer, CallCountProfileCounter> COUNTERS = new ConcurrentHashMap<>();
@@ -143,16 +169,30 @@ public final class CallCountProfileRecorder implements ThreadListener {
         incrementRuntime(counterIndex);
     }
 
+    /**
+     * Snippet body: no hosted branch, nothing that can throw, and memory accesses only to
+     * {@link #tablePointerLocation()} and {@link #TABLE_LOCATION}, so that the node lowering to it
+     * need not be a memory kill. The rare shared-table path is a separately compiled foreign call.
+     */
     @Uninterruptible(reason = "Counter key and total publication must be observed atomically by a safepoint snapshot.")
-    static void incrementRuntime(int counterIndex) {
+    public static void incrementRuntime(int counterIndex) {
         /* Inlined unsigned widening: Integer.toUnsignedLong is not @Uninterruptible. */
         long key = (counterIndex + 1) & 0xffffffffL;
         Pointer table = TABLE.get();
         if (table.isNonNull() && addToTable(table, THREAD_BUCKETS, key, 1)) {
-            table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET) + 1);
+            table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET, TABLE_LOCATION) + 1, TABLE_LOCATION);
         } else {
-            addDirectlyToShared(key, 1);
+            callSlowPath(INCREMENT_SLOW_PATH, key);
         }
+    }
+
+    @NodeIntrinsic(value = ForeignCallNode.class)
+    private static native void callSlowPath(@ConstantNodeParameter ForeignCallDescriptor descriptor, long key);
+
+    @SubstrateForeignCallTarget(stubCallingConvention = false, fullyUninterruptible = true)
+    @Uninterruptible(reason = "Writes only native counter memory under a native lock; needs no deoptimization state.")
+    private static void incrementSlowPath(long key) {
+        addDirectlyToShared(key, 1);
     }
 
     @Uninterruptible(reason = "Operates only on native counter tables.")
@@ -160,14 +200,14 @@ public final class CallCountProfileRecorder implements ThreadListener {
         int index = mix(key) & (buckets - 1);
         for (int probe = 0; probe < buckets; probe++) {
             int bucket = HEADER_BYTES + index * BUCKET_BYTES;
-            long existing = table.readLong(bucket + BUCKET_KEY);
+            long existing = table.readLong(bucket + BUCKET_KEY, TABLE_LOCATION);
             if (existing == key) {
-                table.writeLong(bucket + BUCKET_COUNT, table.readLong(bucket + BUCKET_COUNT) + count);
+                table.writeLong(bucket + BUCKET_COUNT, table.readLong(bucket + BUCKET_COUNT, TABLE_LOCATION) + count, TABLE_LOCATION);
                 return true;
             }
             if (existing == 0) {
-                table.writeLong(bucket + BUCKET_COUNT, count);
-                table.writeLong(bucket + BUCKET_KEY, key);
+                table.writeLong(bucket + BUCKET_COUNT, count, TABLE_LOCATION);
+                table.writeLong(bucket + BUCKET_KEY, key, TABLE_LOCATION);
                 return true;
             }
             index = (index + 1) & (buckets - 1);

@@ -24,6 +24,9 @@
  */
 package com.oracle.svm.core.pgo;
 
+import static com.oracle.svm.core.snippets.SnippetRuntime.findForeignCall;
+import static jdk.graal.compiler.core.common.spi.ForeignCallDescriptor.CallSideEffect.NO_SIDE_EFFECT;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -35,11 +38,14 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.graalvm.nativeimage.IsolateThread;
+import org.graalvm.word.LocationIdentity;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
 
 import com.oracle.svm.core.heap.VMOperationInfos;
 import com.oracle.svm.core.hub.DynamicHubIntrinsics;
+import com.oracle.svm.core.snippets.SnippetRuntime.SubstrateForeignCallDescriptor;
+import com.oracle.svm.core.snippets.SubstrateForeignCallTarget;
 import com.oracle.svm.core.thread.JavaVMOperation;
 import com.oracle.svm.core.thread.VMThreads;
 import com.oracle.svm.guest.staging.c.CGlobalData;
@@ -51,6 +57,11 @@ import com.oracle.svm.guest.staging.core.threadlocal.FastThreadLocalWord;
 import com.oracle.svm.shared.Uninterruptible;
 import com.oracle.svm.shared.util.SubstrateUtil;
 
+import jdk.graal.compiler.core.common.spi.ForeignCallDescriptor;
+import jdk.graal.compiler.graph.Node.ConstantNodeParameter;
+import jdk.graal.compiler.graph.Node.NodeIntrinsic;
+import jdk.graal.compiler.nodes.NamedLocationIdentity;
+import jdk.graal.compiler.nodes.extended.ForeignCallNode;
 import jdk.internal.misc.Unsafe;
 
 /** Allocation-free receiver-frequency recorder used only by PGO instrumentation images. */
@@ -69,6 +80,21 @@ public final class ReceiverProfileRecorder implements ThreadListener {
 
     private static final Unsafe UNSAFE = Unsafe.getUnsafe();
     private static final FastThreadLocalWord<Pointer> TABLE = FastThreadLocalFactory.createWord("ReceiverProfileRecorder.table");
+
+    /** Location of the per-thread table pointer; a snippet that reads it must declare it private. */
+    public static LocationIdentity tablePointerLocation() {
+        return TABLE.getLocationIdentity();
+    }
+
+    /**
+     * Location of the table contents. The tables are native memory that is never aliased with any
+     * Java-visible memory, so the fast path accesses them under this name and a snippet that contains
+     * the fast path declares it private. The slow path runs as {@link #RECORD_SLOW_PATH}, which kills
+     * only this location.
+     */
+    public static final LocationIdentity TABLE_LOCATION = NamedLocationIdentity.mutable("PGOReceiverTables");
+
+    public static final SubstrateForeignCallDescriptor RECORD_SLOW_PATH = findForeignCall(ReceiverProfileRecorder.class, "recordSlowPath", NO_SIDE_EFFECT, TABLE_LOCATION);
     private static final CGlobalData<Pointer> SHARED = CGlobalDataFactory.createBytes(() -> SHARED_TABLE_BYTES, "__svm_pgo_receiver_profiles");
     private static final CGlobalData<Pointer> SHARED_LOCK = CGlobalDataFactory.createWord();
     private static final ConcurrentMap<Integer, ReceiverProfileSite> SITES = new ConcurrentHashMap<>();
@@ -142,26 +168,51 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         TYPE_DESCRIPTORS_BY_ID.putIfAbsent(typeId, descriptor);
     }
 
+    /**
+     * Snippet body: no hosted branch, nothing that can throw, and memory accesses only to
+     * {@link #tablePointerLocation()} and {@link #TABLE_LOCATION}, so that the node lowering to it
+     * need not be a memory kill.
+     */
     public static void record(int siteIndex, Object receiver) {
         if (receiver != null) {
-            recordType(siteIndex, DynamicHubIntrinsics.readHub(receiver).getTypeID());
+            recordTypeRuntime(siteIndex, DynamicHubIntrinsics.readHub(receiver).getTypeID());
         }
     }
 
     static void recordType(int siteIndex, int typeId) {
-        long key = ((long) (siteIndex + 1) << 32) | Integer.toUnsignedLong(typeId);
         if (SubstrateUtil.HOSTED) {
-            HOSTED_COUNTS.merge(key, 1L, Long::sum);
+            HOSTED_COUNTS.merge(((long) (siteIndex + 1) << 32) | Integer.toUnsignedLong(typeId), 1L, Long::sum);
             return;
         }
+        recordTypeRuntime(siteIndex, typeId);
+    }
+
+    private static void recordTypeRuntime(int siteIndex, int typeId) {
+        long key = ((long) (siteIndex + 1) << 32) | (typeId & 0xffffffffL);
         Pointer table = TABLE.get();
+        if (table.isNonNull() && addToTable(table, THREAD_BUCKETS, key, 1)) {
+            table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET, TABLE_LOCATION) + 1, TABLE_LOCATION);
+        } else {
+            callSlowPath(RECORD_SLOW_PATH, table);
+        }
+    }
+
+    @NodeIntrinsic(value = ForeignCallNode.class)
+    private static native void callSlowPath(@ConstantNodeParameter ForeignCallDescriptor descriptor, Pointer table);
+
+    /**
+     * Rare path, compiled separately so that the snippet contains no atomics: a thread without a
+     * private table counts the event as dropped in the shared header; a thread whose table is full
+     * counts it in its own header.
+     */
+    @SubstrateForeignCallTarget(stubCallingConvention = false, fullyUninterruptible = true)
+    @Uninterruptible(reason = "Writes only native counter memory; needs no deoptimization state.")
+    private static void recordSlowPath(Pointer table) {
         if (table.isNull()) {
             addSharedHeader(DROPPED_OFFSET, 1);
-            return;
-        }
-        table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET) + 1);
-        if (!addToTable(table, THREAD_BUCKETS, key, 1)) {
-            table.writeLong(DROPPED_OFFSET, table.readLong(DROPPED_OFFSET) + 1);
+        } else {
+            table.writeLong(TOTAL_OFFSET, table.readLong(TOTAL_OFFSET, TABLE_LOCATION) + 1, TABLE_LOCATION);
+            table.writeLong(DROPPED_OFFSET, table.readLong(DROPPED_OFFSET, TABLE_LOCATION) + 1, TABLE_LOCATION);
         }
     }
 
@@ -170,14 +221,14 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         int index = mix(key) & (buckets - 1);
         for (int probe = 0; probe < buckets; probe++) {
             int bucket = HEADER_BYTES + index * BUCKET_BYTES;
-            long existing = table.readLong(bucket + BUCKET_KEY);
+            long existing = table.readLong(bucket + BUCKET_KEY, TABLE_LOCATION);
             if (existing == key) {
-                table.writeLong(bucket + BUCKET_COUNT, table.readLong(bucket + BUCKET_COUNT) + count);
+                table.writeLong(bucket + BUCKET_COUNT, table.readLong(bucket + BUCKET_COUNT, TABLE_LOCATION) + count, TABLE_LOCATION);
                 return true;
             }
             if (existing == 0) {
-                table.writeLong(bucket + BUCKET_COUNT, count);
-                table.writeLong(bucket + BUCKET_KEY, key);
+                table.writeLong(bucket + BUCKET_COUNT, count, TABLE_LOCATION);
+                table.writeLong(bucket + BUCKET_KEY, key, TABLE_LOCATION);
                 return true;
             }
             index = (index + 1) & (buckets - 1);

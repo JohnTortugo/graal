@@ -51,7 +51,7 @@ import jdk.graal.compiler.replacements.Snippets;
 /** Records a concrete receiver type without affecting inliner cost accounting. */
 @NodeInfo(cycles = CYCLES_0, size = SIZE_0)
 public final class ReceiverProfileCounterNode extends FixedWithNextNode implements Lowerable {
-    static final NodeClass<ReceiverProfileCounterNode> TYPE = NodeClass.create(ReceiverProfileCounterNode.class);
+    public static final NodeClass<ReceiverProfileCounterNode> TYPE = NodeClass.create(ReceiverProfileCounterNode.class);
 
     @Input(InputType.Value) private ValueNode receiver;
     private final int siteIndex;
@@ -81,7 +81,7 @@ public final class ReceiverProfileCounterNode extends FixedWithNextNode implemen
 
         Templates(OptionValues options, Providers providers) {
             super(options, providers);
-            record = snippet(providers, CounterSnippet.class, "record");
+            record = snippet(providers, CounterSnippet.class, "record", ReceiverProfileRecorder.tablePointerLocation(), ReceiverProfileRecorder.TABLE_LOCATION);
         }
 
         void lower(ReceiverProfileCounterNode node, LoweringTool tool) {

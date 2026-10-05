@@ -40,7 +40,6 @@ import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.nodeinfo.InputType;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
 import jdk.graal.compiler.nodes.FixedWithNextNode;
-import jdk.graal.compiler.nodes.NamedLocationIdentity;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.graph.Node.ConstantNodeParameter;
@@ -56,10 +55,9 @@ import jdk.graal.compiler.replacements.SnippetTemplate.SnippetInfo;
 import jdk.graal.compiler.replacements.Snippets;
 
 /** Records one invocation of the selected split method; zero-cost for inliner accounting. */
-@NodeInfo(cycles = CYCLES_0, size = SIZE_0)
+@NodeInfo(cycles = CYCLES_0, size = SIZE_0, allowedUsageTypes = InputType.Memory)
 public final class SplitHistogramNode extends FixedWithNextNode implements Lowerable, SingleMemoryKill {
-    static final NodeClass<SplitHistogramNode> TYPE = NodeClass.create(SplitHistogramNode.class);
-    private static final LocationIdentity LOCATION = NamedLocationIdentity.mutable("PGOSplitHistogramCounters");
+    public static final NodeClass<SplitHistogramNode> TYPE = NodeClass.create(SplitHistogramNode.class);
 
     @Input(InputType.Value) private ValueNode line;
     @Input(InputType.Value) private ValueNode delimiter;
@@ -72,9 +70,10 @@ public final class SplitHistogramNode extends FixedWithNextNode implements Lower
         this.result = result;
     }
 
+    /** The lowered foreign call kills exactly the recorder's counter location; the node must match it. */
     @Override
     public LocationIdentity getKilledLocationIdentity() {
-        return LOCATION;
+        return SplitHistogramRecorder.COUNTER_LOCATION;
     }
 
     @Override

@@ -25,6 +25,7 @@
 package com.oracle.svm.core.pgo;
 
 import org.graalvm.nativeimage.IsolateThread;
+import org.graalvm.word.LocationIdentity;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.impl.Word;
 
@@ -52,6 +53,11 @@ public final class BranchProfileThreadCounters implements ThreadListener {
 
     /** The thread's private block, or the shared counters if none could be allocated. */
     static final FastThreadLocalWord<Pointer> BLOCK = FastThreadLocalFactory.createWord("BranchProfileThreadCounters.block");
+
+    /** Location of the per-thread table pointer; a snippet that reads it must declare it private. */
+    public static LocationIdentity blockLocation() {
+        return BLOCK.getLocationIdentity();
+    }
 
     private BranchProfileThreadCounters() {
     }

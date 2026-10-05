@@ -54,8 +54,11 @@ public final class SplitHistogramRecorder {
     static final int CODER_BUCKETS = 3; // Latin-1, UTF-16, null.
     private static final int CELLS_PER_DELIMITER = 1 + LENGTH_BUCKETS + OUTPUT_BUCKETS + CODER_BUCKETS;
 
-    /** Counter memory is private to this recorder, so only its own location is killed. */
-    private static final LocationIdentity COUNTER_LOCATION = NamedLocationIdentity.mutable("PGOSplitHistogramCounters");
+    /**
+     * Counter memory is private to this recorder, so {@link #RECORD} kills only this location; the
+     * node that lowers to that call declares the same kill.
+     */
+    public static final LocationIdentity COUNTER_LOCATION = NamedLocationIdentity.mutable("PGOSplitHistogramCounters");
 
     /** Declared before {@link #enable()} may run, so the descriptor is always available. */
     public static final SubstrateForeignCallDescriptor RECORD = findForeignCall(SplitHistogramRecorder.class, "recordInvocation", NO_SIDE_EFFECT, COUNTER_LOCATION);

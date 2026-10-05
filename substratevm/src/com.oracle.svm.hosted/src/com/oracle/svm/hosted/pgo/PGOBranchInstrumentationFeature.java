@@ -24,6 +24,8 @@
  */
 package com.oracle.svm.hosted.pgo;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 
@@ -41,6 +43,7 @@ import com.oracle.svm.core.pgo.ReceiverProfileRecorder;
 import com.oracle.svm.core.pgo.SplitHistogramRecorder;
 import com.oracle.svm.core.pgo.StackSampleRecorder;
 import com.oracle.svm.core.pgo.SwitchProfileRecorder;
+import com.oracle.svm.core.snippets.SnippetRuntime.SubstrateForeignCallDescriptor;
 import com.oracle.svm.core.thread.RecurringCallbackSupport;
 import com.oracle.svm.core.thread.ThreadListenerSupport;
 import com.oracle.svm.core.util.UserError;
@@ -158,7 +161,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(BranchProfileRecorder.getTeardownHook());
         ThreadListenerSupport.get().register(BranchProfileThreadCounters.create());
-        if (Options.PGOProfileCallCounts.getValue() || Options.PGOProfileSwitches.getValue() || splitHistogramEnabled()) {
+        if (callCountRecorderEnabled()) {
             ThreadListenerSupport.get().register(CallCountProfileRecorder.createRecorder());
         }
         if (splitHistogramEnabled()) {
@@ -167,7 +170,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         if (Options.PGOProfileSwitches.getValue()) {
             SwitchProfileRecorder.enable();
         }
-        if (Options.PGOProfileReceivers.getValue()) {
+        if (receiverRecorderEnabled()) {
             ThreadListenerSupport.get().register(ReceiverProfileRecorder.create());
         }
         if (Options.PGOSampleStacks.getValue()) {
@@ -175,19 +178,42 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         }
     }
 
+    private static boolean callCountRecorderEnabled() {
+        return enabled() && (Options.PGOProfileCallCounts.getValue() || Options.PGOProfileSwitches.getValue() || splitHistogramEnabled());
+    }
+
+    private static boolean receiverRecorderEnabled() {
+        return enabled() && Options.PGOProfileReceivers.getValue();
+    }
+
+    /** Slow paths of the instrumentation snippets run as foreign calls so that the snippets stay free of atomics. */
+    private static List<SubstrateForeignCallDescriptor> foreignCalls() {
+        List<SubstrateForeignCallDescriptor> descriptors = new ArrayList<>();
+        if (callCountRecorderEnabled()) {
+            descriptors.add(CallCountProfileRecorder.INCREMENT_SLOW_PATH);
+        }
+        if (receiverRecorderEnabled()) {
+            descriptors.add(ReceiverProfileRecorder.RECORD_SLOW_PATH);
+        }
+        if (splitHistogramEnabled()) {
+            descriptors.add(SplitHistogramRecorder.RECORD);
+        }
+        return descriptors;
+    }
+
     @Override
     public void registerForeignCalls(SubstrateForeignCallsProvider foreignCalls) {
-        if (splitHistogramEnabled()) {
-            foreignCalls.register(SplitHistogramRecorder.RECORD);
+        for (SubstrateForeignCallDescriptor descriptor : foreignCalls()) {
+            foreignCalls.register(descriptor);
         }
     }
 
     @Override
     public void beforeAnalysis(BeforeAnalysisAccess access) {
-        if (splitHistogramEnabled()) {
-            BeforeAnalysisAccessImpl accessImpl = (BeforeAnalysisAccessImpl) access;
-            accessImpl.getBigBang().addRootMethod((AnalysisMethod) SplitHistogramRecorder.RECORD.findMethod(accessImpl.getMetaAccess()), true,
-                            "Split histogram foreign call, registered in " + PGOBranchInstrumentationFeature.class);
+        BeforeAnalysisAccessImpl accessImpl = (BeforeAnalysisAccessImpl) access;
+        for (SubstrateForeignCallDescriptor descriptor : foreignCalls()) {
+            accessImpl.getBigBang().addRootMethod((AnalysisMethod) descriptor.findMethod(accessImpl.getMetaAccess()), true,
+                            "PGO instrumentation foreign call, registered in " + PGOBranchInstrumentationFeature.class);
         }
     }
 

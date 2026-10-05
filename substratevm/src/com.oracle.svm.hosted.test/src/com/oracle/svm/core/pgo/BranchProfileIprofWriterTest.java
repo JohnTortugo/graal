@@ -44,10 +44,10 @@ public class BranchProfileIprofWriterTest {
         BranchProfileCounter counter = BranchProfileRecorder.lookup(
                         new String[]{"Lexample/WriterTest;.run(I[Ljava/lang/String;)V", "Lexample/WriterTestRoot;.main([Ljava/lang/String;)V"},
                         new int[]{11, 29}, 17, 23);
-        BranchProfileRecorder.increment(counter.getCounterIndex(), true);
-        BranchProfileRecorder.increment(counter.getCounterIndex(), true);
-        BranchProfileRecorder.increment(counter.getCounterIndex(), true);
-        BranchProfileRecorder.increment(counter.getCounterIndex(), false);
+        BranchProfileRecorder.incrementHosted(counter.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(counter.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(counter.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(counter.getCounterIndex(), false);
 
         StringWriter output = new StringWriter();
         BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(counter));
@@ -77,12 +77,12 @@ public class BranchProfileIprofWriterTest {
         BranchProfileCounter guard = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 71, 30, "IntegerLessThanNode", 5L, 0);
         BranchProfileCounter loopExit = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 71, 30, "IntegerLessThanNode", 6L, 1);
         BranchProfileCounter negated = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 30, 71, "IntegerLessThanNode", 7L, 0);
-        BranchProfileRecorder.increment(guard.getCounterIndex(), false);           // entered once (71 = exit, 30 = body)
+        BranchProfileRecorder.incrementHosted(guard.getCounterIndex(), false);           // entered once (71 = exit, 30 = body)
         for (int i = 0; i < 9; i++) {
-            BranchProfileRecorder.increment(loopExit.getCounterIndex(), false);  // 9 more iterations
+            BranchProfileRecorder.incrementHosted(loopExit.getCounterIndex(), false);  // 9 more iterations
         }
-        BranchProfileRecorder.increment(loopExit.getCounterIndex(), true);       // 1 exit
-        BranchProfileRecorder.increment(negated.getCounterIndex(), true);        // swapped successors: true = body
+        BranchProfileRecorder.incrementHosted(loopExit.getCounterIndex(), true);       // 1 exit
+        BranchProfileRecorder.incrementHosted(negated.getCounterIndex(), true);        // swapped successors: true = body
 
         StringWriter output = new StringWriter();
         BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(guard, loopExit, negated));
@@ -100,7 +100,7 @@ public class BranchProfileIprofWriterTest {
     @Test
     public void samplingProfilesRoundTripIncludingHiddenClassNames() throws Exception {
         BranchProfileCounter counter = BranchProfileRecorder.lookup(new String[]{"Lexample/SampleTest;.work()V"}, new int[]{3}, 5, 9);
-        BranchProfileRecorder.increment(counter.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(counter.getCounterIndex(), true);
         String lambdaRun = "Lexample/SampleTest$$Lambda.0xabc123;.run()V";
         StackSampleRecorder.DecodedSample sample = new StackSampleRecorder.DecodedSample(
                         new String[]{"Lexample/SampleTest;.work()V", lambdaRun}, new int[]{12, 4}, 77);
@@ -127,8 +127,8 @@ public class BranchProfileIprofWriterTest {
         int[] bcis = {12};
         BranchProfileCounter first = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 20, 40, "IntegerEqualsNode", 11L, 0);
         BranchProfileCounter second = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, 30, 50, "IntegerEqualsNode", 22L, 0);
-        BranchProfileRecorder.increment(first.getCounterIndex(), true);
-        BranchProfileRecorder.increment(second.getCounterIndex(), false);
+        BranchProfileRecorder.incrementHosted(first.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(second.getCounterIndex(), false);
 
         StringWriter output = new StringWriter();
         BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(first, second));
@@ -148,9 +148,9 @@ public class BranchProfileIprofWriterTest {
         int[] bcis = {7};
         BranchProfileCounter first = BranchProfileRecorder.create("ROOT_PRE_INLINE", methods, bcis, 10, 20, "IntegerLessThanNode", 33L, 0);
         BranchProfileCounter second = BranchProfileRecorder.create("ROOT_PRE_INLINE", methods, bcis, 10, 20, "IntegerLessThanNode", 33L, 0);
-        BranchProfileRecorder.increment(first.getCounterIndex(), true);
-        BranchProfileRecorder.increment(second.getCounterIndex(), true);
-        BranchProfileRecorder.increment(second.getCounterIndex(), false);
+        BranchProfileRecorder.incrementHosted(first.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(second.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(second.getCounterIndex(), false);
 
         StringWriter output = new StringWriter();
         BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(first, second));
@@ -167,7 +167,7 @@ public class BranchProfileIprofWriterTest {
                         new String[]{"Lexample/DeterminismTest;.active()I"}, new int[]{7}, 10, 20);
         BranchProfileCounter inactive = BranchProfileRecorder.lookup(
                         new String[]{"Lexample/DeterminismTest;.inactive()I"}, new int[]{8}, 30, 40);
-        BranchProfileRecorder.increment(active.getCounterIndex(), false);
+        BranchProfileRecorder.incrementHosted(active.getCounterIndex(), false);
 
         StringWriter first = new StringWriter();
         StringWriter second = new StringWriter();

@@ -29,6 +29,7 @@ import static jdk.graal.compiler.nodeinfo.NodeSize.SIZE_2;
 import static jdk.graal.compiler.replacements.SnippetTemplate.DEFAULT_REPLACER;
 
 import com.oracle.svm.core.graal.snippets.SubstrateTemplates;
+import com.oracle.svm.core.pgo.BranchProfileThreadCounters;
 import com.oracle.svm.core.pgo.BranchProfileRecorder;
 
 import jdk.graal.compiler.api.replacements.Snippet;
@@ -46,11 +47,19 @@ import jdk.graal.compiler.replacements.SnippetTemplate.Arguments;
 import jdk.graal.compiler.replacements.SnippetTemplate.SnippetInfo;
 import jdk.graal.compiler.replacements.Snippets;
 
-/** Fixed node that lowers to a relaxed increment in the shared branch-counter array. */
+/**
+ * Fixed node that lowers to a relaxed increment in the thread's branch-counter block.
+ *
+ * The node is deliberately not a memory kill: the lowered snippet reads the thread-local block
+ * pointer and reads and writes the counter location, and both are declared private to the
+ * snippet, so no floating read outside the snippet can be attached to them. Declaring the node a
+ * kill of any location would make the snippet template rewire every floating read that follows the
+ * node to a kill inside the snippet, which the snippet does not contain.
+ */
 @NodeInfo(cycles = CYCLES_2, size = SIZE_2)
 public final class BranchProfileCounterNode extends FixedWithNextNode implements Lowerable {
 
-    static final NodeClass<BranchProfileCounterNode> TYPE = NodeClass.create(BranchProfileCounterNode.class);
+    public static final NodeClass<BranchProfileCounterNode> TYPE = NodeClass.create(BranchProfileCounterNode.class);
 
     private final int counterIndex;
     private final boolean trueSuccessor;
@@ -81,7 +90,7 @@ public final class BranchProfileCounterNode extends FixedWithNextNode implements
 
         Templates(OptionValues options, Providers providers) {
             super(options, providers);
-            increment = snippet(providers, CounterSnippet.class, "increment");
+            increment = snippet(providers, CounterSnippet.class, "increment", BranchProfileThreadCounters.blockLocation(), BranchProfileRecorder.COUNTER_LOCATION);
         }
 
         void lower(BranchProfileCounterNode node, LoweringTool tool) {

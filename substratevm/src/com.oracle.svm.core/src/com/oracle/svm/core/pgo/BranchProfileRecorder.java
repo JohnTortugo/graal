@@ -65,8 +65,8 @@ public final class BranchProfileRecorder {
     private static final int FALSE_OFFSET = 1;
 
     private static final Unsafe UNSAFE = Unsafe.getUnsafe();
-    /** Counter memory is never aliased with Java heap memory, so base loads can be hoisted. */
-    private static final LocationIdentity COUNTER_LOCATION = NamedLocationIdentity.mutable("PGOBranchCounters");
+    /** Counter memory is never aliased with Java heap memory, so base loads can be hoisted. A snippet that touches it must declare it private. */
+    public static final LocationIdentity COUNTER_LOCATION = NamedLocationIdentity.mutable("PGOBranchCounters");
 
     /** Every selected physical graph site owns a counter; identity aggregation happens at dump. */
     private static final ConcurrentMap<Integer, BranchProfileCounter> counters = new ConcurrentHashMap<>();
@@ -129,14 +129,19 @@ public final class BranchProfileRecorder {
      * 5.4% and a displacement add 4.2% on a single-worker training run.
      */
     public static void increment(int counterIndex, boolean trueSuccessor) {
+        /*
+         * This is the body of a snippet: no hosted branch, no bounds-checked array access, nothing
+         * that could throw, or the snippet graph would carry an exception path.
+         */
         int slot = counterIndex * COUNTERS_PER_BRANCH + (trueSuccessor ? TRUE_OFFSET : FALSE_OFFSET);
-        if (SubstrateUtil.HOSTED) {
-            hostedCounts[slot]++;
-            return;
-        }
         Pointer block = BranchProfileThreadCounters.BLOCK.get();
         int offset = slot * Long.BYTES;
         block.writeLong(offset, block.readLong(offset, COUNTER_LOCATION) + 1, COUNTER_LOCATION);
+    }
+
+    /** Counts into the hosted array; for unit tests of the writer, which run without an image. */
+    public static void incrementHosted(int counterIndex, boolean trueSuccessor) {
+        hostedCounts[counterIndex * COUNTERS_PER_BRANCH + (trueSuccessor ? TRUE_OFFSET : FALSE_OFFSET)]++;
     }
 
     /** Address of shared slot 0; a link-time constant. */
