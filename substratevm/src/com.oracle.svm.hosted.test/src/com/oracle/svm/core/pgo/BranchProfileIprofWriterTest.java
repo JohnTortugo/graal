@@ -143,6 +143,46 @@ public class BranchProfileIprofWriterTest {
     }
 
     @Test
+    public void differentConditionsWithUnknownSuccessorsGetNoLegacyEntry() throws Exception {
+        /* Branches inside an inlined intrinsic: the successors carry no bytecode position. */
+        String[] methods = {"Ljava/lang/String;.equals(Ljava/lang/Object;)Z", "Lexample/UnknownSuccessorTest;.parse()V"};
+        int[] bcis = {-1, 300};
+        BranchProfileCounter lengthCheck = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, -1, -1, "IntegerEqualsNode", 1L, 0);
+        BranchProfileCounter nullCheck = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, -1, -1, "IsNullNode", 2L, 0);
+        for (int i = 0; i < 3; i++) {
+            BranchProfileRecorder.incrementHosted(lengthCheck.getCounterIndex(), true);
+            BranchProfileRecorder.incrementHosted(nullCheck.getCounterIndex(), false);
+        }
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(lengthCheck, nullCheck));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        /* Summing them would say 3:3 for a branch that is really 3:0 and another that is 0:3. */
+        Assert.assertEquals(0, statistics.conditionalProfiles());
+        Assert.assertEquals(2, statistics.preciseConditionalProfiles());
+        Assert.assertTrue(parsed.conditionalEntries().isEmpty());
+    }
+
+    @Test
+    public void sameConditionCopiesWithUnknownSuccessorsStillSum() throws Exception {
+        String[] methods = {"Ljava/lang/String;.equals(Ljava/lang/Object;)Z", "Lexample/UnknownSuccessorTest;.scan()V"};
+        int[] bcis = {-1, 44};
+        BranchProfileCounter first = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, -1, -1, "IntegerEqualsNode", 7L, 0);
+        BranchProfileCounter copy = BranchProfileRecorder.create("POST_HIGH_TIER", methods, bcis, -1, -1, "IntegerEqualsNode", 7L, 1);
+        BranchProfileRecorder.incrementHosted(first.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(copy.getCounterIndex(), true);
+        BranchProfileRecorder.incrementHosted(copy.getCounterIndex(), false);
+
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(first, copy));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertEquals(1, statistics.conditionalProfiles());
+        Assert.assertEquals(1, parsed.conditionalEntries().size());
+    }
+
+    @Test
     public void identicalPhysicalSiteIdentitiesAggregateDeterministically() throws Exception {
         String[] methods = {"Lexample/AggregateTest;.branch()V"};
         int[] bcis = {7};

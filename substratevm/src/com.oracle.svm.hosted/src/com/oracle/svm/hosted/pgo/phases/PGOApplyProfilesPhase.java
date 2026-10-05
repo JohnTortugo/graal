@@ -119,7 +119,6 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private static final String VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
     private static final String VIRTUAL_INVOKE_METHOD_PROFILES = "virtualInvokeMethodProfiles";
     private static final String INSTANCE_OF_PROFILES = "instanceOfProfiles";
-    private static final int INVALID_BRANCH_BCI = -5;
     public static final int CONDITIONAL_RECORD_SIZE = 3;
     private static final int CONDITIONAL_RECORD_BCI_POSITION = 0;
     public static final int CONDITIONAL_RECORD_KEY_POSITION = 1;
@@ -198,8 +197,15 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         return byteCodeIndexes;
     }
 
+    /**
+     * A record applies to a successor only through the successor's bytecode position. Successors
+     * without one (an inlined intrinsic or substitution, bci -1; an exception edge, -3 or -4; the
+     * producer's own marker, -5) are indistinguishable from each other: applying their record would
+     * give every such successor the same probability, replacing the static or injected prior with a
+     * value that need not even sum to one across the branch. Such successors keep their prior.
+     */
     public static boolean validConditionalBci(long bci) {
-        return bci != INVALID_BRANCH_BCI;
+        return bci >= 0;
     }
 
     public static int[] conditionalMappings(long[] records) {

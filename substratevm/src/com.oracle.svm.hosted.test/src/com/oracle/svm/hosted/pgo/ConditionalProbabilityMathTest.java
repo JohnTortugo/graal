@@ -65,6 +65,22 @@ public class ConditionalProbabilityMathTest {
     }
 
     /**
+     * Successors without a bytecode position (an inlined intrinsic's branches, exception edges) are
+     * indistinguishable, so their records must not be applied: the only key that survives is a real
+     * bytecode index, and a record whose successors are all unknown yields nothing to apply.
+     */
+    @Test
+    public void successorsWithoutBytecodePositionReceiveNoProbability() {
+        Map<Integer, Double> bothUnknown = PGOApplyProfilesPhase.aggregatedProbabilities(new long[]{-1, 0, 115408, -1, 1, 0}).orElseThrow();
+        Assert.assertTrue("two unknown successors cannot be told apart", bothUnknown.isEmpty());
+        Map<Integer, Double> exceptionEdge = PGOApplyProfilesPhase.aggregatedProbabilities(new long[]{-4, 0, 3, -4, 1, 5}).orElseThrow();
+        Assert.assertTrue(exceptionEdge.isEmpty());
+        Map<Integer, Double> oneKnown = PGOApplyProfilesPhase.aggregatedProbabilities(new long[]{20, 0, 9, -1, 1, 1}).orElseThrow();
+        Assert.assertEquals(Map.of(20, 0.9).keySet(), oneKnown.keySet());
+        Assert.assertEquals(0.9, oneKnown.get(20), EPS);
+    }
+
+    /**
      * The core correctness property: swapping which branch is hot must swap which BCI receives the
      * higher probability. Opposite profiles produce opposite probabilities.
      */

@@ -202,6 +202,9 @@ public final class BranchProfileIprofWriter {
      * copy of that branch: a loop header's peeled guard plus its in-loop exit condition, or a peeled
      * iteration plus the loop body. Copies that route to different successor BCIs are not the same
      * branch anymore (the compiler rewired them); such contexts stay ambiguous and get no legacy entry.
+     * Copies whose successors have no bytecode position (an inlined intrinsic or substitution, an
+     * exception edge) all look alike by their successors, so they count as the same branch only when
+     * they test the same condition.
      */
     private static Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> unambiguousLegacySites(Map<PreciseSiteKey, PreciseSiteData> preciseSites) {
         Map<ContextKey, List<Map.Entry<PreciseSiteKey, PreciseSiteData>>> byContext = new HashMap<>();
@@ -211,11 +214,16 @@ public final class BranchProfileIprofWriter {
         Map<ContextKey, Map.Entry<PreciseSiteKey, PreciseSiteData>> result = new TreeMap<>(CONTEXT_COMPARATOR);
         byContext.forEach((context, entries) -> {
             PreciseSiteKey first = entries.getFirst().getKey();
+            long firstFingerprint = entries.getFirst().getValue().conditionFingerprint();
+            boolean unknownSuccessors = first.trueSuccessorBci < 0 || first.falseSuccessorBci < 0;
             long trueCount = 0;
             long falseCount = 0;
             for (Map.Entry<PreciseSiteKey, PreciseSiteData> entry : entries) {
                 PreciseSiteKey key = entry.getKey();
                 long[] counts = entry.getValue().counts();
+                if (unknownSuccessors && (!key.conditionKind.equals(first.conditionKind) || entry.getValue().conditionFingerprint() != firstFingerprint)) {
+                    return;
+                }
                 if (key.trueSuccessorBci == first.trueSuccessorBci && key.falseSuccessorBci == first.falseSuccessorBci) {
                     trueCount += counts[0];
                     falseCount += counts[1];
