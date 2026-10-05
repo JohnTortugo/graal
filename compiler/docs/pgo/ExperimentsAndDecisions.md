@@ -754,10 +754,16 @@ output found:
   (`validConditionalBci`), so these branches keep their prior. Unit tests
   `differentConditionsWithUnknownSuccessorsGetNoLegacyEntry`,
   `sameConditionCopiesWithUnknownSuccessorsStillSum`,
-  `successorsWithoutBytecodePositionReceiveNoProbability`. On the binary-format reader workload
-  the fix leaves 158 matched contexts unapplied (their branches keep the injected prior) and
-  measured 26.44–26.47 s against 26.71–26.88 s for the two reference images in three interleaved
-  rounds (−1.2%; below the bar for claiming a win, recorded as no regression).
+  `successorsWithoutBytecodePositionReceiveNoProbability`. The fix leaves 158 matched contexts of
+  the binary-format reader workload unapplied (their branches keep the injected prior). Measured
+  against images built by the previous compiler from the same profiles, three interleaved rounds
+  each, ranges not overlapping: binary format with the post-high-tier profile 26.44–26.47 s vs
+  26.71–26.88 s (−1.2%); binary format with the aligned profile 26.29–26.36 s vs 26.09–26.14 s
+  (+0.8%); text with the post-high-tier profile 73.82–74.31 s vs 72.99–73.60 s (+1.3%). All three
+  are below the bar for claiming either a win or a loss, but the two slowdowns are consistent, so
+  the garbage values those branches used to receive were, on average, slightly better priors than
+  the injected ones. The correct fix for that is to apply unknown-successor records by successor
+  order where the record is unambiguous, not to restore the garbage; it is left open.
 - The remaining 54 profiled branches equal the recorded ratios on the right successor, the string
   switch carries the recorded distribution, and the recorded counts equal what the program
   counted (one end-of-input exit after 200 000 records; 89 600 squares, 25 600 triangles, 12 800
