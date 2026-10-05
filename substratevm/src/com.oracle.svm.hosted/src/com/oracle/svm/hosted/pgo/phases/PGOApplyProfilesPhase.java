@@ -374,9 +374,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             /* Probability changes do not invalidate the graph's cached CFG; its frequencies must be recomputed. */
             graph.clearLastCFG();
             ControlFlowGraph cfg = ControlFlowGraph.newBuilder(graph).connectBlocks(true).computeFrequency(true).build();
-            AppliedConditional worst = null;
-            double worstCoverage = Double.MAX_VALUE;
-            long worstEvents = Long.MAX_VALUE;
+            List<AppliedConditional> candidates = new ArrayList<>();
+            List<Double> impliedExecutions = new ArrayList<>();
             for (Iterator<AppliedConditional> it = applied.iterator(); it.hasNext();) {
                 AppliedConditional application = it.next();
                 if (!application.node().isAlive()) {
@@ -390,19 +389,21 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
                 if (round == 0) {
                     FLOW_CHECKED.incrementAndGet();
                 }
-                double implied = callCount * block.getRelativeFrequency();
-                if (implied >= minEvents) {
-                    double coverage = application.recordedEvents() / implied;
-                    if (coverage < ratio && (application.recordedEvents() < worstEvents || (application.recordedEvents() == worstEvents && coverage < worstCoverage))) {
-                        worst = application;
-                        worstCoverage = coverage;
-                        worstEvents = application.recordedEvents();
-                    }
-                }
+                candidates.add(application);
+                impliedExecutions.add(callCount * block.getRelativeFrequency());
             }
-            if (worst == null) {
+            long[] events = new long[candidates.size()];
+            double[] implied = new double[candidates.size()];
+            for (int i = 0; i < candidates.size(); i++) {
+                events[i] = candidates.get(i).recordedEvents();
+                implied[i] = impliedExecutions.get(i);
+            }
+            int worstIndex = selectUndercoveredRecord(events, implied, ratio, minEvents);
+            if (worstIndex < 0) {
                 return;
             }
+            AppliedConditional worst = candidates.get(worstIndex);
+            double worstCoverage = events[worstIndex] / implied[worstIndex];
             restoreProfile(worst);
             graph.getDebug().log("Flow check: reverted conditional profile at %s (%d recorded events, coverage %.3g)", worst.node(), worst.recordedEvents(), worstCoverage);
             FLOW_REVERTED.incrementAndGet();
@@ -411,6 +412,30 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     private static final int MAX_FLOW_CHECK_ROUNDS = 16;
+
+    /**
+     * Picks the record to withdraw this round: among records whose event total is below
+     * {@code ratio} of their implied executions (only where the implied executions reach
+     * {@code minEvents}), the one with the fewest events; ties go to the lowest coverage. Returns -1
+     * when every record covers its branch.
+     */
+    public static int selectUndercoveredRecord(long[] recordedEvents, double[] impliedExecutions, double ratio, long minEvents) {
+        int worst = -1;
+        double worstCoverage = Double.MAX_VALUE;
+        long worstEvents = Long.MAX_VALUE;
+        for (int i = 0; i < recordedEvents.length; i++) {
+            if (impliedExecutions[i] < minEvents) {
+                continue;
+            }
+            double coverage = recordedEvents[i] / impliedExecutions[i];
+            if (coverage < ratio && (recordedEvents[i] < worstEvents || (recordedEvents[i] == worstEvents && coverage < worstCoverage))) {
+                worst = i;
+                worstCoverage = coverage;
+                worstEvents = recordedEvents[i];
+            }
+        }
+        return worst;
+    }
 
     /**
      * The withdrawn record leaves the branch with no trustworthy information: the pre-application

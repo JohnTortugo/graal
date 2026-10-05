@@ -277,7 +277,8 @@ GraalTags = Tags([
     'check_libcontainer_annotations',
     'check_libcontainer_namespace',
     'check_svm_invariants',
-    'java_agent'
+    'java_agent',
+    'pgo'
 ])
 
 NATIVE_UNITTEST_CUSTOM_BATCHES = ('1/2', '2/2')
@@ -584,6 +585,10 @@ def svm_gate_body(args, tasks):
     with Task('runtime assertions', tasks, tags=runtime_assertions_tags) as t:
         if t:
             runtime_assertions_test_task(args.extra_image_builder_arguments)
+
+    with Task('pgo end-to-end', tasks, tags=[GraalTags.pgo]) as t:
+        if t:
+            pgo_e2e_test_task(args.extra_image_builder_arguments)
 
     with Task('runtime classpath resource lookup', tasks, tags=[GraalTags.native_unittests]) as t:
         if t:
@@ -1040,6 +1045,147 @@ def generic_field_type_test_task(extra_build_args=None):
         ]
         if field_output != expected_field_output:
             mx.abort('Unexpected generic field types: ' + str(field_output) + ' != ' + str(expected_field_output))
+
+
+def pgo_e2e_test_task(extra_image_args=None):
+    """
+    Instrument, train, optimize and run a deterministic workload end to end, under hosted assertions
+    and graph verification. Every optimized variant must print exactly what the JDK and the
+    instrumented image print, on the training input and on an input the profile never saw; the
+    build summaries must show that the profile resolved completely and that the optional mechanisms
+    did engage.
+    """
+    test_dir = join(suite.dir, 'src', 'native-image-tests', 'pgo')
+    output_dir = join(svmbuild_dir(), 'pgo-e2e-test')
+    if exists(output_dir):
+        mx.rmtree(output_dir)
+    mx_util.ensure_dir_exists(output_dir)
+    mx.run([mx.get_jdk().javac, '-d', output_dir, join(test_dir, 'PgoWorkload.java')])
+    main_class = 'pgoworkload.PgoWorkload'
+
+    train_a = ['1', '200000']
+    train_b = ['2', '200000']
+    unseen = ['3', '70000']
+    inputs = [train_a, train_b, unseen]
+
+    def run_lines(cmd, args):
+        lines = []
+        mx.run(cmd + args, out=lambda line: lines.append(line.rstrip()))
+        return lines
+
+    def outputs_of(cmd):
+        return {tuple(a): run_lines(cmd, a) for a in inputs}
+
+    expected = outputs_of([mx.get_jdk().java, '-cp', output_dir, main_class])
+    for args, lines in expected.items():
+        if len(lines) != 3 or not lines[0].startswith('records=' + args[1] + ' '):
+            mx.abort('PGO workload reference output is malformed for ' + str(args) + ': ' + str(lines))
+
+    def check_output(name, cmd):
+        actual = outputs_of(cmd)
+        for args in expected:
+            if actual[args] != expected[args]:
+                mx.abort(name + ' differs from the JDK on input ' + ' '.join(args) + ':\n  ' + '\n  '.join(actual[args]) + '\nexpected:\n  ' + '\n  '.join(expected[args]))
+        mx.log(name + ': output identical to the JDK on ' + str(len(inputs)) + ' inputs')
+
+    with native_image_context(IMAGE_ASSERTION_FLAGS) as native_image:
+        def build(name, image_args):
+            build_log = []
+            build_args = ['-cp', output_dir, '-o', join(output_dir, name)] + image_args + [main_class]
+            if extra_image_args is not None:
+                build_args += extra_image_args
+            native_image(build_args, out=lambda line: build_log.append(line.rstrip()), nonZeroIsFatal=False)
+            image = join(output_dir, name)
+            if not exists(image):
+                mx.abort('building ' + name + ' failed:\n' + '\n'.join(build_log))
+            return image, build_log
+
+        def summary(build_log, needle):
+            found = [line for line in build_log if needle in line]
+            if not found:
+                mx.abort('build summary lacks "' + needle + '":\n' + '\n'.join(build_log[-40:]))
+            return found[-1]
+
+        def summary_int(line, pattern):
+            match = re.search(pattern, line)
+            if not match:
+                mx.abort('cannot parse "' + pattern + '" from: ' + line)
+            return int(match.group(1).replace(' ', ''))
+
+        def expect(condition, message):
+            if not condition:
+                mx.abort('PGO end-to-end check failed: ' + message)
+
+        # 1. Instrumented images, post-high-tier and consumer-aligned; each trains on two inputs.
+        # Instrumented images write a profile on every run; functional runs direct it to a scratch file.
+        scratch_profile = '-XX:ProfilesDumpFile=' + join(output_dir, 'scratch.iprof')
+        instrumented, _ = build('pgo-instrumented', ['--pgo-instrument'])
+        check_output('instrumented image', [instrumented, scratch_profile])
+        profile_a = join(output_dir, 'train-a.iprof')
+        profile_b = join(output_dir, 'train-b.iprof')
+        mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_a] + train_a, out=lambda _: None)
+        mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_b] + train_b, out=lambda _: None)
+        aligned_instrumented, _ = build('pgo-instrumented-aligned', ['--pgo-instrument-aligned'])
+        check_output('aligned instrumented image', [aligned_instrumented, scratch_profile])
+        profile_aligned = join(output_dir, 'train-aligned.iprof')
+        mx.run([aligned_instrumented, '-XX:ProfilesDumpFile=' + profile_aligned] + train_a, out=lambda _: None)
+        # An instrumented image that compiles the workload's interface-call wrappers standalone
+        # records their receivers under a one-frame context; optimized images inline the wrappers,
+        # so the same sites are queried under deeper contexts and exercise the context fallback.
+        shallow_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.areaOf', '-H:NeverInline=' + main_class + '.kindOf'])
+        shallow_instrumented, _ = build('pgo-instrumented-shallow', ['--pgo-instrument'] + shallow_options)
+        check_output('shallow instrumented image', [shallow_instrumented, scratch_profile])
+        profile_shallow = join(output_dir, 'train-shallow.iprof')
+        mx.run([shallow_instrumented, '-XX:ProfilesDumpFile=' + profile_shallow] + train_a, out=lambda _: None)
+        for profile in (profile_a, profile_b, profile_aligned, profile_shallow):
+            expect(exists(profile) and os.path.getsize(profile) > 1000, 'profile not written: ' + profile)
+        # The experimental split histogram lowers through its own foreign call; build it under
+        # the same assertions and check that it counted the workload's splitter invocations.
+        split_instrumented, _ = build('pgo-instrumented-split', ['--pgo-instrument'] + svm_experimental_options(['-H:PGOSplitHistogramMethod=' + main_class + '.splitFields']))
+        check_output('split-histogram instrumented image', [split_instrumented, scratch_profile])
+        split_log = []
+        mx.run([split_instrumented, scratch_profile] + train_a, out=lambda _: None, err=lambda line: split_log.append(line.rstrip()))
+        histogram = [line for line in split_log if 'split histogram delimiter=44 ' in line]
+        expect(len(histogram) == 1, 'split histogram for the comma delimiter not printed:\n' + '\n'.join(split_log))
+        expect(summary_int(histogram[0], r'total=(\d+)') > 0, 'split histogram counted nothing: ' + histogram[0])
+
+        # 2. Reference without a profile.
+        plain, _ = build('pgo-none', [])
+        check_output('image without profile', [plain])
+
+        # 3. Optimized variants. Each must resolve the whole profile and reproduce the JDK output.
+        variants = [
+            ('pgo-default', ['--pgo=' + profile_a], {}),
+            ('pgo-merged', ['--pgo=' + profile_a + ',' + profile_b + ':2'], {}),
+            ('pgo-aligned', ['--pgo=' + profile_aligned], {}),
+            ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'fallback': True}),
+            ('pgo-shallow-no-fallback', ['--pgo=' + profile_shallow] + svm_experimental_options(['-H:-PGOReceiverContextFallback']), {'fallback': False}),
+            ('pgo-flow-check', ['--pgo=' + profile_a] + svm_experimental_options(['-H:+PGOConditionalFlowCheck']), {'flow': True}),
+            ('pgo-small-root-boost', ['--pgo=' + profile_a] + svm_experimental_options(['-H:PGOHotSmallRootInliningBoost=16', '-H:PGOHotRootMinInclusiveShare=0.0001']), {}),
+            ('pgo-boost16', ['--pgo=' + profile_a] + svm_experimental_options(['-H:PGOHotRootInliningBoost=16']), {}),
+            ('pgo-no-duplication', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-OptMethodDuplication']), {}),
+            ('pgo-no-graph-cache', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-UseGraphCache']), {}),
+        ]
+        for name, image_args, checks in variants:
+            image, build_log = build(name, image_args)
+            resolution = summary(build_log, 'iprof conditionalProfiles')
+            expect(summary_int(resolution, r'(\d+) unresolved') == 0, name + ': unresolved conditional contexts: ' + resolution)
+            receivers = summary(build_log, 'virtual invokes:')
+            hits = summary_int(receivers, r'(\d+) hits')
+            shortened = summary_int(receivers, r'\((\d+) via shortened context')
+            expect(hits > 0, name + ': no receiver profile was applied: ' + receivers)
+            fallback = checks.get('fallback')
+            if fallback is True:
+                expect(shortened > 0, name + ': the receiver context fallback never engaged: ' + receivers)
+            elif fallback is False:
+                expect(shortened == 0, name + ': fallback disabled but shortened-context hits reported: ' + receivers)
+            flow = summary(build_log, 'flow check:')
+            checked = summary_int(flow, r'(\d+) applied conditionals checked')
+            if checks.get('flow', False):
+                expect(checked > 0, name + ': flow check enabled but checked nothing: ' + flow)
+            else:
+                expect(checked == 0, name + ': flow check disabled but ran: ' + flow)
+            check_output(name, [image])
 
 
 def runtime_assertions_test_task(extra_image_args=None):

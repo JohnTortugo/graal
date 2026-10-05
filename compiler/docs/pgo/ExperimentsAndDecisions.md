@@ -697,6 +697,44 @@ Rejected on measurement in the same investigation:
   the image is built with PGO (1.05× for the whole method; `toLowerCase` 1.55× is the one outlier). A
   first run without PGO had shown 1.4–1.9× and was wrong for that reason.
 
+## What building under hosted assertions found
+
+An end-to-end gate (`mx gate --tags pgo`, see README "Validation") builds instrumented and
+optimized images of a deterministic workload with `-J-ea -J-esa -H:+VerifyGraalGraphs
+-H:+VerifyPhases` and compares their output with the JDK's. Its first runs failed in the compiler
+rather than in the workload; each failure was a latent defect of the instrumentation that release
+builds had masked:
+
+- The instrumentation node classes were not exported to the compiler module, so graph verification
+  could not reflect on them (`suite.py` now opens `com.oracle.svm.hosted.pgo`).
+- The counter snippets used untyped pointer accesses (location `OFF_HEAP_LOCATION`) and `Unsafe`
+  atomics (`ANY`), while their nodes declared no kill or a kill of `ANY`. Either way the snippet
+  template's memory rewiring rejects the graph: a snippet may touch only private locations or
+  locations its node kills, and a node that kills `ANY` forces every later floating read onto a kill
+  inside the snippet. All table accesses now carry a named location declared private to the
+  snippet, the nodes are not memory kills, and the rare paths that need atomics are foreign calls
+  killing only that location. The instrumented image no longer acts as a full memory barrier at
+  every instrumented call site and method entry.
+- Snippet bodies contained hosted-only branches and bounds-checked array accesses (an exception
+  path inside a snippet); the hosted paths used by unit tests are separate methods now.
+- `SubstratePriorityInliningPhase` asserted that the priority inliner's graph cache is off whenever
+  profiles are applied to expanded callee graphs, because the cached graph (with the profile of the
+  first expansion's context) is shared with every later expansion of that callee in the
+  compilation unit. Turning the cache off per the assertion was measured, three interleaved runs
+  each on the binary-format reader workload: +1.2% with the post-high-tier profile (26.70 → 27.01 s)
+  and +4.0% with the aligned profile (26.02 → 27.06 s), with 9% more profile queries. The shared
+  graph carries the profile of the callee's highest-priority context; per-context application
+  mostly produces misses that fall back to shortened contexts. The cache stays on, the assertion is
+  replaced by that documented decision, and `-H:-UseGraphCache` remains available and is covered by
+  the gate.
+
+The workload's first version also exposed an assumption in the test itself: with instrumented and
+optimized images inlining identically, the receiver-profile context fallback never engages. The
+gate now builds a second instrumented image whose interface-call wrappers are compiled standalone
+(`-H:NeverInline`), so the optimized image — which inlines them during decoding — queries the same
+sites under deeper contexts; that profile must be served through the fallback (and must not be when
+the fallback is disabled), and both images must still match the JDK.
+
 ## Validation standard
 
 Each accepted iteration requires:

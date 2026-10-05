@@ -285,9 +285,64 @@ Run the focused PGO tests from the `substratevm` suite:
 mx unittest com.oracle.svm.hosted.pgo com.oracle.svm.core.pgo
 ```
 
+These cover the profile readers and writers, the context resolver, the receiver-profile
+context fallback (`VirtualInvokeProfileResolutionTest`), the call-count lookup, and the
+decision functions behind the experimental options (`FlowCheckSelectionTest`,
+`HotRootBoostTest`), which are factored out as pure static methods for that purpose.
+
+Then run the end-to-end gate, which builds images under hosted assertions and graph
+verification (`-J-ea -J-esa -H:+VerifyGraalGraphs -H:+VerifyPhases`):
+
+```bash
+mx gate --tags pgo
+```
+
+The gate compiles `substratevm/src/native-image-tests/pgo/PgoWorkload.java`, a deterministic
+program whose output depends on the mechanisms PGO acts on (a context-dependent interface
+receiver, a loop whose exit sits in an inlined helper, a small-method reader with a refill
+path, recursion, an exception-driven unwind loop, fresh strings, a `HashMap` lookup, a string
+switch and `Number.doubleValue` on mixed boxes), and then:
+
+1. builds `--pgo-instrument`, `--pgo-instrument-aligned`, an instrumented image whose
+   interface-call wrappers are compiled standalone (`-H:NeverInline=...`), and an instrumented
+   image with the split histogram, and trains them;
+2. builds the optimized variants: default, merged profiles (`a,b:2`), aligned profile, the
+   shallow profile with and without `-H:-PGOReceiverContextFallback`,
+   `-H:+PGOConditionalFlowCheck`, the small-root boost, `-H:PGOHotRootInliningBoost=16`, and
+   `-H:-OptMethodDuplication`, and `-H:-UseGraphCache`;
+3. checks every optimized build summary: zero unresolved conditional contexts, receiver profiles
+   applied, the fallback engaged on the shallow profile (and only there when disabled), the flow
+   check ran only when enabled;
+4. runs every image on the two training inputs and on an input the profile never saw and
+   requires its output to be identical to the JDK's.
+
 Also run:
 
 ```bash
 mx checkstyle --primary
 mx build
 ```
+
+## Rules the assertions enforce
+
+The gate found, and the implementation now follows, these constraints:
+
+- An instrumentation snippet may touch only locations it declares private, or locations its
+  node kills. The branch counter, receiver and call-count snippets read a thread-local pointer
+  and read/write their native tables under named locations (`PGOBranchCounters`,
+  `PGOReceiverTables`, `PGOCallCountTables`), all declared private, and their nodes are not
+  memory kills; the rare paths that need atomics (a thread without a table, a full table) run
+  as foreign calls that kill only the table location. A node that kills `ANY` while its
+  snippet contains no kill of `ANY` fails `SnippetTemplate`'s memory rewiring, because every
+  floating read after the node would have to be re-attached to a kill inside the snippet.
+- A snippet body cannot contain a hosted-only branch (`SubstrateUtil.HOSTED`) or anything that
+  can throw; the hosted paths used by unit tests are separate methods.
+- The priority inliner's graph cache shares one decoded graph per callee across all expansions
+  in a compilation unit, so the profile applied to it is that of the callee's first (highest
+  priority) expansion context. Upstream asserts the cache is off on this path; that assertion
+  is replaced by a documented decision, because per-context application measured worse on the
+  binary-format reader workload (`-H:-UseGraphCache`: +1.2% with the post-high-tier profile,
+  +4.0% with the aligned profile, three interleaved runs each) — most deeper contexts have no
+  record of their own and fall back to shortened contexts, whereas the shared graph carries the
+  hottest context's profile. `-H:-UseGraphCache` selects per-context application and is one of
+  the gate's variants.

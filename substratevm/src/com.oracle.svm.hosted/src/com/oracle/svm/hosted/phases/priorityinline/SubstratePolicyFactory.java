@@ -117,6 +117,14 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
         return new CompositeTuningPolicy(policies);
     }
 
+    /** The small-root boost up to {@code typicalSize} nodes, decaying hyperbolically to {@code baseBoost}. */
+    public static double sizeAwareHotRootBoost(double baseBoost, double smallRootBoost, double typicalSize, int currentSize) {
+        if (smallRootBoost <= baseBoost) {
+            return baseBoost;
+        }
+        return Math.max(baseBoost, smallRootBoost * typicalSize / Math.max(typicalSize, currentSize));
+    }
+
     /**
      * Gives every call in a hot compilation root a larger inlining budget. The inliner values a call
      * by its frequency relative to one entry of the root and charges code size in absolute terms,
@@ -154,9 +162,7 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
              * the full small-root boost up to the typical graph size, decaying hyperbolically to the
              * base boost at four times that size.
              */
-            double typicalSize = TypicalGraphSize.getValue(options);
-            int currentSize = callTree.root().getSubtreeTotalCompilerNodeCount();
-            return Math.max(boost, smallRootBoost * typicalSize / Math.max(typicalSize, currentSize));
+            return sizeAwareHotRootBoost(boost, smallRootBoost, TypicalGraphSize.getValue(options), callTree.root().getSubtreeTotalCompilerNodeCount());
         }
 
         @Override
