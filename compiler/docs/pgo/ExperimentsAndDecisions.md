@@ -754,7 +754,10 @@ output found:
   (`validConditionalBci`), so these branches keep their prior. Unit tests
   `differentConditionsWithUnknownSuccessorsGetNoLegacyEntry`,
   `sameConditionCopiesWithUnknownSuccessorsStillSum`,
-  `successorsWithoutBytecodePositionReceiveNoProbability`.
+  `successorsWithoutBytecodePositionReceiveNoProbability`. On the binary-format reader workload
+  the fix leaves 158 matched contexts unapplied (their branches keep the injected prior) and
+  measured 26.44–26.47 s against 26.71–26.88 s for the two reference images in three interleaved
+  rounds (−1.2%; below the bar for claiming a win, recorded as no regression).
 - The remaining 54 profiled branches equal the recorded ratios on the right successor, the string
   switch carries the recorded distribution, and the recorded counts equal what the program
   counted (one end-of-input exit after 200 000 records; 89 600 squares, 25 600 triangles, 12 800
