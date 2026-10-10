@@ -260,6 +260,7 @@ public class BranchProfileIprofWriterTest {
         int monitorTypeId = 0x6f000002;
         ReceiverProfileSite receiverSite = ReceiverProfileRecorder.createSite(new String[]{method}, new int[]{17}, new int[]{receiverTypeId}, new String[]{"Lexample/InvokeType;"});
         ReceiverProfileSite monitorSite = ReceiverProfileRecorder.createMonitorSite();
+        Assert.assertSame(monitorSite, ReceiverProfileRecorder.createMonitorSite());
         ReceiverProfileRecorder.registerTypeDescriptor(monitorTypeId, "Lexample/MonitorType;");
         ReceiverProfileRecorder.recordType(receiverSite.siteIndex(), receiverTypeId);
         ReceiverProfileRecorder.recordType(receiverSite.siteIndex(), receiverTypeId);

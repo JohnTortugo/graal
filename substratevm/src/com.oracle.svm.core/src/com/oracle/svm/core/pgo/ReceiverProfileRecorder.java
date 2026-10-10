@@ -152,8 +152,16 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         return site;
     }
 
-    /** Creates a site whose dynamic receiver types are aggregated into monitorProfiles. */
+    /**
+     * Returns the single aggregation site shared by every monitor probe. Monitor profiles are
+     * global by dynamic type, so retaining the physical site in the runtime key only consumes table
+     * capacity and can displace receiver-profile keys without adding information to the output.
+     */
     public static ReceiverProfileSite createMonitorSite() {
+        return MonitorSiteHolder.SITE;
+    }
+
+    private static ReceiverProfileSite createMonitorSiteInternal() {
         int index = NEXT_SITE.getAndIncrement();
         if (index >= MAX_SITES) {
             throw new IllegalStateException("Monitor instrumentation exceeds the " + MAX_SITES + "-site capacity");
@@ -161,6 +169,11 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         ReceiverProfileSite site = new ReceiverProfileSite(index, new String[0], new int[0], new int[0], new String[0], true);
         SITES.put(index, site);
         return site;
+    }
+
+    /** Delays allocation so images without monitor instrumentation contain no monitor site. */
+    private static final class MonitorSiteHolder {
+        private static final ReceiverProfileSite SITE = createMonitorSiteInternal();
     }
 
     @Override
