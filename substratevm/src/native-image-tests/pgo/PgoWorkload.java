@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * Deterministic workload for the end-to-end PGO test. Every part exists because a profile applied
@@ -54,6 +55,84 @@ import java.util.Map;
 public final class PgoWorkload {
 
     // ---------------------------------------------------------------- receivers by context
+
+    static final class ProfiledLock {
+        private int value;
+
+        synchronized void increment() {
+            value++;
+        }
+
+        synchronized int value() {
+            return value;
+        }
+    }
+
+    static final class FallbackLock {
+        private int value;
+        private boolean released;
+
+        synchronized void increment() {
+            value++;
+        }
+
+        synchronized int value() {
+            return value;
+        }
+
+        synchronized void awaitRelease(CountDownLatch waiting) {
+            waiting.countDown();
+            while (!released) {
+                try {
+                    wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("interrupted while waiting", exception);
+                }
+            }
+        }
+
+        synchronized void release() {
+            released = true;
+            notifyAll();
+        }
+    }
+
+    static long exerciseMonitorFallback(int records) {
+        ProfiledLock profiled = new ProfiledLock();
+        FallbackLock fallback = new FallbackLock();
+        int iterations = Math.max(1, records / 1000);
+        boolean exerciseFallback = (records & 1) != 0;
+        for (int i = 0; i < iterations; i++) {
+            profiled.increment();
+        }
+        if (exerciseFallback) {
+            int fallbackIterations = Math.max(10_000, iterations);
+            CountDownLatch waiting = new CountDownLatch(1);
+            Thread worker = new Thread(() -> {
+                fallback.awaitRelease(waiting);
+                for (int i = 0; i < fallbackIterations; i++) {
+                    fallback.increment();
+                }
+            });
+            worker.start();
+            try {
+                waiting.await();
+                fallback.release();
+                for (int i = 0; i < fallbackIterations; i++) {
+                    fallback.increment();
+                }
+                worker.join();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while exercising monitor fallback", exception);
+            }
+            if (fallback.value() != 2 * fallbackIterations) {
+                throw new IllegalStateException("lost updates through the secondary monitor map");
+            }
+        }
+        return profiled.value() * 31L + (exerciseFallback ? fallback.value() : 0);
+    }
 
     interface Shape {
         double area();
@@ -528,7 +607,7 @@ public final class PgoWorkload {
         System.out.println("recordSum=" + recordSum + " units=" + unitChecksum + " strings=" + stringChecksum + " boxed=" + boxedChecksum);
         double units = unitAreas(records);
         System.out.println("shapes=" + shapes + " bytes=" + data.length + " splits=" + splits + " units=" + units);
-        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles);
+        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles + " locks=" + exerciseMonitorFallback(records));
     }
 
     /**

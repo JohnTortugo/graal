@@ -48,7 +48,8 @@ public class IprofProfileMergerTest {
                     "\"ceConditionalProfilesV2\":[{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"1:9\",\"successors\":[20,53],\"conditionKind\":\"K\",\"conditionFingerprint\":\"ab\",\"occurrence\":0,\"records\":[20,0,10,53,1,1]}]," +
                     "\"callCountProfiles\":[{\"ctx\":\"2:0<1:30\",\"records\":[100]}]," +
                     "\"virtualInvokeProfiles\":[{\"ctx\":\"1:40\",\"records\":[101,7]}]," +
-                    "\"samplingProfiles\":[{\"ctx\":\"2:5<1:30\",\"records\":[3]}]}";
+                    "\"samplingProfiles\":[{\"ctx\":\"2:5<1:30\",\"records\":[3]}]," +
+                    "\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[101,7]}]}";
 
     private static final String SECOND = "{\"version\":\"1.1.0\"," +
                     "\"types\":[{\"id\":0,\"name\":\"com.example.Impl\"},{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"},{\"id\":5,\"name\":\"com.example.Other\"}]," +
@@ -57,7 +58,8 @@ public class IprofProfileMergerTest {
                     "\"ceConditionalProfilesV2\":[{\"stage\":\"POST_HIGH_TIER\",\"ctx\":\"8:9\",\"successors\":[20,53],\"conditionKind\":\"K\",\"conditionFingerprint\":\"ab\",\"occurrence\":0,\"records\":[20,0,5,53,1,9]}]," +
                     "\"callCountProfiles\":[{\"ctx\":\"7:0<8:30\",\"records\":[50]}]," +
                     "\"virtualInvokeProfiles\":[{\"ctx\":\"8:40\",\"records\":[0,1,5,2]}]," +
-                    "\"samplingProfiles\":[{\"ctx\":\"7:5<8:30\",\"records\":[1]},{\"ctx\":\"9:3\",\"records\":[4]}]}";
+                    "\"samplingProfiles\":[{\"ctx\":\"7:5<8:30\",\"records\":[1]},{\"ctx\":\"9:3\",\"records\":[4]}]," +
+                    "\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[0,1,5,2]}]}";
 
     private static ParsedProfile parse(String json) throws IOException {
         return new IprofConditionalParser().parse(new StringReader(json));
@@ -107,6 +109,35 @@ public class IprofProfileMergerTest {
 
         Assert.assertEquals(2, merged.samplingEntries().size());
         Assert.assertEquals(3 + 2 * 1, merged.samplingEntries().stream().filter(e -> e.context().size() == 2).findFirst().orElseThrow().count());
+
+        Assert.assertTrue(merged.monitorProfilesRecorded());
+        Assert.assertEquals(1, merged.monitorEntries().size());
+        long[] monitors = merged.monitorEntries().get(0).records();
+        Assert.assertEquals(4, monitors.length);
+        Assert.assertEquals(typeId(merged, "com.example.Impl"), (int) monitors[0]);
+        Assert.assertEquals(7 + 2 * 1, monitors[1]);
+        Assert.assertEquals(typeId(merged, "com.example.Other"), (int) monitors[2]);
+        Assert.assertEquals(2 * 2, monitors[3]);
+    }
+
+    @Test
+    public void positiveMonitorCountsSurviveFractionalWeights() throws IOException {
+        ParsedProfile merged = IprofProfileMerger.merge(List.of(new WeightedProfile(parse(SECOND), 0.1)));
+        long[] records = merged.monitorEntries().getFirst().records();
+
+        Assert.assertTrue(merged.monitorProfilesRecorded());
+        Assert.assertEquals(4, records.length);
+        Assert.assertEquals(1, records[1]);
+        Assert.assertEquals(1, records[3]);
+    }
+
+    @Test
+    public void mixedMonitorCategoryPresenceDisablesMergedMonitorProfile() throws IOException {
+        String firstWithoutMonitors = FIRST.replace(",\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[101,7]}]", "");
+        ParsedProfile merged = IprofProfileMerger.merge(List.of(new WeightedProfile(parse(firstWithoutMonitors), 1.0), new WeightedProfile(parse(SECOND), 1.0)));
+
+        Assert.assertFalse(merged.monitorProfilesRecorded());
+        Assert.assertTrue(merged.monitorEntries().isEmpty());
     }
 
     @Test

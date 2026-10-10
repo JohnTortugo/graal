@@ -36,6 +36,7 @@ import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.MonitorEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.PreciseConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.SamplingEntry;
@@ -79,6 +80,8 @@ public final class IprofProfileMerger {
     private final Map<List<ContextFrame>, Long> callCounts = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Map<Integer, Long>> receivers = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Long> samples = new LinkedHashMap<>();
+    private final Map<Integer, Long> monitors = new LinkedHashMap<>();
+    private boolean monitorProfilesRecorded = true;
     private String version;
 
     private IprofProfileMerger() {
@@ -187,6 +190,17 @@ public final class IprofProfileMerger {
         for (SamplingEntry entry : profile.samplingEntries()) {
             samples.merge(remap(entry.context(), methodMap), scale(entry.count(), weight), Long::sum);
         }
+        /*
+         * Absence means that input did not record monitor behavior, not that it observed zero
+         * monitor operations. Only an all-instrumented input set is safe for field omission.
+         */
+        monitorProfilesRecorded &= profile.monitorProfilesRecorded();
+        for (MonitorEntry entry : profile.monitorEntries()) {
+            long[] records = entry.records();
+            for (int i = 0; i + 1 < records.length; i += 2) {
+                monitors.merge(typeMap.get((int) records[i]), scaleObservedCount(records[i + 1], weight), Long::sum);
+            }
+        }
     }
 
     private static String typeName(ParsedProfile profile, int typeId) {
@@ -228,6 +242,11 @@ public final class IprofProfileMerger {
         return result;
     }
 
+    private static long scaleObservedCount(long count, double weight) {
+        long scaled = scale(count, weight);
+        return count > 0 ? Math.max(1, scaled) : scaled;
+    }
+
     private static long scale(long count, double weight) {
         return weight == 1.0 ? count : Math.round(count * weight);
     }
@@ -254,6 +273,14 @@ public final class IprofProfileMerger {
         });
         List<SamplingEntry> samplingEntries = new ArrayList<>();
         samples.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseEntries, callCountEntries, receiverEntries, samplingEntries);
+        long[] monitorRecords = new long[monitors.size() * 2];
+        int monitorIndex = 0;
+        for (Map.Entry<Integer, Long> entry : monitors.entrySet()) {
+            monitorRecords[monitorIndex++] = entry.getKey();
+            monitorRecords[monitorIndex++] = entry.getValue();
+        }
+        List<MonitorEntry> monitorEntries = monitorProfilesRecorded ? List.of(new MonitorEntry(monitorRecords)) : List.of();
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseEntries, callCountEntries, receiverEntries, samplingEntries,
+                        monitorEntries, monitorProfilesRecorded);
     }
 }

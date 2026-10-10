@@ -35,13 +35,15 @@ public final class ReceiverProfileSite {
     @UnknownObjectField(availability = AfterCompilation.class) private final int[] contextBcis;
     @UnknownObjectField(availability = AfterCompilation.class) private final int[] receiverTypeIds;
     @UnknownObjectField(availability = AfterCompilation.class) private final String[] receiverTypeDescriptors;
+    @UnknownPrimitiveField(availability = AfterCompilation.class) private final boolean monitorProfile;
 
-    ReceiverProfileSite(int siteIndex, String[] methodDescriptors, int[] contextBcis, int[] receiverTypeIds, String[] receiverTypeDescriptors) {
+    ReceiverProfileSite(int siteIndex, String[] methodDescriptors, int[] contextBcis, int[] receiverTypeIds, String[] receiverTypeDescriptors, boolean monitorProfile) {
         this.siteIndex = siteIndex;
         this.methodDescriptors = methodDescriptors.clone();
         this.contextBcis = contextBcis.clone();
         this.receiverTypeIds = receiverTypeIds.clone();
         this.receiverTypeDescriptors = receiverTypeDescriptors.clone();
+        this.monitorProfile = monitorProfile;
     }
 
     public int siteIndex() {
@@ -54,6 +56,10 @@ public final class ReceiverProfileSite {
 
     public int[] contextBcis() {
         return contextBcis.clone();
+    }
+
+    public boolean isMonitorProfile() {
+        return monitorProfile;
     }
 
     String receiverTypeDescriptor(int typeId) {

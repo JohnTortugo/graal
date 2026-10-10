@@ -170,6 +170,38 @@ public class IprofConditionalParserTest {
         assertRejected(() -> parse(json), "methods");
     }
 
+    @Test
+    public void parsesMonitorProfilesAndDistinguishesAbsentFromEmpty() throws IOException {
+        String withProfiles = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
+                        "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[100,7,101,3]}]}";
+        ParsedProfile parsed = parse(withProfiles);
+        Assert.assertTrue(parsed.monitorProfilesRecorded());
+        Assert.assertEquals(1, parsed.monitorEntries().size());
+        Assert.assertArrayEquals(new long[]{100, 7, 101, 3}, parsed.monitorEntries().get(0).records());
+
+        ParsedProfile empty = parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[]}");
+        Assert.assertTrue(empty.monitorProfilesRecorded());
+        Assert.assertTrue(empty.monitorEntries().isEmpty());
+
+        ParsedProfile absent = parse(profile("1.1.0", ""));
+        Assert.assertFalse(absent.monitorProfilesRecorded());
+        Assert.assertTrue(absent.monitorEntries().isEmpty());
+    }
+
+    @Test
+    public void rejectsMalformedMonitorProfiles() {
+        String prefix = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":";
+        assertRejected(() -> parse(prefix + "[100]}]}"), "not a multiple");
+        assertRejected(() -> parse(prefix + "[999,1]}]}"), "undeclared type id");
+        assertRejected(() -> parse(prefix + "[100,-1]}]}"), "Negative monitor count");
+        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":null}"), "must be a JSON array");
+        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"22263:0\",\"records\":[100,1]}]}"),
+                        "global sentinel");
+        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
+                        "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[100,1]},{\"ctx\":\"0:0\",\"records\":[101,1]}]}"),
+                        "at most one");
+    }
+
     private interface ThrowingParse {
         void run() throws IOException;
     }

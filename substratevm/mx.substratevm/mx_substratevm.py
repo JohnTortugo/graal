@@ -1164,6 +1164,32 @@ def pgo_e2e_test_task(extra_image_args=None):
         mx.run([shallow_instrumented, '-XX:ProfilesDumpFile=' + profile_shallow] + train_a, out=lambda _: None)
         for profile in (profile_a, profile_b, profile_aligned, profile_shallow):
             expect(exists(profile) and os.path.getsize(profile) > 1000, 'profile not written: ' + profile)
+        # Train the independently gated monitor producer on an even record count, which executes
+        # ProfiledLock but deliberately leaves FallbackLock unobserved. The optimized image later
+        # executes an odd input to verify secondary-monitor-map correctness for FallbackLock.
+        monitor_instrumented, monitor_build_log = build('pgo-instrumented-monitors', ['--pgo-instrument'] + svm_experimental_options(['-H:+PGOProfileMonitors', '-H:-PGOProfileReceivers']))
+        monitor_instrumentation = summary(monitor_build_log, 'monitor enters=')
+        expect(summary_int(monitor_instrumentation, r'monitor enters=(\d+)') > 0, 'monitor producer instrumented no monitor enters: ' + monitor_instrumentation)
+        check_output('monitor-instrumented image', [monitor_instrumented, scratch_profile])
+        monitor_profile = join(output_dir, 'train-monitor.iprof')
+        monitor_run_log = []
+        mx.run([monitor_instrumented, '-XX:ProfilesDumpFile=' + monitor_profile] + train_a, out=lambda _: None, err=lambda line: monitor_run_log.append(line.rstrip()))
+        expect(exists(monitor_profile) and os.path.getsize(monitor_profile) > 1000, 'monitor profile not written: ' + monitor_profile)
+        with open(monitor_profile, encoding='utf-8') as fp:
+            monitor_data = json.load(fp)
+        monitor_entries = monitor_data.get('monitorProfiles')
+        expect(isinstance(monitor_entries, list) and len(monitor_entries) == 1, 'producer did not emit one global monitorProfiles entry')
+        expect(monitor_entries[0].get('ctx') == '0:0', 'monitorProfiles does not use the standard global 0:0 context')
+        monitor_records = monitor_entries[0].get('records', [])
+        expect(len(monitor_records) > 0 and len(monitor_records) % 2 == 0, 'monitorProfiles records are not non-empty type/count pairs')
+        monitor_type_names = {entry['id']: entry['name'] for entry in monitor_data['types']}
+        monitor_counts = {monitor_type_names[monitor_records[i]]: monitor_records[i + 1] for i in range(0, len(monitor_records), 2)}
+        profiled_lock = main_class + '$ProfiledLock'
+        fallback_lock = main_class + '$FallbackLock'
+        expect(monitor_counts.get(profiled_lock, 0) > 0, 'producer did not observe ProfiledLock: ' + str(monitor_counts))
+        expect(fallback_lock not in monitor_counts, 'producer observed unexecuted FallbackLock: ' + str(monitor_counts))
+        monitor_dump = summary(monitor_run_log, 'monitor types=')
+        expect(summary_int(monitor_dump, r'monitor events=(\d+)') > 0, 'producer reported no monitor events: ' + monitor_dump)
         # The experimental split histogram lowers through its own foreign call; build it under
         # the same assertions and check that it counted the workload's splitter invocations.
         split_instrumented, _ = build('pgo-instrumented-split', ['--pgo-instrument'] + svm_experimental_options(['-H:PGOSplitHistogramMethod=' + main_class + '.splitFields']))
@@ -1191,26 +1217,33 @@ def pgo_e2e_test_task(extra_image_args=None):
             ('pgo-boost16', ['--pgo=' + profile_a] + svm_experimental_options(['-H:PGOHotRootInliningBoost=16']), {}),
             ('pgo-no-duplication', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-OptMethodDuplication']), {}),
             ('pgo-no-graph-cache', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-UseGraphCache']), {}),
+            ('pgo-monitor-fields', ['--pgo=' + monitor_profile] + svm_experimental_options(['-H:+PGOUseMonitorProfiles']), {'monitors': True}),
         ]
         for name, image_args, checks in variants:
             image, build_log = build(name, image_args)
             resolution = summary(build_log, 'iprof conditionalProfiles')
             expect(summary_int(resolution, r'(\d+) unresolved') == 0, name + ': unresolved conditional contexts: ' + resolution)
-            receivers = summary(build_log, 'virtual invokes:')
-            hits = summary_int(receivers, r'(\d+) hits')
-            shortened = summary_int(receivers, r'\((\d+) via shortened context')
-            expect(hits > 0, name + ': no receiver profile was applied: ' + receivers)
-            fallback = checks.get('fallback')
-            if fallback is True:
-                expect(shortened > 0, name + ': the receiver context fallback never engaged: ' + receivers)
-            elif fallback is False:
-                expect(shortened == 0, name + ': fallback disabled but shortened-context hits reported: ' + receivers)
+            if not checks.get('monitors'):
+                receivers = summary(build_log, 'virtual invokes:')
+                hits = summary_int(receivers, r'(\d+) hits')
+                shortened = summary_int(receivers, r'\((\d+) via shortened context')
+                expect(hits > 0, name + ': no receiver profile was applied: ' + receivers)
+                fallback = checks.get('fallback')
+                if fallback is True:
+                    expect(shortened > 0, name + ': the receiver context fallback never engaged: ' + receivers)
+                elif fallback is False:
+                    expect(shortened == 0, name + ': fallback disabled but shortened-context hits reported: ' + receivers)
             flow = summary(build_log, 'flow check:')
             checked = summary_int(flow, r'(\d+) applied conditionals checked')
             if checks.get('flow', False):
                 expect(checked > 0, name + ': flow check enabled but checked nothing: ' + flow)
             else:
                 expect(checked == 0, name + ': flow check disabled but ran: ' + flow)
+            if checks.get('monitors'):
+                monitors = summary(build_log, 'monitor profiles:')
+                expect(summary_int(monitors, r'observed types=(\d+)') >= 1, name + ': produced observed monitor types missing: ' + monitors)
+                expect(summary_int(monitors, r'retained fields=(\d+)') > 0, name + ': no observed monitor field retained: ' + monitors)
+                expect(summary_int(monitors, r'omitted fields=(\d+)') > 0, name + ': no unobserved monitor field omitted: ' + monitors)
             check_output(name, [image])
             if checks.get('effects'):
                 check_effects('profiled', 'default', profile_a, train_a[1], shape_counts['circles'], shape_counts['squares'], shape_counts['triangles'])

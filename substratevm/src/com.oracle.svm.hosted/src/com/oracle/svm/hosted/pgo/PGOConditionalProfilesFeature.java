@@ -30,8 +30,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Set;
 
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -42,6 +44,7 @@ import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofConditionalParser.MonitorEntry;
 import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver;
@@ -61,6 +64,7 @@ import com.oracle.svm.hosted.phases.priorityinline.SubstratePriorityInliningPhas
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
 import com.oracle.svm.shared.option.HostedOptionKey;
+import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.core.common.GraalOptions;
 import jdk.graal.compiler.nodes.StructuredGraph;
@@ -105,6 +109,10 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
 
         @Option(help = "Expose callCountProfiles to call-count optimization consumers. Disable with -H:-PGOUseCallCounts.")//
         public static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
+
+        @Option(help = "Experimental: use monitorProfiles to omit inline monitor fields from synchronized types not observed during training. " +
+                       "Runtime synchronization remains correct through the secondary monitor map.")//
+        public static final HostedOptionKey<Boolean> PGOUseMonitorProfiles = new HostedOptionKey<>(false);
         // @formatter:on
 
         private static final class ProfilePathOption extends HostedOptionKey<String> {
@@ -186,6 +194,48 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
         if (pathSet(postInliningProfilePath())) {
             parsedPostInliningProfile = parseProfile(postInliningProfilePath(), "--pgo-post-inlining");
         }
+        if (Options.PGOUseMonitorProfiles.getValue()) {
+            List<ParsedProfile> monitorProfiles = completeMonitorProfiles(parsedEarlyProfile, earlyProfilePath(), parsedPostInliningProfile, postInliningProfilePath());
+            if (monitorProfiles.isEmpty()) {
+                LogUtils.warning("-H:+PGOUseMonitorProfiles requested but not every distinct profile contains monitorProfiles; retaining statically required monitor fields");
+            } else {
+                Set<String> observedTypes = new HashSet<>();
+                long events = 0;
+                for (ParsedProfile profile : monitorProfiles) {
+                    for (MonitorEntry entry : profile.monitorEntries()) {
+                        long[] records = entry.records();
+                        for (int i = 0; i + 1 < records.length; i += 2) {
+                            if (records[i + 1] > 0) {
+                                String descriptor = ConditionalProfileContextResolver.descriptorForProfileType((int) records[i], profile.typeNamesById());
+                                if (descriptor != null) {
+                                    observedTypes.add(descriptor);
+                                    events += records[i + 1];
+                                }
+                            }
+                        }
+                    }
+                }
+                ImageSingletons.add(MonitorProfiledTypes.class, new MonitorProfiledTypes(observedTypes, events));
+            }
+        }
+    }
+
+    /**
+     * Monitor omission is safe only when every distinct effective profile recorded the category.
+     * The same file may be supplied to both application stages and is then consumed once.
+     */
+    static List<ParsedProfile> completeMonitorProfiles(ParsedProfile early, String earlyPath, ParsedProfile postInlining, String postInliningPath) {
+        List<ParsedProfile> profiles = new ArrayList<>(2);
+        if (early != null) {
+            profiles.add(early);
+        }
+        if (postInlining != null && (early == null || !earlyPath.equals(postInliningPath))) {
+            profiles.add(postInlining);
+        }
+        if (profiles.isEmpty() || profiles.stream().anyMatch(profile -> !profile.monitorProfilesRecorded())) {
+            return List.of();
+        }
+        return List.copyOf(profiles);
     }
 
     /**
@@ -266,6 +316,11 @@ public final class PGOConditionalProfilesFeature implements InternalFeature {
             return;
         }
         hostedUniverse = ((FeatureImpl.BeforeCompilationAccessImpl) access).getUniverse();
+        if (ImageSingletons.contains(MonitorProfiledTypes.class)) {
+            MonitorProfiledTypes monitors = ImageSingletons.lookup(MonitorProfiledTypes.class);
+            System.out.printf("[PGO:early] monitor profiles: observed types=%d, events=%d; statically synchronized types=%d, retained fields=%d, omitted fields=%d%n",
+                            monitors.observedTypes(), monitors.recordedEvents(), monitors.synchronizedTypes(), monitors.retainedTypes(), monitors.omittedTypes());
+        }
 
         ConditionalProfileFilter filter = new ConditionalProfileFilter(Options.PGOConditionalMinEvents.getValue(), Options.PGOConditionalMinBias.getValue());
         if (parsedEarlyProfile != null && !ImageSingletons.contains(PGOProfilesLookup.class)) {

@@ -96,6 +96,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
         @Option(help = "Record switch successor frequencies in conditionalProfiles. Disable with -H:-PGOProfileSwitches.")//
         public static final HostedOptionKey<Boolean> PGOProfileSwitches = new HostedOptionKey<>(true);
 
+        @Option(help = "Record exact runtime types at monitor-enter sites and emit monitorProfiles. Disabled by default.")//
+        public static final HostedOptionKey<Boolean> PGOProfileMonitors = new HostedOptionKey<>(false);
+
         @Option(help = "Experimental: print per-invocation input-length, result-size, and coder histograms for the static (String, char) method named package.Class.method. Empty disables.")//
         public static final HostedOptionKey<String> PGOSplitHistogramMethod = new HostedOptionKey<>("");
         // @formatter:on
@@ -171,6 +174,9 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             SwitchProfileRecorder.enable();
         }
         if (receiverRecorderEnabled()) {
+            if (Options.PGOProfileMonitors.getValue()) {
+                ReceiverProfileRecorder.enableMonitorProfiles();
+            }
             ThreadListenerSupport.get().register(ReceiverProfileRecorder.create());
         }
         if (Options.PGOSampleStacks.getValue()) {
@@ -183,7 +189,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
     }
 
     private static boolean receiverRecorderEnabled() {
-        return enabled() && Options.PGOProfileReceivers.getValue();
+        return enabled() && (Options.PGOProfileReceivers.getValue() || Options.PGOProfileMonitors.getValue());
     }
 
     /** Slow paths of the instrumentation snippets run as foreign calls so that the snippets stay free of atomics. */
@@ -225,7 +231,7 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             if (Options.PGOProfileCallCounts.getValue(options) || Options.PGOProfileSwitches.getValue(options)) {
                 providers.getReplacements().registerSnippetTemplateCache(new CallCountProfileMarkerNode.Templates(options, providers));
             }
-            if (Options.PGOProfileReceivers.getValue(options)) {
+            if (Options.PGOProfileReceivers.getValue(options) || Options.PGOProfileMonitors.getValue(options)) {
                 providers.getReplacements().registerSnippetTemplateCache(new ReceiverProfileCounterNode.Templates(options, providers));
             }
             if (!Options.PGOSplitHistogramMethod.getValue(options).isEmpty()) {
@@ -258,6 +264,15 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
                 highTier.prependPhase(new ReceiverProfileInstrumentationPhase());
             }
         }
+        if (Options.PGOProfileMonitors.getValue()) {
+            ListIterator<BasePhase<? super HighTierContext>> monitorInliner = highTier.findPhase(AbstractInliningPhase.class);
+            if (monitorInliner != null) {
+                /* Profile monitor operations after hosted inlining has exposed synchronized callees. */
+                monitorInliner.add(new MonitorProfileInstrumentationPhase());
+            } else {
+                highTier.prependPhase(new MonitorProfileInstrumentationPhase());
+            }
+        }
         Stage stage = alignedEnabled() ? Stage.ROOT_PRE_INLINE : Stage.POST_HIGH_TIER;
         BranchProfileInstrumentationPhase phase = new BranchProfileInstrumentationPhase(stage, null);
         if (alignedEnabled()) {
@@ -288,8 +303,8 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             return;
         }
         BranchProfileRecorder.sealRegistry();
-        if (Options.PGOProfileReceivers.getValue()) {
-            /* Name every image type by its hub id so receivers outside a site's static profile decode. */
+        if (receiverRecorderEnabled()) {
+            /* Name every image type by its hub id so dynamic receiver and monitor types decode. */
             for (HostedType type : ((FeatureImpl.AfterCompilationAccessImpl) access).getUniverse().getTypes()) {
                 if (type.getWrapped().isReachable() && type.getHub() != null) {
                     ReceiverProfileRecorder.registerTypeDescriptor(type.getHub().getTypeID(), type.getName());
@@ -297,11 +312,12 @@ public final class PGOBranchInstrumentationFeature implements InternalFeature {
             }
         }
         // Checkstyle: stop
-        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped; switches=%d, skipped=%d; receiver invokes=%d, skipped=%d; call edges=%d, skipped=%d%n",
+        System.out.printf("[PGO] branch instrumentation (%s): %d IfNodes instrumented, %d skipped; switches=%d, skipped=%d; receiver invokes=%d, skipped=%d; monitor enters=%d; call edges=%d, skipped=%d%n",
                         alignedEnabled() ? "consumer-aligned" : "post-inlining",
                         BranchProfileInstrumentationPhase.instrumentedBranches(), BranchProfileInstrumentationPhase.skippedBranches(),
                         BranchProfileInstrumentationPhase.instrumentedSwitches(), BranchProfileInstrumentationPhase.skippedSwitches(),
                         ReceiverProfileInstrumentationPhase.instrumentedInvokes(), ReceiverProfileInstrumentationPhase.skippedInvokes(),
+                        MonitorProfileInstrumentationPhase.instrumentedMonitors(),
                         CallCountProfileInstrumentationPhase.instrumented(), CallCountProfileInstrumentationPhase.skipped());
         if (splitHistogramEnabled()) {
             System.out.printf("[PGO] split histogram returns instrumented=%d for %s%n", SplitHistogramInstrumentationPhase.instrumented(), Options.PGOSplitHistogramMethod.getValue());

@@ -132,6 +132,10 @@ public final class ConditionalProfileContextResolver {
         return sb.toString();
     }
 
+    public static String descriptorForProfileType(int typeId, Map<Integer, String> typeNamesById) {
+        return descriptorForTypeId(typeId, typeNamesById);
+    }
+
     private static String descriptorForTypeId(int typeId, Map<Integer, String> typeNamesById) {
         String name = typeNamesById.get(typeId);
         return name == null ? null : toDescriptor(name);

@@ -54,6 +54,7 @@ public class BranchProfileIprofWriterTest {
         ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
 
         Assert.assertEquals("1.1.0", parsed.version());
+        Assert.assertFalse(parsed.monitorProfilesRecorded());
         Assert.assertEquals(2, parsed.methodsById().size());
         Assert.assertEquals(5, parsed.typeNamesById().size());
         Assert.assertEquals(1, parsed.conditionalEntries().size());
@@ -219,6 +220,61 @@ public class BranchProfileIprofWriterTest {
         ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(first.toString()));
         Assert.assertEquals(1, parsed.conditionalEntries().size());
         Assert.assertArrayEquals(new long[]{10, 0, 0, 20, 1, 1}, parsed.conditionalEntries().getFirst().records());
+    }
+
+    @Test
+    public void monitorProfilesRoundTripThroughConsumerParser() throws Exception {
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(), List.of(),
+                        Map.of("Ljava/lang/String;", 7L, "Ljava/lang/Integer;", 3L));
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertTrue(parsed.monitorProfilesRecorded());
+        Assert.assertEquals(1, parsed.monitorEntries().size());
+        IprofConditionalParser.MonitorEntry entry = parsed.monitorEntries().getFirst();
+        Map<String, Long> counts = new java.util.HashMap<>();
+        for (int i = 0; i < entry.records().length; i += 2) {
+            counts.put(parsed.typeNamesById().get((int) entry.records()[i]), entry.records()[i + 1]);
+        }
+        Assert.assertEquals(Map.of("java.lang.String", 7L, "java.lang.Integer", 3L), counts);
+        Assert.assertEquals(2, statistics.monitorTypes());
+        Assert.assertEquals(10, statistics.monitorEvents());
+    }
+
+    @Test
+    public void emptyMonitorProfilesSectionPreservesRecordedCategory() throws Exception {
+        StringWriter output = new StringWriter();
+        BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(output, List.of(), List.of(), List.of(), List.of(), List.of(), Map.of());
+        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(output.toString()));
+
+        Assert.assertTrue(parsed.monitorProfilesRecorded());
+        Assert.assertTrue(parsed.monitorEntries().isEmpty());
+        Assert.assertEquals(0, statistics.monitorTypes());
+        Assert.assertEquals(0, statistics.monitorEvents());
+    }
+
+    @Test
+    public void receiverRecorderSeparatesMonitorAndInvokeTypes() {
+        String method = "Lexample/RecorderSeparationTest;.invoke()V";
+        int receiverTypeId = 0x6f000001;
+        int monitorTypeId = 0x6f000002;
+        ReceiverProfileSite receiverSite = ReceiverProfileRecorder.createSite(new String[]{method}, new int[]{17}, new int[]{receiverTypeId}, new String[]{"Lexample/InvokeType;"});
+        ReceiverProfileSite monitorSite = ReceiverProfileRecorder.createMonitorSite();
+        ReceiverProfileRecorder.registerTypeDescriptor(monitorTypeId, "Lexample/MonitorType;");
+        ReceiverProfileRecorder.recordType(receiverSite.siteIndex(), receiverTypeId);
+        ReceiverProfileRecorder.recordType(receiverSite.siteIndex(), receiverTypeId);
+        ReceiverProfileRecorder.recordType(monitorSite.siteIndex(), monitorTypeId);
+        ReceiverProfileRecorder.recordType(monitorSite.siteIndex(), monitorTypeId);
+        ReceiverProfileRecorder.recordType(monitorSite.siteIndex(), monitorTypeId);
+
+        ReceiverProfileRecorder.DecodedReceiverProfile receivers = ReceiverProfileRecorder.decodeProfiles().stream()
+                        .filter(profile -> profile.methodDescriptors().length == 1 && method.equals(profile.methodDescriptors()[0]))
+                        .findFirst().orElseThrow();
+        Map<String, Long> monitors = ReceiverProfileRecorder.decodeMonitorProfiles();
+        Assert.assertEquals(Map.of("Lexample/InvokeType;", 2L), receivers.countsByTypeDescriptor());
+        Assert.assertEquals(Long.valueOf(3), monitors.get("Lexample/MonitorType;"));
+        Assert.assertFalse(receivers.countsByTypeDescriptor().containsKey("Lexample/MonitorType;"));
+        Assert.assertFalse(monitors.containsKey("Lexample/InvokeType;"));
     }
 
     @Test

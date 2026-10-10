@@ -115,9 +115,9 @@ public final class ReceiverProfileRecorder implements ThreadListener {
     private static Map<Long, Long> snapshot;
     private static long snapshotTotal;
     private static long snapshotDropped;
-    private static long snapshotUnknown;
     /** Build-time constant captured in the instrumentation image. */
     private static boolean enabled;
+    private static boolean monitorProfilesEnabled;
 
     private ReceiverProfileRecorder() {
     }
@@ -131,6 +131,14 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         return enabled;
     }
 
+    public static void enableMonitorProfiles() {
+        monitorProfilesEnabled = true;
+    }
+
+    public static boolean monitorProfilesEnabled() {
+        return monitorProfilesEnabled;
+    }
+
     public static ReceiverProfileSite createSite(String[] methodDescriptors, int[] contextBcis, int[] receiverTypeIds, String[] receiverTypeDescriptors) {
         if (methodDescriptors.length == 0 || methodDescriptors.length != contextBcis.length || receiverTypeIds.length != receiverTypeDescriptors.length) {
             throw new IllegalArgumentException("Receiver profile site metadata must contain matching arrays and a non-empty context");
@@ -139,7 +147,18 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         if (index >= MAX_SITES) {
             throw new IllegalStateException("Receiver instrumentation exceeds the " + MAX_SITES + "-site capacity");
         }
-        ReceiverProfileSite site = new ReceiverProfileSite(index, methodDescriptors, contextBcis, receiverTypeIds, receiverTypeDescriptors);
+        ReceiverProfileSite site = new ReceiverProfileSite(index, methodDescriptors, contextBcis, receiverTypeIds, receiverTypeDescriptors, false);
+        SITES.put(index, site);
+        return site;
+    }
+
+    /** Creates a site whose dynamic receiver types are aggregated into monitorProfiles. */
+    public static ReceiverProfileSite createMonitorSite() {
+        int index = NEXT_SITE.getAndIncrement();
+        if (index >= MAX_SITES) {
+            throw new IllegalStateException("Monitor instrumentation exceeds the " + MAX_SITES + "-site capacity");
+        }
+        ReceiverProfileSite site = new ReceiverProfileSite(index, new String[0], new int[0], new int[0], new String[0], true);
         SITES.put(index, site);
         return site;
     }
@@ -332,27 +351,37 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         }
     }
 
+    /** Takes one consistent snapshot and decodes both profile categories from it. */
+    public static DecodedTypeProfiles decodeAllProfiles() {
+        takeSnapshot();
+        return new DecodedTypeProfiles(decodeProfilesFromSnapshot(), decodeMonitorProfilesFromSnapshot());
+    }
+
     public static List<DecodedReceiverProfile> decodeProfiles() {
         takeSnapshot();
+        return decodeProfilesFromSnapshot();
+    }
+
+    private static List<DecodedReceiverProfile> decodeProfilesFromSnapshot() {
         Map<ContextKey, Map<String, Long>> aggregate = new HashMap<>();
-        long unknown = 0;
         for (Map.Entry<Long, Long> entry : snapshot.entrySet()) {
             long key = entry.getKey();
             int siteIndex = (int) (key >>> 32) - 1;
             int typeId = (int) key;
             ReceiverProfileSite site = SITES.get(siteIndex);
-            String descriptor = site == null ? null : site.receiverTypeDescriptor(typeId);
+            if (site == null || site.isMonitorProfile()) {
+                continue;
+            }
+            String descriptor = site.receiverTypeDescriptor(typeId);
             if (descriptor == null && site != null) {
                 descriptor = TYPE_DESCRIPTORS_BY_ID.get(typeId);
             }
             if (descriptor == null) {
-                unknown += entry.getValue();
                 continue;
             }
             ContextKey context = new ContextKey(Arrays.asList(site.methodDescriptors()), Arrays.stream(site.contextBcis()).boxed().toList());
             aggregate.computeIfAbsent(context, _ -> new HashMap<>()).merge(descriptor, entry.getValue(), Long::sum);
         }
-        snapshotUnknown = unknown;
         List<DecodedReceiverProfile> result = new ArrayList<>();
         aggregate.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> result.add(
                         new DecodedReceiverProfile(entry.getKey().methodDescriptors.toArray(String[]::new), entry.getKey().bcis.stream().mapToInt(Integer::intValue).toArray(),
@@ -360,11 +389,79 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         return result;
     }
 
+    /** Aggregates dynamic receiver types from all monitor-enter sites. */
+    public static Map<String, Long> decodeMonitorProfiles() {
+        takeSnapshot();
+        return decodeMonitorProfilesFromSnapshot();
+    }
+
+    private static Map<String, Long> decodeMonitorProfilesFromSnapshot() {
+        Map<String, Long> result = new TreeMap<>();
+        for (Map.Entry<Long, Long> entry : snapshot.entrySet()) {
+            long key = entry.getKey();
+            int siteIndex = (int) (key >>> 32) - 1;
+            int typeId = (int) key;
+            ReceiverProfileSite site = SITES.get(siteIndex);
+            if (site == null || !site.isMonitorProfile()) {
+                continue;
+            }
+            String descriptor = TYPE_DESCRIPTORS_BY_ID.get(typeId);
+            if (descriptor != null) {
+                result.merge(descriptor, entry.getValue(), Long::sum);
+            }
+        }
+        return result;
+    }
+
     public static Statistics statistics() {
         if (snapshot == null) {
             takeSnapshot();
         }
-        return new Statistics(SITES.size() - 1, snapshotTotal, snapshotDropped, snapshotUnknown);
+        int receiverSites = 0;
+        int monitorSites = 0;
+        for (ReceiverProfileSite site : SITES.values()) {
+            if (site == UNUSED_SITE) {
+                continue;
+            }
+            if (site.isMonitorProfile()) {
+                monitorSites++;
+            } else {
+                receiverSites++;
+            }
+        }
+        long receiverEvents = 0;
+        long monitorEvents = 0;
+        long unknownReceivers = 0;
+        long unknownMonitors = 0;
+        for (Map.Entry<Long, Long> entry : snapshot.entrySet()) {
+            long key = entry.getKey();
+            int siteIndex = (int) (key >>> 32) - 1;
+            int typeId = (int) key;
+            ReceiverProfileSite site = SITES.get(siteIndex);
+            if (site == null) {
+                continue;
+            }
+            long count = entry.getValue();
+            if (site.isMonitorProfile()) {
+                monitorEvents += count;
+                if (!TYPE_DESCRIPTORS_BY_ID.containsKey(typeId)) {
+                    unknownMonitors += count;
+                }
+            } else {
+                receiverEvents += count;
+                if (site.receiverTypeDescriptor(typeId) == null && !TYPE_DESCRIPTORS_BY_ID.containsKey(typeId)) {
+                    unknownReceivers += count;
+                }
+            }
+        }
+        return new Statistics(receiverSites, monitorSites, receiverEvents, monitorEvents, snapshotTotal, snapshotDropped, unknownReceivers, unknownMonitors);
+    }
+
+    public record DecodedTypeProfiles(List<DecodedReceiverProfile> receiverProfiles, Map<String, Long> monitorProfiles) {
+        public DecodedTypeProfiles {
+            receiverProfiles = List.copyOf(receiverProfiles);
+            monitorProfiles = Map.copyOf(monitorProfiles);
+        }
     }
 
     public record DecodedReceiverProfile(String[] methodDescriptors, int[] bcis, Map<String, Long> countsByTypeDescriptor) {
@@ -375,7 +472,7 @@ public final class ReceiverProfileRecorder implements ThreadListener {
         }
     }
 
-    public record Statistics(int physicalSites, long events, long dropped, long unknown) {
+    public record Statistics(int receiverSites, int monitorSites, long receiverEvents, long monitorEvents, long events, long dropped, long unknownReceivers, long unknownMonitors) {
     }
 
     private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) implements Comparable<ContextKey> {

@@ -39,15 +39,15 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import jdk.graal.compiler.util.json.JsonParser;
 
 /**
- * Clean-room reader for the public iprof file format, restricted to the {@code conditionalProfiles}
- * category. The parser is intentionally free of any Native Image singletons or universe state so it
- * can be unit-tested in isolation; method-id resolution against the {@code HostedUniverse} happens
- * later (see {@code PGOConditionalProfilesFeature}).
+ * Clean-room reader for the public iprof file format categories consumed by CE Native Image PGO.
+ * The parser is intentionally free of any Native Image singletons or universe state so it can be
+ * unit-tested in isolation; method-id resolution against the {@code HostedUniverse} happens later
+ * (see {@code PGOConditionalProfilesFeature}).
  *
  * <p>
- * Only the {@code version}, {@code types}, {@code methods} and {@code conditionalProfiles} sections
- * are consumed. Every other section (call-count, virtual-invoke, instanceof, monitor, sampling,
- * image-heap) is ignored on purpose: this is a conditional-only consumer.
+ * The {@code conditionalProfiles}, CE precise-conditional, call-count, virtual-invoke, sampling,
+ * and monitor sections are consumed. Other categories are ignored. Monitor records are parsed as
+ * global dynamic-type counts; their standard entry context is validated but otherwise unused.
  *
  * <p>
  * {@code version}, {@code types} and {@code methods} are required and strictly validated. The
@@ -76,6 +76,7 @@ public final class IprofConditionalParser {
     private static final String KEY_CALL_COUNT_PROFILES = "callCountProfiles";
     private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
     private static final String KEY_SAMPLING_PROFILES = "samplingProfiles";
+    private static final String KEY_MONITOR_PROFILES = "monitorProfiles";
     private static final String KEY_STAGE = "stage";
     private static final String KEY_SUCCESSORS = "successors";
     private static final String KEY_CONDITION_KIND = "conditionKind";
@@ -120,7 +121,6 @@ public final class IprofConditionalParser {
     public record CallCountEntry(List<ContextFrame> context, long count) {
     }
 
-    /** Descriptor of a method as declared in the iprof {@code methods} table. */
     /**
      * One parsed {@code virtualInvokeProfiles} entry: the calling context of an indirect call and
      * its records as {@code [typeId, count, typeId, count, ...]} receiver-type pairs.
@@ -133,6 +133,10 @@ public final class IprofConditionalParser {
      * innermost BCI being the sampled position) and how often it was observed.
      */
     public record SamplingEntry(List<ContextFrame> context, long count) {
+    }
+
+    /** One parsed {@code monitorProfiles} entry containing {@code [typeId, count]} pairs. */
+    public record MonitorEntry(long[] records) {
     }
 
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
@@ -148,15 +152,26 @@ public final class IprofConditionalParser {
         private final List<CallCountEntry> callCountEntries;
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         private final List<SamplingEntry> samplingEntries;
+        private final List<MonitorEntry> monitorEntries;
+        private final boolean monitorProfilesRecorded;
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries) {
-            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
+            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
+                            Collections.emptyList(), false);
         }
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
+            this(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries,
+                            Collections.emptyList(), false);
+        }
+
+        ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
+                        List<ConditionalEntry> conditionalEntries, List<PreciseConditionalEntry> preciseConditionalEntries,
+                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries,
+                        List<MonitorEntry> monitorEntries, boolean monitorProfilesRecorded) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
@@ -165,6 +180,8 @@ public final class IprofConditionalParser {
             this.callCountEntries = Collections.unmodifiableList(callCountEntries);
             this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
             this.samplingEntries = Collections.unmodifiableList(samplingEntries);
+            this.monitorEntries = Collections.unmodifiableList(monitorEntries);
+            this.monitorProfilesRecorded = monitorProfilesRecorded;
         }
 
         public String version() {
@@ -197,6 +214,14 @@ public final class IprofConditionalParser {
 
         public List<SamplingEntry> samplingEntries() {
             return samplingEntries;
+        }
+
+        public List<MonitorEntry> monitorEntries() {
+            return monitorEntries;
+        }
+
+        public boolean monitorProfilesRecorded() {
+            return monitorProfilesRecorded;
         }
     }
 
@@ -237,8 +262,11 @@ public final class IprofConditionalParser {
         List<CallCountEntry> callCountEntries = optionalCallCountProfiles(top);
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
         List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
+        boolean monitorProfilesRecorded = top.containsKey(KEY_MONITOR_PROFILES);
+        List<MonitorEntry> monitorEntries = optionalMonitorProfiles(top, typeNamesById);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, preciseConditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries,
+                        monitorEntries, monitorProfilesRecorded);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -407,6 +435,48 @@ public final class IprofConditionalParser {
     }
 
     public static final int VIRTUAL_INVOKE_RECORD_SIZE = 2;
+
+    /** Returns parsed {@code monitorProfiles}; records are {@code [typeId, count]} pairs. */
+    private static List<MonitorEntry> optionalMonitorProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
+        if (!top.containsKey(KEY_MONITOR_PROFILES)) {
+            return Collections.emptyList();
+        }
+        Object value = top.get(KEY_MONITOR_PROFILES);
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + KEY_MONITOR_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> profiles = (List<Object>) value;
+        if (profiles.size() > 1) {
+            throw new IprofFormatException("Key '" + KEY_MONITOR_PROFILES + "' must contain at most one global entry");
+        }
+        List<MonitorEntry> result = new ArrayList<>(profiles.size());
+        for (Object element : profiles) {
+            EconomicMap<String, Object> entry = asObject(element, KEY_MONITOR_PROFILES);
+            String ctx = requireString(entry, KEY_CTX);
+            if (!"0:0".equals(ctx)) {
+                throw new IprofFormatException("Monitor profile context must be the global sentinel '0:0' but found '" + ctx + "'");
+            }
+            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            if (rawRecords.size() % VIRTUAL_INVOKE_RECORD_SIZE != 0) {
+                throw new IprofFormatException("Monitor records length " + rawRecords.size() + " for context '" + ctx + "' is not a multiple of " + VIRTUAL_INVOKE_RECORD_SIZE);
+            }
+            long[] records = new long[rawRecords.size()];
+            for (int i = 0; i < rawRecords.size(); i++) {
+                records[i] = asLong(rawRecords.get(i), KEY_RECORDS);
+            }
+            for (int i = 0; i < records.length; i += VIRTUAL_INVOKE_RECORD_SIZE) {
+                if (records[i] < 0 || records[i] > Integer.MAX_VALUE || !typeNamesById.containsKey((int) records[i])) {
+                    throw new IprofFormatException("Monitor context '" + ctx + "' references undeclared type id " + records[i]);
+                }
+                if (records[i + 1] < 0) {
+                    throw new IprofFormatException("Negative monitor count for context '" + ctx + "'");
+                }
+            }
+            result.add(new MonitorEntry(records));
+        }
+        return result;
+    }
 
     /** Returns the parsed {@code samplingProfiles} entries; each has exactly one record, the sample count. */
     private static List<SamplingEntry> optionalSamplingProfiles(EconomicMap<String, Object> top) {

@@ -654,6 +654,12 @@ The `records` on the other hand are similar to the format used for virtual invok
 an array of type ID and count pairs.
 This means that, as with virtual invoke profiles, the length of `records` array has to be a multiple of 2.
 
+The `monitorProfiles` value must be an array and the context of its single global entry must be exactly `0:0`.
+An absent section means that monitor behavior was not recorded. An empty array instead means that
+monitor recording was enabled but observed no synchronization. Consumers must preserve this
+distinction because treating an absent section as an empty recording could incorrectly omit monitor
+fields.
+
 The first two values of the array indicate that the type with ID `9` (`java.lang.Object`) has been used 4 times for synchronization.
 Since the example does only one synchronization on the instance of `Fib` (the `fibonacci` method is `synchronized`)
 the next two values indicate that the type with ID `10` (`Fib`) has been used once for synchronization

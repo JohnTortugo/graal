@@ -67,8 +67,18 @@ public final class BranchProfileIprofWriter {
     public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
                     List<SwitchProfileCounter> switchProfileCounters) throws IOException {
+        return write(path, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters, null);
+    }
+
+    /**
+     * Writes all profile categories. A null monitor map omits {@code monitorProfiles}; a non-null
+     * empty map records that monitor profiling was enabled but observed no monitor operations.
+     */
+    public static DumpStatistics write(Path path, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
+                    List<SwitchProfileCounter> switchProfileCounters, Map<String, Long> monitorProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(path)) {
-            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters, monitorProfiles);
         }
     }
 
@@ -93,14 +103,21 @@ public final class BranchProfileIprofWriter {
     public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
                     List<SwitchProfileCounter> switchProfileCounters) throws IOException {
+        return write(output, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters, null);
+    }
+
+    /** See the path-based overload for monitor-section presence semantics. */
+    public static DumpStatistics write(Writer output, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
+                    List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
+                    List<SwitchProfileCounter> switchProfileCounters, Map<String, Long> monitorProfiles) throws IOException {
         try (JsonWriter writer = new JsonWriter(output)) {
-            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters);
+            return write(writer, counters, stackSamples, receiverProfiles, callCountProfiles, switchProfileCounters, monitorProfiles);
         }
     }
 
     private static DumpStatistics write(JsonWriter writer, List<BranchProfileCounter> counters, List<StackSampleRecorder.DecodedSample> stackSamples,
                     List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, List<CallCountProfileCounter> callCountProfiles,
-                    List<SwitchProfileCounter> switchProfileCounters) throws IOException {
+                    List<SwitchProfileCounter> switchProfileCounters, Map<String, Long> monitorProfiles) throws IOException {
         List<BranchProfileCounter> activeCounters = counters.stream()
                         .filter(counter -> counter.getTrueCount() != 0 || counter.getFalseCount() != 0)
                         .toList();
@@ -110,7 +127,7 @@ public final class BranchProfileIprofWriter {
         Map<ContextKey, long[]> switchProfiles = aggregateSwitchProfiles(switchProfileCounters);
         /* A context represented by an If profile is ambiguous for a context-only switch record. */
         switchProfiles.keySet().removeAll(legacySites.keySet());
-        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles, callCounts.keySet(), switchProfiles.keySet());
+        Metadata metadata = Metadata.create(preciseSites.keySet(), stackSamples, receiverProfiles, callCounts.keySet(), switchProfiles.keySet(), monitorProfiles);
         writer.appendObjectStart();
         writer.appendKeyValue("version", VERSION).appendSeparator();
         writeTypes(writer, metadata).appendSeparator();
@@ -122,6 +139,9 @@ public final class BranchProfileIprofWriter {
         if (!receiverProfiles.isEmpty()) {
             writeReceiverProfiles(writer, metadata, receiverProfiles).appendSeparator();
         }
+        if (monitorProfiles != null) {
+            writeMonitorProfiles(writer, metadata, monitorProfiles).appendSeparator();
+        }
         writePreciseProfiles(writer, metadata, preciseSites);
         if (!stackSamples.isEmpty()) {
             writer.appendSeparator();
@@ -129,7 +149,9 @@ public final class BranchProfileIprofWriter {
         }
         writer.appendObjectEnd();
         long events = activeCounters.stream().mapToLong(counter -> counter.getTrueCount() + counter.getFalseCount()).sum();
-        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size() + switchProfiles.size(), preciseSites.size(), receiverProfiles.size(), callCounts.size(), switchProfiles.size(), events);
+        long monitorEvents = monitorProfiles == null ? 0 : monitorProfiles.values().stream().mapToLong(Long::longValue).sum();
+        return new DumpStatistics(metadata.typesByName.size(), metadata.methodsByDescriptor.size(), legacySites.size() + switchProfiles.size(), preciseSites.size(), receiverProfiles.size(), callCounts.size(),
+                        switchProfiles.size(), monitorProfiles == null ? 0 : monitorProfiles.size(), events, monitorEvents);
     }
 
     private static Map<ContextKey, long[]> aggregateSwitchProfiles(List<SwitchProfileCounter> profiles) {
@@ -347,6 +369,25 @@ public final class BranchProfileIprofWriter {
         return writer.appendArrayEnd();
     }
 
+    private static JsonWriter writeMonitorProfiles(JsonWriter writer, Metadata metadata, Map<String, Long> profiles) throws IOException {
+        writer.quote("monitorProfiles").appendFieldSeparator().appendArrayStart();
+        if (!profiles.isEmpty()) {
+            /* The public iprof format uses one global monitor record anchored at sentinel context 0:0. */
+            writer.appendObjectStart().appendKeyValue("ctx", "0:0").appendSeparator()
+                            .quote("records").appendFieldSeparator().appendArrayStart();
+            boolean first = true;
+            for (Map.Entry<String, Long> profile : new TreeMap<>(profiles).entrySet()) {
+                if (!first) {
+                    writer.appendSeparator();
+                }
+                first = false;
+                writer.printValue(metadata.typesByName.get(ParsedMethod.typeName(profile.getKey()))).appendSeparator().printValue(profile.getValue());
+            }
+            writer.appendArrayEnd().appendObjectEnd();
+        }
+        return writer.appendArrayEnd();
+    }
+
     /** {@code samplingProfiles}: sampled call stacks innermost first with their sample counts. */
     private static void writeSamplingProfiles(JsonWriter writer, Metadata metadata, List<StackSampleRecorder.DecodedSample> stackSamples) throws IOException {
         writer.quote("samplingProfiles").appendFieldSeparator().appendArrayStart();
@@ -407,7 +448,7 @@ public final class BranchProfileIprofWriter {
     }
 
     public record DumpStatistics(int types, int methods, int conditionalProfiles, int preciseConditionalProfiles, int receiverProfiles, int callCountProfiles, int switchProfiles,
-                    long recordedEvents) {
+                    int monitorTypes, long recordedEvents, long monitorEvents) {
     }
 
     private record ContextKey(List<String> methodDescriptors, List<Integer> bcis) {
@@ -452,7 +493,7 @@ public final class BranchProfileIprofWriter {
 
         private static Metadata create(Iterable<PreciseSiteKey> sites, List<StackSampleRecorder.DecodedSample> stackSamples,
                         List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles, Iterable<ContextKey> callCountProfiles,
-                        Iterable<ContextKey> switchProfiles) {
+                        Iterable<ContextKey> switchProfiles, Map<String, Long> monitorProfiles) {
             TreeSet<String> descriptors = new TreeSet<>();
             for (PreciseSiteKey site : sites) {
                 descriptors.addAll(site.context.methodDescriptors);
@@ -478,6 +519,11 @@ public final class BranchProfileIprofWriter {
             }
             for (ReceiverProfileRecorder.DecodedReceiverProfile profile : receiverProfiles) {
                 for (String descriptor : profile.countsByTypeDescriptor().keySet()) {
+                    types.add(ParsedMethod.typeName(descriptor));
+                }
+            }
+            if (monitorProfiles != null) {
+                for (String descriptor : monitorProfiles.keySet()) {
                     types.add(ParsedMethod.typeName(descriptor));
                 }
             }

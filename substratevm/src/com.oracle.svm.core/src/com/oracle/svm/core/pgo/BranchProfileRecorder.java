@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -249,18 +250,30 @@ public final class BranchProfileRecorder {
         fileName = expandDumpFilePattern(fileName);
         try {
             List<StackSampleRecorder.DecodedSample> stackSamples = StackSampleRecorder.hasSamples() ? StackSampleRecorder.decodeSamples() : List.of();
-            List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles = ReceiverProfileRecorder.isEnabled() ? ReceiverProfileRecorder.decodeProfiles() : List.of();
+            List<ReceiverProfileRecorder.DecodedReceiverProfile> receiverProfiles;
+            Map<String, Long> monitorProfiles;
+            if (ReceiverProfileRecorder.isEnabled()) {
+                ReceiverProfileRecorder.DecodedTypeProfiles profiles = ReceiverProfileRecorder.decodeAllProfiles();
+                receiverProfiles = profiles.receiverProfiles();
+                monitorProfiles = ReceiverProfileRecorder.monitorProfilesEnabled() ? profiles.monitorProfiles() : null;
+            } else {
+                receiverProfiles = List.of();
+                monitorProfiles = null;
+            }
             if (CallCountProfileRecorder.isEnabled()) {
                 CallCountProfileRecorder.prepareSnapshot();
             }
             List<CallCountProfileCounter> callCountProfiles = CallCountProfileRecorder.isEnabled() ? CallCountProfileRecorder.getCounters() : List.of();
             List<SwitchProfileCounter> switchProfiles = SwitchProfileRecorder.isEnabled() ? SwitchProfileRecorder.profiles() : List.of();
-            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles, callCountProfiles, switchProfiles);
+            BranchProfileIprofWriter.DumpStatistics statistics = BranchProfileIprofWriter.write(Path.of(fileName), getCounters(), stackSamples, receiverProfiles, callCountProfiles, switchProfiles,
+                            monitorProfiles);
             Log.log().string("[PGO] wrote profile '").string(fileName).string("': legacy contexts=").signed(statistics.conditionalProfiles())
                             .string(", v2 sites=").signed(statistics.preciseConditionalProfiles())
                             .string(", receiver contexts=").signed(statistics.receiverProfiles())
                             .string(", call-count contexts=").signed(statistics.callCountProfiles())
                             .string(", switch contexts=").signed(statistics.switchProfiles())
+                            .string(", monitor types=").signed(statistics.monitorTypes())
+                            .string(", monitor events=").signed(statistics.monitorEvents())
                             .string(", methods=").signed(statistics.methods())
                             .string(", types=").signed(statistics.types())
                             .string(", events=").signed(statistics.recordedEvents()).newline();
@@ -272,8 +285,14 @@ public final class BranchProfileRecorder {
             }
             if (ReceiverProfileRecorder.isEnabled()) {
                 ReceiverProfileRecorder.Statistics receivers = ReceiverProfileRecorder.statistics();
-                Log.log().string("[PGO] receiver profiles: physical sites=").signed(receivers.physicalSites()).string(", events=").signed(receivers.events())
-                                .string(", dropped=").signed(receivers.dropped()).string(", unknown=").signed(receivers.unknown()).newline();
+                Log.log().string("[PGO] dynamic type profiles: receiver sites=").signed(receivers.receiverSites())
+                                .string(", monitor sites=").signed(receivers.monitorSites())
+                                .string(", receiver events=").signed(receivers.receiverEvents())
+                                .string(", monitor events=").signed(receivers.monitorEvents())
+                                .string(", total events=").signed(receivers.events())
+                                .string(", dropped=").signed(receivers.dropped())
+                                .string(", unknown receivers=").signed(receivers.unknownReceivers())
+                                .string(", unknown monitors=").signed(receivers.unknownMonitors()).newline();
             }
             if (CallCountProfileRecorder.isEnabled()) {
                 CallCountProfileRecorder.Statistics calls = CallCountProfileRecorder.statistics();

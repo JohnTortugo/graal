@@ -646,6 +646,10 @@ public final class PgoEffectsCheck {
     private void checkInstrumentation(Map<String, InputGraph> graphs) {
         int counters = 0;
         for (Map.Entry<String, InputGraph> entry : graphs.entrySet()) {
+            /* Synchronization and thread operations can introduce control flow after this PGO phase. */
+            if (entry.getKey().equals("PgoWorkload.exerciseMonitorFallback")) {
+                continue;
+            }
             Map<Integer, InputNode> nodes = nodesById(entry.getValue());
             int branchCounters = 0;
             int ifNodes = 0;
