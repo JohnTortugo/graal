@@ -72,6 +72,7 @@ import com.oracle.svm.hosted.meta.HostedInstanceClass;
 import com.oracle.svm.hosted.meta.HostedMetaAccess;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.MonitorProfiledTypes;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
@@ -328,13 +329,14 @@ public class HostedConfiguration {
 
     public void collectMonitorFieldInfo(BigBang bb, HostedUniverse hUniverse, EconomicSet<AnalysisType> immutableTypes) {
         /* First set the monitor field for types that always need it. */
-        for (AnalysisType type : getForceMonitorSlotTypes(bb)) {
+        EconomicSet<AnalysisType> forceMonitorTypes = getForceMonitorSlotTypes(bb);
+        for (AnalysisType type : forceMonitorTypes) {
             assert !immutableTypes.contains(type);
             setMonitorField(hUniverse, type);
         }
 
         /* Then decide what other types may need it. */
-        processedSynchronizedTypes(bb, hUniverse, immutableTypes);
+        processedSynchronizedTypes(bb, hUniverse, immutableTypes, forceMonitorTypes);
     }
 
     private static EconomicSet<AnalysisType> getForceMonitorSlotTypes(BigBang bb) {
@@ -353,9 +355,15 @@ public class HostedConfiguration {
     }
 
     /** Process the types that the analysis found as needing synchronization. */
-    protected void processedSynchronizedTypes(BigBang bb, HostedUniverse hUniverse, EconomicSet<AnalysisType> immutableTypes) {
+    protected void processedSynchronizedTypes(BigBang bb, HostedUniverse hUniverse, EconomicSet<AnalysisType> immutableTypes, EconomicSet<AnalysisType> forceMonitorTypes) {
+        MonitorProfiledTypes profiles = ImageSingletons.contains(MonitorProfiledTypes.class) ? ImageSingletons.lookup(MonitorProfiledTypes.class) : null;
         for (AnalysisType type : bb.getAllSynchronizedTypes()) {
-            maybeSetMonitorField(hUniverse, immutableTypes, type);
+            if (forceMonitorTypes.contains(type)) {
+                continue; // Already retained independently of profile data.
+            }
+            if (profiles == null || profiles.retainMonitorField(type.getName())) {
+                maybeSetMonitorField(hUniverse, immutableTypes, type);
+            }
         }
     }
 

@@ -28,19 +28,26 @@ package jdk.graal.compiler.core.aarch64;
 
 import jdk.graal.compiler.asm.aarch64.AArch64Address;
 import jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode;
+import jdk.graal.compiler.asm.aarch64.AArch64Assembler.ExtendType;
 import jdk.graal.compiler.core.common.LIRKind;
 import jdk.graal.compiler.core.common.NumUtil;
+import jdk.graal.compiler.core.common.memory.MemoryOrderMode;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.calc.AddNode;
 import jdk.graal.compiler.nodes.calc.LeftShiftNode;
+import jdk.graal.compiler.nodes.calc.SignExtendNode;
 import jdk.graal.compiler.nodes.calc.ZeroExtendNode;
+import jdk.graal.compiler.nodes.memory.OrderedMemoryAccess;
+import jdk.graal.compiler.nodes.memory.ReadNode;
+import jdk.graal.compiler.nodes.memory.WriteNode;
 import jdk.graal.compiler.nodes.memory.address.AddressNode;
 import jdk.graal.compiler.nodes.memory.address.OffsetAddressNode;
 import jdk.graal.compiler.phases.common.AddressLoweringByUsePhase;
 
 import jdk.vm.ci.aarch64.AArch64Kind;
 import jdk.vm.ci.meta.JavaConstant;
+import jdk.vm.ci.meta.JavaKind;
 
 public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.AddressLoweringByUse {
     private AArch64LIRKindTool kindtool;
@@ -55,7 +62,7 @@ public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.Addre
     public AddressNode lower(ValueNode use, Stamp stamp, AddressNode address) {
         if (address instanceof OffsetAddressNode) {
             OffsetAddressNode offsetAddress = (OffsetAddressNode) address;
-            return doLower(stamp, offsetAddress.getBase(), offsetAddress.getOffset());
+            return doLower(address.hasExactlyOneUsage() ? use : null, stamp, offsetAddress.getBase(), offsetAddress.getOffset());
         } else {
             // must be an already transformed AArch64AddressNode
             return address;
@@ -68,6 +75,10 @@ public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.Addre
     }
 
     private AddressNode doLower(Stamp stamp, ValueNode base, ValueNode index) {
+        return doLower(null, stamp, base, index);
+    }
+
+    private AddressNode doLower(ValueNode use, Stamp stamp, ValueNode base, ValueNode index) {
         AArch64Kind aarch64Kind = (stamp == null ? null : getAArch64Kind(stamp));
         int bitMemoryTransferSize = aarch64Kind == null ? AArch64Address.ANY_SIZE : aarch64Kind.getSizeInBytes() * Byte.SIZE;
         AArch64AddressNode ret = new AArch64AddressNode(bitMemoryTransferSize, base, index);
@@ -75,17 +86,17 @@ public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.Addre
         // improve the address as much as possible
         boolean changed;
         do {
-            changed = improve(aarch64Kind, ret);
+            changed = improve(aarch64Kind, ret, use);
         } while (changed);
 
         // avoid duplicates
         return base.graph().unique(ret);
     }
 
-    private boolean improve(AArch64Kind kind, AArch64AddressNode ret) {
+    private boolean improve(AArch64Kind kind, AArch64AddressNode ret, ValueNode use) {
         AddressingMode mode = ret.getAddressingMode();
         // if we have already set a displacement or set to base only mode then we are done
-        if (isDisplacementMode(mode) || isBaseOnlyMode(mode)) {
+        if (isDisplacementMode(mode) || isBaseOnlyMode(mode) || ret.needsScratchRegister()) {
             return false;
         }
         ValueNode base = ret.getBase();
@@ -172,6 +183,57 @@ public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.Addre
             }
         }
 
+        /*
+         * Without derived references, (OffsetAddress base (Add (LeftShift (Ext i) k) #imm)) is
+         * otherwise emitted as "mov tmp, #imm; add tmp, tmp, i, ext #k; ldr [base, tmp]" because no
+         * addressing mode takes both an index register and an immediate. Folding the index addition
+         * into the access, "add scratch, base, i, ext #k; ldr [scratch, #imm]", saves one instruction
+         * per access; the pointer into the object lives only inside the access instruction, so no
+         * reference map has to describe it. An index shared by several accesses (a load and a store
+         * of the same element, the card table lookup of a write barrier) stays a register offset:
+         * computing it once and reusing it is cheaper than one addition per access.
+         */
+        if (!supportsDerivedReference && kind != null && allowsScratchRegisterForm(use) && index instanceof AddNode add && index.getStackKind() == JavaKind.Long && add.hasExactlyOneUsage()) {
+            ValueNode constant;
+            ValueNode scaled;
+            if (isIntegerConstant(add.getY())) {
+                constant = add.getY();
+                scaled = add.getX();
+            } else if (isIntegerConstant(add.getX())) {
+                constant = add.getX();
+                scaled = add.getY();
+            } else {
+                constant = null;
+                scaled = null;
+            }
+            if (constant != null && !isIntegerConstant(scaled)) {
+                long disp = constant.asJavaConstant().asLong();
+                if (disp != 0 && isDisplacementMode(immediateMode(kind, disp))) {
+                    int shift = 0;
+                    ValueNode inner = scaled;
+                    if (inner instanceof LeftShiftNode leftShift && leftShift.getY().isJavaConstant()) {
+                        int amount = leftShift.getY().asJavaConstant().asInt();
+                        if (amount >= 0 && amount <= 4) {
+                            shift = amount;
+                            inner = leftShift.getX();
+                        }
+                    }
+                    ExtendType extend = null;
+                    if (inner instanceof ZeroExtendNode zeroExtend && zeroExtend.getInputBits() == 32 && zeroExtend.getResultBits() == 64) {
+                        extend = ExtendType.UXTW;
+                        inner = zeroExtend.getValue();
+                    } else if (inner instanceof SignExtendNode signExtend && signExtend.getInputBits() == 32 && signExtend.getResultBits() == 64) {
+                        extend = ExtendType.SXTW;
+                        inner = signExtend.getValue();
+                    }
+                    if (inner.getStackKind() == (extend == null ? JavaKind.Long : JavaKind.Int)) {
+                        ret.setScratchRegisterForm(inner, extend, shift, disp);
+                        return true;
+                    }
+                }
+            }
+        }
+
         // We try to convert (OffsetAddress base (Add (LeftShift (Ext i) k) #imm))
         // to (AArch64AddressNode (AArch64PointerAdd (base (LeftShift (Ext i) k)) #imm)
         if (supportsDerivedReference && index != null && index instanceof AddNode && index.getStackKind().isNumericInteger()) {
@@ -214,6 +276,21 @@ public class AArch64AddressLoweringByUse extends AddressLoweringByUsePhase.Addre
         }
 
         // nope cannot improve this any more
+        return false;
+    }
+
+    private static boolean isIntegerConstant(ValueNode node) {
+        return node.isJavaConstant() && node.asJavaConstant().getJavaKind().isNumericInteger();
+    }
+
+    /**
+     * The scratch register form is only emitted by the plain load and store instructions; ordered
+     * accesses and every other user of an address need the address in a register.
+     */
+    private static boolean allowsScratchRegisterForm(ValueNode use) {
+        if (use instanceof ReadNode || use instanceof WriteNode) {
+            return !MemoryOrderMode.ordersMemoryAccesses(((OrderedMemoryAccess) use).getMemoryOrder());
+        }
         return false;
     }
 

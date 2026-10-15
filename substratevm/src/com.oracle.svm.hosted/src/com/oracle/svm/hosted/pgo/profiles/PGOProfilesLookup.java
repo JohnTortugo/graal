@@ -90,6 +90,15 @@ public interface PGOProfilesLookup {
     long getCallCountOrZero(HostedMethod method);
 
     /**
+     * Profiled entry count of a method body as inlined under {@code callingContext} (the method's
+     * entry position with its caller chain), falling back to shorter caller chains and finally to
+     * the method's total count. Returns 0 when nothing is known.
+     */
+    default long getEntryCountOrZero(HostedMethod method, BytecodePosition callingContext) {
+        return getCallCountOrZero(method);
+    }
+
+    /**
      * Returns true if <code>method</code>'s body was executed in the profiles collected on the same
      * codebase or inferred to be executed by the ML model, depending on the profiles lookup
      * implementation.
@@ -119,6 +128,32 @@ public interface PGOProfilesLookup {
      * @return type profile as a map or an empty optional if there is no information.
      */
     Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext);
+
+    default Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext, @SuppressWarnings("unused") ConditionalProfileSiteDescriptor site) {
+        return getConditionalProfile(callingContext);
+    }
+
+    /**
+     * Reports how many profiled successor probabilities were actually matched to successors in the
+     * current graph. Implementations may use this for per-entry application accounting.
+     */
+    default void recordConditionalProfileApplication(@SuppressWarnings("unused") BytecodePosition callingContext,
+                    @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
+    }
+
+    /** Telemetry: an observed receiver type that closed-world analysis proved impossible at the site. */
+    default void recordImpossibleReceiver(@SuppressWarnings("unused") long events) {
+    }
+
+    /** Telemetry: how an applied conditional profile related to the node's prior probability. */
+    default void recordPriorComparison(@SuppressWarnings("unused") long events, @SuppressWarnings("unused") boolean flipped,
+                    @SuppressWarnings("unused") boolean priorInjected) {
+    }
+
+    default void recordConditionalProfileApplication(BytecodePosition callingContext, @SuppressWarnings("unused") ConditionalProfileSiteDescriptor site,
+                    int profiledSuccessors, int appliedSuccessors) {
+        recordConditionalProfileApplication(callingContext, profiledSuccessors, appliedSuccessors);
+    }
 
     /**
      * Get the sum of all the conditional profile values associated with the given method. A

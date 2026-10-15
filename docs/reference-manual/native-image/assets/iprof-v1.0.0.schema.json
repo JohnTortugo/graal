@@ -190,7 +190,7 @@
             "$id": "#root/monitorProfiles",
             "title": "Monitor profiles",
             "type": "array",
-            "default": [],
+            "maxItems": 1,
             "description": "Information about how many times a type was synchronized on.",
             "items":{
                 "$id": "#root/monitorProfiles/items",

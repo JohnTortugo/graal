@@ -30,9 +30,17 @@ import org.graalvm.nativeimage.ImageSingletons;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.shared.option.HostedOptionKey;
+
+import jdk.graal.compiler.options.Option;
 
 @AutomaticallyRegisteredFeature
 public class CodeLayoutOptimizationFeature implements InternalFeature {
+
+    public static final class Options {
+        @Option(help = "Order compiled methods by descending PGO call count. Disable with -H:-PGOUseCodeLayout.")//
+        public static final HostedOptionKey<Boolean> PGOUseCodeLayout = new HostedOptionKey<>(true);
+    }
 
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
@@ -42,6 +50,8 @@ public class CodeLayoutOptimizationFeature implements InternalFeature {
     protected CodeSectionLayouter createCodeSectionLayoutOptimizer() {
         if (SubstrateOptions.useLLVMBackend()) {
             return new DefaultCodeSectionLayouter();
+        } else if (Options.PGOUseCodeLayout.getValue()) {
+            return new ProfileGuidedCodeSectionLayouter();
         } else {
             return new SortByMethodNameCodeSectionLayouter();
         }

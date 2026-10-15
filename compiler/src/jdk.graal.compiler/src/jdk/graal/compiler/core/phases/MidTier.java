@@ -38,6 +38,7 @@ import jdk.graal.compiler.loop.phases.LoopInversionPhase;
 import jdk.graal.compiler.loop.phases.LoopPeelingPhase;
 import jdk.graal.compiler.loop.phases.LoopRotationPhase;
 import jdk.graal.compiler.loop.phases.LoopPredicationPhase;
+import jdk.graal.compiler.loop.phases.LoopRangeCheckVersioningPhase;
 import jdk.graal.compiler.loop.phases.LoopSafepointEliminationPhase;
 import jdk.graal.compiler.loop.phases.NonCountedStripMiningPhase;
 import jdk.graal.compiler.loop.phases.OptimizeLoopAccessesPhase;
@@ -130,6 +131,11 @@ public class MidTier extends BaseTier<MidTierContext> {
 
         if (GraalOptions.LoopPredication.getValue(options) && !GraalOptions.SpeculativeGuardMovement.getValue(options)) {
             appendPhase(new LoopPredicationPhase(canonicalizer));
+        }
+
+        if (LoopRangeCheckVersioningPhase.Options.LoopRangeCheckVersioning.getValue(options)) {
+            // Removes fixed bounds checks from hot loops without deoptimization; a no-op when checks are floating guards.
+            appendPhase(new LoopRangeCheckVersioningPhase(canonicalizer));
         }
 
         if (Options.OptimizeLoopAccesses.getValue(options)) {

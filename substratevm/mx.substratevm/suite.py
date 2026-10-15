@@ -1223,6 +1223,7 @@ suite = {
                     "jdk.internal.module",
                 ],
                 "jdk.internal.vm.ci": [
+                    "jdk.vm.ci.code",
                     "jdk.vm.ci.meta",
                     "jdk.vm.ci.meta.annotation",
                 ]
@@ -2154,6 +2155,7 @@ suite = {
                     "com.oracle.svm.core.graal.snippets           to jdk.graal.compiler",
                     "com.oracle.svm.hosted.fieldfolding           to jdk.graal.compiler",
                     "com.oracle.svm.hosted.phases                 to jdk.graal.compiler",
+                    "com.oracle.svm.hosted.pgo                    to jdk.graal.compiler",
                     "com.oracle.svm.hosted.reflect                to jdk.graal.compiler",
                 ],
                 "requires": [

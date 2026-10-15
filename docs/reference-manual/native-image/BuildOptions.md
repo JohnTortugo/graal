@@ -66,6 +66,7 @@ These deprecated URL protocol options are omitted from the generated table; see 
 | `--parallelism` | String | the maximum number of threads the build process is allowed to use. | None | `--parallelism=parallelism` |
 | `--pgo` | String | a comma-separated list of files from which to read the data collected for profile-guided optimization of AOT compiled code (reads from default.iprof if nothing is specified). Each file must contain a single PGOProfiles object, serialized in JSON format, optionally compressed by gzip. | default.iprof | `--pgo=pgo` |
 | `--pgo-instrument` | String | instrument AOT compiled code to collect data for profile-guided optimization into default.iprof file | None | `--pgo-instrument=pgo-instrument` |
+| `--pgo-monitor-fields` | Boolean | use monitor profiles to omit inline monitor fields from types not observed synchronizing during training | None | `--pgo-monitor-fields` |
 | `--pgo-sampling` | String | perform profiling by sampling the AOT compiled code to collect data for profile-guided optimization. | None | `--pgo-sampling=pgo-sampling` |
 | `--shared` | String | build shared library | None | `--shared=shared` |
 | `--silent` | String | silence build output | None | `--silent=silent` |

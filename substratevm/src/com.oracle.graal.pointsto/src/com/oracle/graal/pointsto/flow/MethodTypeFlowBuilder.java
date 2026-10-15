@@ -2128,7 +2128,15 @@ public class MethodTypeFlowBuilder {
     }
 
     protected void processStoreField(ValueNode node, PointsToAnalysisField field, ValueNode object, ValueNode newValue, JavaKind newValueKind, TypeFlowsOfNodes state) {
-        field.registerAsWritten(AbstractAnalysisEngine.sourcePosition(node));
+        if (node instanceof CommitAllocationNode) {
+            /*
+             * The field values of a materialized allocation initialize an object that no other code
+             * has observed yet, regardless of the method the allocation was materialized in.
+             */
+            field.registerAsWrittenByInitialization(AbstractAnalysisEngine.sourcePosition(node));
+        } else {
+            field.registerAsWritten(AbstractAnalysisEngine.sourcePosition(node));
+        }
 
         if (!bb.isClosed(field)) {
             /*

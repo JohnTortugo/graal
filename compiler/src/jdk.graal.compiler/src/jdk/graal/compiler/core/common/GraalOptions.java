@@ -219,6 +219,10 @@ public final class GraalOptions {
     @Option(help = "", type = OptionType.Debug)
     public static final OptionKey<Boolean> RawConditionalElimination = new OptionKey<>(true);
 
+    @Option(help = "Let a known comparison x < A prove x < B when A is structurally never greater than B (a shift, mask, minimum or " +
+                   "non-positive offset of B), which stamps alone cannot express.", type = OptionType.Debug)
+    public static final OptionKey<Boolean> StructuralCompareImplication = new OptionKey<>(true);
+
     @Option(help = "", type = OptionType.Debug)
     public static final OptionKey<Boolean> ReplaceInputsWithConstantsBasedOnStamps = new OptionKey<>(true);
 

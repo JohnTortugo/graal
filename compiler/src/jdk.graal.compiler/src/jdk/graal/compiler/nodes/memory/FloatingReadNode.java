@@ -189,6 +189,14 @@ public class FloatingReadNode extends FloatingAccessNode implements Canonicaliza
         }
 
         StructuredGraph graph = this.graph();
+        if (graph.isSubstitution()) {
+            // Snippet templates replace the memory usages of their StartNode with a
+            // MemoryAnchorNode and later substitute the StartNode itself with the replacee's
+            // predecessor, which is not a MemoryKill. Rewiring a load to the StartNode of such a
+            // graph would therefore break instantiation. The load is rewired, if applicable, once
+            // it has been inlined into the compiled method's graph.
+            return null;
+        }
         GraphState graphState = graph.getGraphState();
         if (!graphState.isAfterStage(GraphState.StageFlag.FLOATING_READS) || !graphState.isBeforeStage(GraphState.StageFlag.FIXED_READS)) {
             // We only have a memory graph after FloatingReads and before FixedReads

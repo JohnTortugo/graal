@@ -22,7 +22,27 @@ You can also collect multiple profile files by specifying different filenames, a
 
 Note that executing all relevant application code paths and giving the application enough time to collect profiles are essential for having complete profiling information and therefore the best performance.
 
-> Note: PGO is not available in GraalVM Community Edition.
+> Note: PGO is available in GraalVM Community Edition.
+
+### Monitor Field Profiles
+
+GraalVM Community Edition records the runtime types used for synchronization in `monitorProfiles` when building with `--pgo-instrument`. Recording is enabled by default so a profile contains the information needed to evaluate monitor-field optimization. To omit this category and its instrumentation, use the experimental opt-out on the instrumented build:
+
+```bash
+native-image --pgo-instrument \
+    -H:+UnlockExperimentalVMOptions -H:-PGOProfileMonitors -H:-UnlockExperimentalVMOptions \
+    -cp . MyApplication
+```
+
+Consuming monitor profiles to omit inline monitor fields from types that were not observed synchronizing is a supported opt-in and remains disabled by default. Run the instrumented executable with a representative workload as usual, then enable monitor-profile consumption on the optimized build:
+
+```bash
+native-image --pgo=myprofile.iprof --pgo-monitor-fields -cp . MyApplication
+```
+
+Runtime synchronization remains correct for a type without an inline monitor field because Native Image uses secondary monitor storage. However, object layout and monitor access costs change, so this option is not guaranteed to improve every workload. Measure the optimized application with and without `--pgo-monitor-fields` before deployment.
+
+A missing `monitorProfiles` section means monitor behavior was not recorded, and Native Image retains the statically required monitor fields. An explicitly empty section means recording was enabled but observed no synchronization. When several profiles are merged on the `--pgo` command line, or distinct profiles are supplied to the early and post-inlining PGO stages, monitor fields are omitted only if every input contains the monitor category; this avoids interpreting an uninstrumented input as a zero-event training run.
 
 Find more information on this topic in the [Profile-Guided Optimization reference documentation](../PGO.md).
 

@@ -34,19 +34,31 @@ import jdk.graal.compiler.phases.common.priorityinline.nodes.CallTreeNode;
 
 public class SamplingCallTreeState extends InterproceduralPartialEscapeAnalysisCallTreeState {
 
-    private final EconomicMap<CallTreeNode, Double> rootRelativeCutoffHotness = EconomicMap.create(Equivalence.IDENTITY_WITH_SYSTEM_HASHCODE);
+    private final EconomicMap<CallTreeNode, SubstrateInliningProvider.SamplingContext> rootRelativeSamplingContext = EconomicMap.create(Equivalence.IDENTITY_WITH_SYSTEM_HASHCODE);
 
     static SamplingCallTreeState getSamplingCallTreeState(CallTree callTree) {
         return (SamplingCallTreeState) callTree.state();
     }
 
-    public void setHotness(CallTreeNode node, double hotness) {
-        if (hotness > 0) {
-            rootRelativeCutoffHotness.put(node, hotness);
+    public void setSamplingContext(CallTreeNode node, SubstrateInliningProvider.SamplingContext context) {
+        if (shouldStore(context)) {
+            rootRelativeSamplingContext.put(node, context);
         }
     }
 
+    static boolean shouldStore(SubstrateInliningProvider.SamplingContext context) {
+        return context.rootRelativeHotness() > 0.0 || context.samples() > 0;
+    }
+
+    public SubstrateInliningProvider.SamplingContext samplingContext(CallTreeNode node) {
+        return Objects.requireNonNullElse(rootRelativeSamplingContext.get(node), SubstrateInliningProvider.SamplingContext.COLD);
+    }
+
     public double hotness(CallTreeNode node) {
-        return Objects.requireNonNullElse(rootRelativeCutoffHotness.get(node), 0.0);
+        return samplingContext(node).rootRelativeHotness();
+    }
+
+    public long samples(CallTreeNode node) {
+        return samplingContext(node).samples();
     }
 }

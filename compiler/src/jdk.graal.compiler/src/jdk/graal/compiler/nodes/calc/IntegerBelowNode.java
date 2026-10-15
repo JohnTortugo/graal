@@ -24,6 +24,7 @@
  */
 package jdk.graal.compiler.nodes.calc;
 
+import jdk.graal.compiler.core.common.GraalOptions;
 import jdk.graal.compiler.core.common.NumUtil;
 import jdk.graal.compiler.core.common.calc.CanonicalCondition;
 import jdk.graal.compiler.core.common.type.IntegerStamp;
@@ -302,6 +303,10 @@ public final class IntegerBelowNode extends IntegerLowerThanNode {
             return TriState.UNKNOWN;
         }
         if (sameValue(getY(), other.getY())) {
+            return TriState.TRUE;
+        }
+        // 0 <= x < A <= B, therefore x < B
+        if (getOptions() != null && GraalOptions.StructuralCompareImplication.getValue(getOptions()) && neverGreater(true, getY(), other.getY(), NodeView.DEFAULT)) {
             return TriState.TRUE;
         }
         if (other.getY().isConstant() && IntegerStamp.OPS.getAdd().isNeutral(other.getY().asConstant())) {

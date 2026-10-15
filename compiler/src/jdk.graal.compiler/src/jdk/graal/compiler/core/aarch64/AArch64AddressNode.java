@@ -27,6 +27,7 @@ package jdk.graal.compiler.core.aarch64;
 
 import jdk.graal.compiler.asm.aarch64.AArch64Address;
 import jdk.graal.compiler.asm.aarch64.AArch64Address.AddressingMode;
+import jdk.graal.compiler.asm.aarch64.AArch64Assembler;
 import jdk.graal.compiler.core.common.LIRKind;
 import jdk.graal.compiler.core.common.NumUtil;
 import jdk.graal.compiler.debug.Assertions;
@@ -40,6 +41,7 @@ import jdk.graal.compiler.nodes.memory.address.AddressNode;
 import jdk.graal.compiler.nodes.spi.LIRLowerable;
 import jdk.graal.compiler.nodes.spi.NodeLIRBuilderTool;
 import jdk.vm.ci.meta.AllocatableValue;
+import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.Value;
 
 /**
@@ -58,6 +60,13 @@ public class AArch64AddressNode extends AddressNode implements LIRLowerable {
     private final int bitMemoryTransferSize;
     private int displacement;
     private int scaleFactor;
+    /**
+     * Extension of a 32-bit index and shift of the extended index, for the form
+     * {@code base + (extend(index) << indexShift) + displacement} that is emitted through a scratch
+     * register, see {@link AArch64AddressValue#needsScratchRegister()}.
+     */
+    private AArch64Assembler.ExtendType indexExtend;
+    private int indexShift;
 
     public AArch64AddressNode(int bitMemoryTransferSize, ValueNode base, ValueNode index) {
         super(TYPE);
@@ -87,7 +96,7 @@ public class AArch64AddressNode extends AddressNode implements LIRLowerable {
         }
 
         LIRKind kind = LIRKind.combineDerived(tool.getLIRKind(stamp(NodeView.DEFAULT)), baseReference, indexReference);
-        gen.setResult(this, new AArch64AddressValue(kind, bitMemoryTransferSize, baseValue, indexValue, displacement, scaleFactor, addressingMode));
+        gen.setResult(this, new AArch64AddressValue(kind, bitMemoryTransferSize, baseValue, indexValue, displacement, scaleFactor, addressingMode, indexExtend, indexShift));
     }
 
     @Override
@@ -108,6 +117,16 @@ public class AArch64AddressNode extends AddressNode implements LIRLowerable {
                 assertTrue(displacement == 0 && index == null, "Base register only mode cannot have either a displacement or index register.");
                 break;
             case REGISTER_OFFSET:
+                assertTrue(index != null, "Register based mode needs an index register.");
+                if (displacement != 0) {
+                    assertTrue(scaleFactor == 1, "Scratch register form cannot scale the displacement.");
+                    assertTrue(indexShift >= 0 && indexShift <= 4, "Invalid index shift.");
+                    assertTrue(indexExtend == null || index.getStackKind() == JavaKind.Int, "Only a 32-bit index is extended.");
+                } else {
+                    assertTrue(scaleFactor == 1 || bitMemoryTransferSize / Byte.SIZE == scaleFactor, "Invalid scale factor.");
+                    assertTrue(indexExtend == null && indexShift == 0, "Register offset mode cannot extend or shift the index.");
+                }
+                break;
             case EXTENDED_REGISTER_OFFSET:
                 assertTrue(scaleFactor == 1 || bitMemoryTransferSize / Byte.SIZE == scaleFactor, "Invalid scale factor.");
                 assertTrue(displacement == 0 && index != null, "Register based mode cannot have a displacement.");
@@ -153,6 +172,33 @@ public class AArch64AddressNode extends AddressNode implements LIRLowerable {
         this.displacement = NumUtil.safeToInt(displacement);
         this.scaleFactor = scaleFactor;
         this.addressingMode = addressingMode;
+    }
+
+    /**
+     * Turns this address into {@code base + (extend(index) << indexShift) + displacement}, which is
+     * emitted as an add into a scratch register followed by an immediate access. {@code index} is
+     * the unextended, unshifted index.
+     */
+    public void setScratchRegisterForm(ValueNode newIndex, AArch64Assembler.ExtendType extend, int shift, long newDisplacement) {
+        assert newDisplacement != 0 && shift >= 0 && shift <= 4 : Assertions.errorMessageContext("displacement", newDisplacement, "shift", shift);
+        setIndex(newIndex);
+        this.indexExtend = extend;
+        this.indexShift = shift;
+        this.displacement = NumUtil.safeToInt(newDisplacement);
+        this.scaleFactor = 1;
+        this.addressingMode = AddressingMode.REGISTER_OFFSET;
+    }
+
+    public boolean needsScratchRegister() {
+        return addressingMode == AddressingMode.REGISTER_OFFSET && displacement != 0;
+    }
+
+    public AArch64Assembler.ExtendType getIndexExtend() {
+        return indexExtend;
+    }
+
+    public int getIndexShift() {
+        return indexShift;
     }
 
     @Override

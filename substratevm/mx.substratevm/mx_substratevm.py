@@ -277,7 +277,9 @@ GraalTags = Tags([
     'check_libcontainer_annotations',
     'check_libcontainer_namespace',
     'check_svm_invariants',
-    'java_agent'
+    'java_agent',
+    'pgo',
+    'pgo_unittests'
 ])
 
 NATIVE_UNITTEST_CUSTOM_BATCHES = ('1/2', '2/2')
@@ -396,6 +398,7 @@ def native_image_context(common_args=None, hosted_assertions=True, native_image_
         return path, name
 
     def native_image_func(args, **kwargs):
+        return_exit_code = kwargs.pop('_return_exit_code', False)
         all_args = base_args + common_args + args
         # Information-only options terminate before an image path is available.
         info_only_options = {
@@ -416,8 +419,8 @@ def native_image_context(common_args=None, hosted_assertions=True, native_image_
             return _native_image(all_args, **kwargs)
         path, name = query_native_image(all_args)
         image = join(path, name)
-        _native_image(all_args, **kwargs)
-        return image
+        exit_code = _native_image(all_args, **kwargs)
+        return exit_code if return_exit_code else image
 
     yield native_image_func
 
@@ -584,6 +587,14 @@ def svm_gate_body(args, tasks):
     with Task('runtime assertions', tasks, tags=runtime_assertions_tags) as t:
         if t:
             runtime_assertions_test_task(args.extra_image_builder_arguments)
+
+    with Task('pgo end-to-end', tasks, tags=[GraalTags.pgo]) as t:
+        if t:
+            pgo_e2e_test_task(args.extra_image_builder_arguments)
+
+    with Task('pgo native unittests', tasks, tags=[GraalTags.pgo_unittests]) as t:
+        if t:
+            pgo_native_unittests_task(args.extra_image_builder_arguments)
 
     with Task('runtime classpath resource lookup', tasks, tags=[GraalTags.native_unittests]) as t:
         if t:
@@ -1040,6 +1051,450 @@ def generic_field_type_test_task(extra_build_args=None):
         ]
         if field_output != expected_field_output:
             mx.abort('Unexpected generic field types: ' + str(field_output) + ' != ' + str(expected_field_output))
+
+
+def pgo_e2e_test_task(extra_image_args=None):
+    """
+    Instrument, train, optimize and run a deterministic workload end to end, under hosted assertions
+    and graph verification. Every optimized variant must print exactly what the JDK and the
+    instrumented image print, on the training input and on an input the profile never saw; the
+    build summaries must show that the profile resolved completely and that the optional mechanisms
+    did engage; and the graph dumps of the instrumented, unprofiled and profiled builds must show
+    the effects PGO is supposed to have (PgoEffectsCheck: counters on every branch and indirect
+    call, profiled probabilities equal to the recorded counts on the right successor, recorded
+    counts equal to what the program itself counted, the monomorphic interface call devirtualized,
+    the switch distribution applied, and nothing profiled without a profile).
+    """
+    test_dir = join(suite.dir, 'src', 'native-image-tests', 'pgo')
+    output_dir = join(svmbuild_dir(), 'pgo-e2e-test')
+    if exists(output_dir):
+        mx.rmtree(output_dir)
+    mx_util.ensure_dir_exists(output_dir)
+    mx.run([mx.get_jdk().javac, '-d', output_dir, join(test_dir, 'PgoWorkload.java')])
+    main_class = 'pgoworkload.PgoWorkload'
+    # The effects checker reads graph dumps with the compiler's own graph-file reader.
+    checker_classpath = mx.classpath(['compiler:GRAAL_IGVUTIL', 'compiler:GRAAL'], unique=True)
+    checker_dir = join(output_dir, 'effects-check')
+    mx_util.ensure_dir_exists(checker_dir)
+    mx.run([mx.get_jdk().javac, '-cp', checker_classpath, '-d', checker_dir, join(test_dir, 'PgoEffectsCheck.java')])
+
+    train_a = ['1', '200000']
+    train_b = ['2', '200000']
+    # An odd record count sends the other receiver through the monomorphic site's guard fallback.
+    unseen = ['3', '70001']
+    inputs = [train_a, train_b, unseen]
+
+    def dump_options(name):
+        return svm_experimental_options(['-H:Dump=:1', '-H:MethodFilter=PgoWorkload.*,PgoWorkload$Reader.*', '-H:DumpPath=' + join(output_dir, 'dump-' + name), '-H:PrintGraph=File'])
+
+    def check_effects(mode, name, *checker_args):
+        mx.run_java(['-cp', checker_classpath + os.pathsep + checker_dir, 'pgoworkload.PgoEffectsCheck', mode, join(output_dir, 'dump-' + name)] + list(checker_args), jdk=mx.get_jdk())
+
+    def check_effects_between(left, right, description):
+        mx.run_java(['-cp', checker_classpath + os.pathsep + checker_dir, 'pgoworkload.PgoEffectsCheck', 'different-graphs',
+                     join(output_dir, 'dump-' + left), join(output_dir, 'dump-' + right), description], jdk=mx.get_jdk())
+
+    def run_lines(cmd, args):
+        lines = []
+        mx.run(cmd + args, out=lambda line: lines.append(line.rstrip()))
+        return lines
+
+    def outputs_of(cmd):
+        return {tuple(a): run_lines(cmd, a) for a in inputs}
+
+    expected = outputs_of([mx.get_jdk().java, '-cp', output_dir, main_class])
+    for args, lines in expected.items():
+        if len(lines) != 4 or not lines[0].startswith('records=' + args[1] + ' '):
+            mx.abort('PGO workload reference output is malformed for ' + str(args) + ': ' + str(lines))
+
+    def check_output(name, cmd):
+        actual = outputs_of(cmd)
+        for args in expected:
+            if actual[args] != expected[args]:
+                mx.abort(name + ' differs from the JDK on input ' + ' '.join(args) + ':\n  ' + '\n  '.join(actual[args]) + '\nexpected:\n  ' + '\n  '.join(expected[args]))
+        mx.log(name + ': output identical to the JDK on ' + str(len(inputs)) + ' inputs')
+
+    with native_image_context(IMAGE_ASSERTION_FLAGS) as native_image:
+        def build(name, image_args):
+            build_log = []
+            build_args = ['-cp', output_dir, '-o', join(output_dir, name)] + image_args + [main_class]
+            if any(arg.startswith('--pgo=') or arg.startswith('--pgo-post-inlining=') for arg in image_args):
+                build_args += svm_experimental_options(['-H:+PGOTestDiagnostics'])
+            if extra_image_args is not None:
+                build_args += extra_image_args
+            native_image(build_args, out=lambda line: build_log.append(line.rstrip()), nonZeroIsFatal=False)
+            image = join(output_dir, name)
+            if not exists(image):
+                mx.abort('building ' + name + ' failed:\n' + '\n'.join(build_log))
+            return image, build_log
+
+        def summary(build_log, needle):
+            found = [line for line in build_log if needle in line]
+            if not found:
+                mx.abort('build summary lacks "' + needle + '":\n' + '\n'.join(build_log[-40:]))
+            return found[-1]
+
+        def summary_int(line, pattern):
+            match = re.search(pattern, line)
+            if not match:
+                mx.abort('cannot parse "' + pattern + '" from: ' + line)
+            return int(match.group(1).replace(' ', ''))
+
+        def expect(condition, message):
+            if not condition:
+                mx.abort('PGO end-to-end check failed: ' + message)
+
+        def disassemble_symbol(image, symbol_fragment):
+            symbols = []
+            mx.run(['nm', '-n', image], out=lambda line: symbols.append(line.rstrip()))
+            parsed = []
+            for line in symbols:
+                match = re.match(r'([0-9a-fA-F]+)\s+\w\s+(\S+)', line)
+                if match:
+                    parsed.append((int(match.group(1), 16), match.group(2)))
+            indices = [i for i, (_, symbol) in enumerate(parsed) if symbol_fragment in symbol]
+            expect(len(indices) == 1, 'expected one native symbol containing ' + symbol_fragment + ' in ' + image)
+            index = indices[0]
+            expect(index + 1 < len(parsed), 'native symbol has no following address: ' + parsed[index][1])
+            start = parsed[index][0]
+            stop = parsed[index + 1][0]
+            assembly = []
+            mx.run(['objdump', '-d', '--start-address=' + hex(start), '--stop-address=' + hex(stop), image], out=lambda line: assembly.append(line.rstrip()))
+            return assembly
+
+        missing_profile_image = join(output_dir, 'pgo-monitor-fields-without-profile')
+        missing_profile_log = []
+        missing_profile_rc = native_image(['-cp', output_dir, '-o', missing_profile_image, '--pgo-monitor-fields', main_class],
+                                          out=lambda line: missing_profile_log.append(line.rstrip()), err=lambda line: missing_profile_log.append(line.rstrip()),
+                                          nonZeroIsFatal=False, _return_exit_code=True)
+        expect(missing_profile_rc != 0 and not exists(missing_profile_image), '--pgo-monitor-fields without --pgo unexpectedly built an image')
+        expect(any('--pgo-monitor-fields requires --pgo' in line for line in missing_profile_log),
+               'missing-profile failure did not explain the option dependency:\n' + '\n'.join(missing_profile_log[-40:]))
+
+        # 1. Instrumented images, post-high-tier and consumer-aligned; each trains on two inputs.
+        # Instrumented images write a profile on every run; functional runs direct it to a scratch file.
+        scratch_profile = '-XX:ProfilesDumpFile=' + join(output_dir, 'scratch.iprof')
+        lifecycle_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.threadedBranch,' + main_class + '.liveSnapshotBranch,' + main_class +
+                                                      '.threadedReceiver,' + main_class + '.sampleJoinedThread,' + main_class + '.sampleLiveThread'])
+        instrumented, _ = build('pgo-instrumented', ['--pgo-instrument'] + lifecycle_options + dump_options('instrumented'))
+        check_output('instrumented image', [instrumented, scratch_profile])
+        check_effects('instrumented', 'instrumented')
+        profile_a = join(output_dir, 'train-a.iprof')
+        profile_b = join(output_dir, 'train-b.iprof')
+        training_output = []
+        training_log = []
+        mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_a] + train_a,
+               out=lambda line: training_output.append(line.rstrip()), err=lambda line: training_log.append(line.rstrip()))
+        mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_b] + train_b, out=lambda _: None)
+        for category in ('stack samples=', 'dynamic type profiles:', 'call counts:'):
+            line = next((entry for entry in training_log if category in entry), None)
+            expect(line is not None, 'training run lacks ' + category + ' telemetry: ' + str(training_log))
+            expect(summary_int(line, r'dropped=(\d+)') == 0, 'training run dropped recorder events: ' + line)
+            if category == 'stack samples=':
+                expect(summary_int(line, r'threads=(\d+)') >= 10, 'sampler did not retain tables for joined and live lifecycle threads: ' + line)
+                expect(summary_int(line, r'stack samples=(\d+)') > 0, 'sampler recorded no runtime stacks: ' + line)
+        pattern_dir = join(output_dir, 'pattern-profiles')
+        mx_util.ensure_dir_exists(pattern_dir)
+        pattern_output = run_lines([instrumented, '-XX:ProfilesDumpFile=' + join(pattern_dir, '%p', 'run-%t.iprof')], train_a)
+        expect(pattern_output == training_output, 'patterned profile dump changed workload output')
+        patterned_profiles = glob(join(pattern_dir, '*', 'run-*.iprof'))
+        expect(len(patterned_profiles) == 1 and re.fullmatch(r'\d+', os.path.basename(os.path.dirname(patterned_profiles[0]))) and
+               re.fullmatch(r'run-\d+\.iprof', os.path.basename(patterned_profiles[0])),
+               'runtime did not create and expand nested %p/%t profile path: ' + str(patterned_profiles))
+        with open(patterned_profiles[0], encoding='utf-8') as fp:
+            patterned_data = json.load(fp)
+        expect(len(patterned_data.get('preciseConditionalProfiles', [])) > 0, 'pattern-expanded profile is empty or malformed')
+        profile_dir = join(output_dir, 'profile-directory')
+        mx_util.ensure_dir_exists(profile_dir)
+        shutil.copyfile(profile_a, join(profile_dir, 'a.iprof'))
+        shutil.copyfile(profile_b, join(profile_dir, 'b.iprof'))
+        # What the program counted while training; the profile must record exactly these.
+        shape_counts = dict(re.findall(r'(circles|squares|triangles)=(\d+)', training_output[-1]))
+        expect(len(shape_counts) == 3, 'the training run did not print its shape counts: ' + str(training_output))
+        execution_counts = dict(re.findall(r'(splitCalls|switchZero|switchOne|switchTwo|threadTrue|threadFalse|liveTrue|liveFalse)=(\d+)', training_output[-1]))
+        expect(len(execution_counts) == 8, 'the training run did not print its call/switch/thread counts: ' + str(training_output))
+        effect_counts = (train_a[1], shape_counts['circles'], shape_counts['squares'], shape_counts['triangles'],
+                         execution_counts['splitCalls'], execution_counts['switchZero'], execution_counts['switchOne'], execution_counts['switchTwo'],
+                         execution_counts['threadTrue'], execution_counts['threadFalse'], execution_counts['liveTrue'], execution_counts['liveFalse'])
+        aligned_instrumented, _ = build('pgo-instrumented-aligned', ['--pgo-instrument-aligned'])
+        check_output('aligned instrumented image', [aligned_instrumented, scratch_profile])
+        profile_aligned = join(output_dir, 'train-aligned.iprof')
+        mx.run([aligned_instrumented, '-XX:ProfilesDumpFile=' + profile_aligned] + train_a, out=lambda _: None)
+        sampling_disabled, _ = build('pgo-instrumented-without-sampling', ['--pgo-instrument'] + svm_experimental_options(['-H:-PGOSampleStacks']))
+        check_output('sampling-disabled instrumented image', [sampling_disabled, scratch_profile])
+        profile_without_sampling = join(output_dir, 'train-without-sampling.iprof')
+        sampling_disabled_log = []
+        mx.run([sampling_disabled, '-XX:ProfilesDumpFile=' + profile_without_sampling] + train_a, out=lambda _: None,
+               err=lambda line: sampling_disabled_log.append(line.rstrip()))
+        with open(profile_without_sampling, encoding='utf-8') as fp:
+            sampling_disabled_data = json.load(fp)
+        expect('samplingProfiles' not in sampling_disabled_data, '-H:-PGOSampleStacks still emitted samplingProfiles')
+        expect(not any('[PGO] stack samples=' in line for line in sampling_disabled_log), '-H:-PGOSampleStacks still reported stack sampling activity')
+        # An instrumented image that compiles the workload's interface-call wrappers standalone
+        # records their receivers under a one-frame context; optimized images inline the wrappers,
+        # so the same sites are queried under deeper contexts and exercise the context fallback.
+        shallow_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.areaOf', '-H:NeverInline=' + main_class + '.kindOf', '-H:-PGOProfileMonitors'])
+        shallow_instrumented, _ = build('pgo-instrumented-shallow', ['--pgo-instrument'] + shallow_options)
+        check_output('shallow instrumented image', [shallow_instrumented, scratch_profile])
+        profile_shallow = join(output_dir, 'train-shallow.iprof')
+        mx.run([shallow_instrumented, '-XX:ProfilesDumpFile=' + profile_shallow] + train_a, out=lambda _: None)
+        for profile in (profile_a, profile_b, profile_aligned, profile_shallow):
+            expect(exists(profile) and os.path.getsize(profile) > 1000, 'profile not written: ' + profile)
+        with open(profile_a, encoding='utf-8') as fp:
+            default_profile_data = json.load(fp)
+        precise_profile = join(output_dir, 'train-precise-only.iprof')
+        precise_profile_data = dict(default_profile_data)
+        precise_profile_data['conditionalProfiles'] = []
+        with open(precise_profile, 'w', encoding='utf-8') as fp:
+            json.dump(precise_profile_data, fp, separators=(',', ':'))
+        expect(len(precise_profile_data.get('preciseConditionalProfiles', [])) > 0, 'producer emitted no precise conditional profiles')
+        expect({entry.get('stage') for entry in precise_profile_data['preciseConditionalProfiles']} == {'POST_HIGH_TIER'},
+               'precise-only profile contains an unexpected producer stage')
+        expect(precise_profile_data['conditionalProfiles'] == [], 'precise-only profile still contains legacy conditionals')
+        expect('monitorProfiles' in default_profile_data, 'default --pgo-instrument profile lacks monitorProfiles')
+        expect(len(default_profile_data.get('samplingProfiles', [])) > 0, 'default --pgo-instrument profile lacks runtime stack samples')
+        sampled_method_names = {entry['id']: entry['name'] for entry in default_profile_data['methods']}
+        sampled_frames = {sampled_method_names.get(int(frame.split(':', 1)[0]))
+                          for entry in default_profile_data['samplingProfiles'] for frame in entry['ctx'].split('<')}
+        expect('sampleJoinedThread' in sampled_frames, 'stack profile contains no sample from a joined lifecycle worker: ' + str(sorted(str(name) for name in sampled_frames)))
+        expect('sampleLiveThread' in sampled_frames, 'stack profile contains no sample from the live daemon worker: ' + str(sorted(str(name) for name in sampled_frames)))
+        monitor_missing_profile = join(output_dir, 'train-without-monitors.iprof')
+        monitor_missing_data = dict(default_profile_data)
+        monitor_missing_data.pop('monitorProfiles', None)
+        with open(monitor_missing_profile, 'w', encoding='utf-8') as fp:
+            json.dump(monitor_missing_data, fp, separators=(',', ':'))
+        call_only_profile = join(output_dir, 'train-call-count-only.iprof')
+        call_only_data = dict(default_profile_data)
+        call_only_data.pop('samplingProfiles', None)
+        with open(call_only_profile, 'w', encoding='utf-8') as fp:
+            json.dump(call_only_data, fp, separators=(',', ':'))
+        with open(profile_shallow, encoding='utf-8') as fp:
+            monitor_opt_out_data = json.load(fp)
+        expect('monitorProfiles' not in monitor_opt_out_data, '-H:-PGOProfileMonitors did not omit monitorProfiles')
+        # Train the independently gated monitor producer on an even record count, which executes
+        # ProfiledLock but deliberately leaves FallbackLock unobserved. The optimized image later
+        # executes an odd input to verify secondary-monitor-map correctness for FallbackLock.
+        monitor_instrumented, monitor_build_log = build('pgo-instrumented-monitors', ['--pgo-instrument'] + svm_experimental_options(['-H:+PGOProfileMonitors', '-H:-PGOProfileReceivers']))
+        monitor_instrumentation = summary(monitor_build_log, 'monitor enters=')
+        expect(summary_int(monitor_instrumentation, r'monitor enters=(\d+)') > 0, 'monitor producer instrumented no monitor enters: ' + monitor_instrumentation)
+        check_output('monitor-instrumented image', [monitor_instrumented, scratch_profile])
+        monitor_profile = join(output_dir, 'train-monitor.iprof')
+        monitor_run_log = []
+        mx.run([monitor_instrumented, '-XX:ProfilesDumpFile=' + monitor_profile] + train_a, out=lambda _: None, err=lambda line: monitor_run_log.append(line.rstrip()))
+        expect(exists(monitor_profile) and os.path.getsize(monitor_profile) > 1000, 'monitor profile not written: ' + monitor_profile)
+        with open(monitor_profile, encoding='utf-8') as fp:
+            monitor_data = json.load(fp)
+        monitor_entries = monitor_data.get('monitorProfiles')
+        expect(isinstance(monitor_entries, list) and len(monitor_entries) == 1, 'producer did not emit one global monitorProfiles entry')
+        expect(monitor_entries[0].get('ctx') == '0:0', 'monitorProfiles does not use the standard global 0:0 context')
+        monitor_records = monitor_entries[0].get('records', [])
+        expect(len(monitor_records) > 0 and len(monitor_records) % 2 == 0, 'monitorProfiles records are not non-empty type/count pairs')
+        monitor_type_names = {entry['id']: entry['name'] for entry in monitor_data['types']}
+        monitor_counts = {monitor_type_names[monitor_records[i]]: monitor_records[i + 1] for i in range(0, len(monitor_records), 2)}
+        profiled_lock = main_class + '$ProfiledLock'
+        fallback_lock = main_class + '$FallbackLock'
+        expect(monitor_counts.get(profiled_lock, 0) > 0, 'producer did not observe ProfiledLock: ' + str(monitor_counts))
+        expect(fallback_lock not in monitor_counts, 'producer observed unexecuted FallbackLock: ' + str(monitor_counts))
+        monitor_dump = summary(monitor_run_log, 'monitor types=')
+        expect(summary_int(monitor_dump, r'monitor events=(\d+)') > 0, 'producer reported no monitor events: ' + monitor_dump)
+        missing_monitors_image, missing_monitors_log = build('pgo-monitor-fields-missing', ['--pgo=' + monitor_missing_profile, '--pgo-monitor-fields'])
+        missing_warning = '--pgo-monitor-fields requested but not every distinct profile contains monitorProfiles'
+        expect(any(missing_warning in line for line in missing_monitors_log), 'profile without monitorProfiles did not trigger the fail-safe warning')
+        expect(not any('monitor profiles:' in line for line in missing_monitors_log), 'incomplete monitor profile unexpectedly enabled field omission')
+        check_output('missing-monitor-metadata image', [missing_monitors_image])
+        mixed_monitors_image, mixed_monitors_log = build('pgo-monitor-fields-mixed',
+                                                         ['--pgo=' + monitor_profile, '--pgo-post-inlining=' + monitor_missing_profile, '--pgo-monitor-fields'])
+        expect(any(missing_warning in line for line in mixed_monitors_log), 'mixed complete/incomplete monitor profiles did not trigger the fail-safe warning')
+        expect(not any('monitor profiles:' in line for line in mixed_monitors_log), 'mixed incomplete monitor profiles unexpectedly enabled field omission')
+        check_output('mixed-monitor-metadata image', [mixed_monitors_image])
+        # The experimental split histogram lowers through its own foreign call; build it under
+        # the same assertions and check that it counted the workload's splitter invocations.
+        split_instrumented, _ = build('pgo-instrumented-split', ['--pgo-instrument'] + svm_experimental_options(['-H:PGOSplitHistogramMethod=' + main_class + '.splitFields']))
+        check_output('split-histogram instrumented image', [split_instrumented, scratch_profile])
+        split_log = []
+        mx.run([split_instrumented, scratch_profile] + train_a, out=lambda _: None, err=lambda line: split_log.append(line.rstrip()))
+        histogram = [line for line in split_log if 'split histogram delimiter=44 ' in line]
+        expect(len(histogram) == 1, 'split histogram for the comma delimiter not printed:\n' + '\n'.join(split_log))
+        expect(summary_int(histogram[0], r'total=(\d+)') > 0, 'split histogram counted nothing: ' + histogram[0])
+
+        # 2. Reference without a profile.
+        plain, _ = build('pgo-none', dump_options('none'))
+        check_output('image without profile', [plain])
+        check_effects('unprofiled', 'none')
+
+        # 3. Optimized variants. Each must resolve the whole profile and reproduce the JDK output.
+        variants = [
+            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': 'profiled'}),
+            ('pgo-precise-only', ['--pgo=' + precise_profile, '--pgo-post-inlining=' + precise_profile] + dump_options('precise-only'),
+             {'effects': 'profiled-precise', 'effect_profile': precise_profile, 'precise_stage': True}),
+            ('pgo-receivers-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseReceiverProfiles']) + dump_options('receivers-disabled'),
+             {'effects': 'profiled-receivers-disabled', 'receivers': False}),
+            ('pgo-switches-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseSwitchProfiles']) + dump_options('switches-disabled'),
+             {'effects': 'profiled-switches-disabled'}),
+            ('pgo-conditionals-filtered', ['--pgo=' + profile_a] + svm_experimental_options(['-H:PGOConditionalMinEvents=' + str(2**63 - 1)]) + dump_options('conditionals-filtered'),
+             {'effects': 'conditionals-filtered', 'filtered_conditionals': True}),
+            ('pgo-merged', ['--pgo=' + profile_a + ',' + profile_b + ':2'], {}),
+            ('pgo-directory', ['--pgo=' + profile_dir], {'merged_profiles': 2}),
+            ('pgo-call-layout', ['--pgo=' + call_only_profile], {'layout': 'call-count'}),
+            ('pgo-finals-enabled', ['--pgo=' + profile_a] + svm_experimental_options([
+                '-H:NeverInline=' + main_class + '.finalFieldAcrossCall,' + main_class + '.finalFieldBarrier', '-H:-DeleteLocalSymbols']) + dump_options('finals-enabled'), {}),
+            ('pgo-finals-disabled', ['--pgo=' + profile_a] + svm_experimental_options([
+                '-H:-TrustFinalInstanceFields', '-H:NeverInline=' + main_class + '.finalFieldAcrossCall,' + main_class + '.finalFieldBarrier', '-H:-DeleteLocalSymbols']) +
+             dump_options('finals-disabled'), {}),
+            ('pgo-aligned', ['--pgo=' + profile_aligned], {}),
+            ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'fallback': True}),
+            ('pgo-shallow-no-fallback', ['--pgo=' + profile_shallow] + svm_experimental_options(['-H:-PGOReceiverContextFallback']), {'fallback': False}),
+            ('pgo-flow-check', ['--pgo=' + profile_a] + svm_experimental_options(['-H:+PGOConditionalFlowCheck']), {'flow': True}),
+            ('pgo-no-graph-cache', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-UseGraphCache']), {}),
+            ('pgo-monitor-fields', ['--pgo=' + monitor_profile, '--pgo-monitor-fields'], {'monitors': True}),
+        ]
+        built_images = {}
+        for name, image_args, checks in variants:
+            image, build_log = build(name, image_args)
+            built_images[name] = image
+            resolution = summary(build_log, 'iprof conditionalProfiles')
+            expect(summary_int(resolution, r'(\d+) unresolved') == 0, name + ': unresolved conditional contexts: ' + resolution)
+            if checks.get('merged_profiles'):
+                merge_summary = summary(build_log, 'merging ' + str(checks['merged_profiles']) + ' profiles')
+                expect('sampling overlap' in merge_summary, name + ': directory profiles were not merged with overlap diagnostics: ' + merge_summary)
+            if checks.get('layout'):
+                layout = summary(build_log, '[PGO:layout]')
+                expect('samples=false' in layout and 'call-counts=true' in layout, name + ': layout did not use call counts alone: ' + layout)
+                expect(summary_int(layout, r'positions changed=(\d+)') > 0, name + ': call-count profile changed no final code positions: ' + layout)
+            if checks.get('precise_stage'):
+                early_application = [line for line in build_log if re.search(r'\[PGO:early\] \d+ queries, \d+ hits', line)]
+                post_application = [line for line in build_log if re.search(r'\[PGO:post-inlining\] \d+ queries, \d+ hits', line)]
+                expect(len(early_application) == 1 and len(post_application) == 1,
+                       name + ': missing stage-specific application summaries: ' + str(early_application + post_application))
+                expect(summary_int(early_application[0], r'\d+ queries, (\d+) hits') == 0,
+                       name + ': POST_HIGH_TIER-only precise data unexpectedly applied in the early stage: ' + early_application[0])
+                expect(summary_int(post_application[0], r'\d+ queries, (\d+) hits') > 0,
+                       name + ': no full precise identity matched in the post-inlining stage: ' + post_application[0])
+                expect(any('[PGO:post-inlining] precise misses by first mismatch:' in line for line in build_log),
+                       name + ': precise identity diagnostics were not emitted')
+            if not checks.get('monitors'):
+                receiver_lines = [line for line in build_log if 'virtual invokes:' in line]
+                expect(receiver_lines, name + ': build emitted no receiver-profile summary')
+                hits = max(summary_int(line, r'(\d+) hits') for line in receiver_lines)
+                shortened = max(summary_int(line, r'\((\d+) via shortened context') for line in receiver_lines)
+                receivers = '; '.join(receiver_lines)
+                if checks.get('receivers', True):
+                    expect(hits > 0, name + ': no receiver profile was applied: ' + receivers)
+                else:
+                    expect(hits == 0, name + ': receiver profile applied although consumption is disabled: ' + receivers)
+                fallback = checks.get('fallback')
+                if fallback is True:
+                    expect(shortened > 0, name + ': the receiver context fallback never engaged: ' + receivers)
+                elif fallback is False:
+                    expect(shortened == 0, name + ': fallback disabled but shortened-context hits reported: ' + receivers)
+            flow = summary(build_log, 'flow check:')
+            checked = summary_int(flow, r'(\d+) applied conditionals checked')
+            if checks.get('flow', False):
+                expect(checked > 0, name + ': flow check enabled but checked nothing: ' + flow)
+            else:
+                expect(checked == 0, name + ': flow check disabled but ran: ' + flow)
+            if checks.get('filtered_conditionals'):
+                usefulness = summary(build_log, 'usefulness filter minEvents=')
+                expect(summary_int(usefulness, r'withheld (\d+) distinct sites') > 0, name + ': min-events filter withheld no conditional sites: ' + usefulness)
+            if checks.get('monitors'):
+                monitors = summary(build_log, 'monitor profiles:')
+                expect(summary_int(monitors, r'observed types=(\d+)') >= 1, name + ': produced observed monitor types missing: ' + monitors)
+                expect(summary_int(monitors, r'retained fields=(\d+)') > 0, name + ': no observed monitor field retained: ' + monitors)
+                expect(summary_int(monitors, r'omitted fields=(\d+)') > 0, name + ': no unobserved monitor field omitted: ' + monitors)
+            check_output(name, [image])
+            effects_mode = checks.get('effects')
+            if effects_mode:
+                if effects_mode == 'conditionals-filtered':
+                    check_effects(effects_mode, name.replace('pgo-', ''))
+                else:
+                    check_effects(effects_mode, name.replace('pgo-', ''), checks.get('effect_profile', profile_a), *effect_counts)
+
+        if is_linux() and platform.machine().lower() in ('aarch64', 'arm64'):
+            enabled_assembly = disassemble_symbol(built_images['pgo-finals-enabled'], 'PgoWorkload_finalFieldAcrossCall_')
+            disabled_assembly = disassemble_symbol(built_images['pgo-finals-disabled'], 'PgoWorkload_finalFieldAcrossCall_')
+            field_load = re.compile(r'\bldr\s+w\d+,\s*\[x0,\s*#4\]')
+            enabled_loads = sum(1 for line in enabled_assembly if field_load.search(line))
+            disabled_loads = sum(1 for line in disabled_assembly if field_load.search(line))
+            expect(disabled_loads == enabled_loads + 1,
+                   'trusted-final native code did not eliminate exactly one loop reload of FinalFieldHolder.limit: enabled=' + str(enabled_loads) + ', disabled=' + str(disabled_loads))
+        else:
+            mx.log('trusted-final native instruction oracle requires Linux AArch64; provider isolation and output equality still ran')
+
+
+def pgo_native_unittests_task(extra_image_args=None):
+    """
+    Runs the native unit test corpus three times: as a plain image, as a --pgo-instrument image
+    (which also trains), and as an image optimized with the profile of that training run. PGO must
+    not change which tests pass: the instrumented and the optimized image may fail only tests the
+    plain image fails too, except for the documented interference below.
+    """
+    output_dir = join(svmbuild_dir(), 'pgo-native-unittests')
+    if exists(output_dir):
+        mx.rmtree(output_dir)
+    mx_util.ensure_dir_exists(output_dir)
+    profile = join(output_dir, 'tests.iprof')
+    # The instrumentation's stack sampler occupies the per-thread recurring callback that JFR's
+    # recurring-callback execution sampler also needs, so an instrumented image records no JFR
+    # execution samples for virtual threads. Known and documented; -H:-PGOSampleStacks avoids it.
+    instrumented_tolerated = {
+        'com.oracle.svm.test.jfr.TestVirtualThreadsExecutionSample#testVirtualThreadExecutionSample',
+        'com.oracle.svm.test.jfr.TestVirtualThreadsExecutionSample#testVirtualThreadExecutionSampleAfterChunkRotation',
+        'com.oracle.svm.test.jfr.TestVirtualThreadsExecutionSample#testShortLivedVirtualThreadExecutionSampleAfterChunkRotation',
+    }
+
+    def run_corpus(name, build_args, run_args, selectors=None):
+        lines = []
+        cmd = ['native-unittest'] + (selectors or []) + (['--build-args'] + build_args if build_args else []) + (['--run-args'] + run_args if run_args else [])
+        if extra_image_args:
+            cmd += ['--build-args'] + extra_image_args
+        exit_code = mx.run_mx(cmd, suite=suite, nonZeroIsFatal=False, out=lambda line: lines.append(line.rstrip()), err=lambda line: lines.append(line.rstrip()))
+        summaries = []
+        for line in lines:
+            failed_summary = re.match(r'Tests run: (\d+),\s+Failures: (\d+)', line)
+            passed_summary = re.match(r'OK \((\d+) tests?\)', line)
+            if failed_summary:
+                summaries.append((int(failed_summary.group(1)), int(failed_summary.group(2))))
+            elif passed_summary:
+                summaries.append((int(passed_summary.group(1)), 0))
+        if not summaries:
+            mx.abort(name + ': the native unit tests did not run:\n' + '\n'.join(lines[-60:]))
+        failure_identities = [m.group(1) for m in (re.match(r'\d+\) ([\w.$]+#[\w$]+)', line) for line in lines) if m]
+        expected_failures = sum(failures for _, failures in summaries)
+        if len(failure_identities) != expected_failures:
+            mx.abort(name + ': parsed ' + str(len(failure_identities)) + ' Class#method identities for ' + str(expected_failures) +
+                     ' reported failures; refusing a partial failure set:\n' + '\n'.join(lines[-80:]))
+        failed = set(failure_identities)
+        if exit_code != 0 and expected_failures == 0:
+            mx.abort(name + ': native unit tests exited nonzero without reporting test failures:\n' + '\n'.join(lines[-60:]))
+        tests_run = sum(tests for tests, _ in summaries)
+        mx.log(name + ': ' + str(tests_run) + ' tests run, ' + str(expected_failures) + ' failing tests' + (': ' + ', '.join(sorted(failed)) if failed else ''))
+        return failed
+
+    plain = run_corpus('plain image', [], [])
+    instrumented = run_corpus('instrumented image', ['--pgo-instrument'], ['-XX:ProfilesDumpFile=' + profile])
+    if not exists(profile):
+        mx.abort('the instrumented test image wrote no profile to ' + profile)
+    optimized = run_corpus('optimized image', ['--pgo=' + profile], [])
+
+    regressions = (instrumented - plain) - instrumented_tolerated
+    if regressions:
+        mx.abort('tests that pass in the plain image fail in the instrumented image: ' + ', '.join(sorted(regressions)))
+    regressions = optimized - plain
+    if regressions:
+        mx.abort('tests that pass in the plain image fail in the profile-optimized image: ' + ', '.join(sorted(regressions)))
+    fixed = plain - optimized
+    if fixed:
+        mx.log('note: tests failing in the plain image but passing with the profile: ' + ', '.join(sorted(fixed)))
+
+    recorder_selector = ['com.oracle.svm.core.pgo.RecorderTableNativeTest']
+    recorder_profile = join(output_dir, 'recorder-tables.iprof')
+    recorder_plain = run_corpus('recorder tables plain image', [], [], recorder_selector)
+    recorder_instrumented = run_corpus('recorder tables instrumented image', ['--pgo-instrument'], ['-XX:ProfilesDumpFile=' + recorder_profile], recorder_selector)
+    if not exists(recorder_profile):
+        mx.abort('the instrumented recorder-table image wrote no profile to ' + recorder_profile)
+    recorder_optimized = run_corpus('recorder tables optimized image', ['--pgo=' + recorder_profile], [], recorder_selector)
+    if recorder_plain or recorder_instrumented or recorder_optimized:
+        mx.abort('recorder table native tests must pass in plain, instrumented, and optimized images')
 
 
 def runtime_assertions_test_task(extra_image_args=None):
@@ -3844,9 +4299,16 @@ def native_unittest(args):
     arg_list = list(args)
     # Decide whether to include the SVM test feature injections based on the selectors provided.
     # If no selectors were provided, native-unittest will default to SVM tests, so include features.
+    # Options and their values (--build-args, --run-args, -p, ...) are not selectors: without this
+    # distinction `mx native-unittest --build-args <x>` silently built the default SVM tests
+    # without their features and failed the tests that depend on them.
     def _is_svm_selector(a: str) -> bool:
         return a.startswith('com.oracle.svm.test')
-    include_svm_test_features = True if not arg_list else any(_is_svm_selector(a) for a in arg_list)
+
+    def _looks_like_selector(a: str) -> bool:
+        return re.match(r'^[A-Za-z_][\w$.]*$', a) is not None
+    selectors = [a for a in arg_list if _looks_like_selector(a)]
+    include_svm_test_features = True if not selectors else any(_is_svm_selector(a) for a in selectors)
     computed = _compute_native_unittest_args(include_svm_test_features=include_svm_test_features)
     # Merge computed build args into an existing --build-args block if present, otherwise append.
     if '--build-args' in arg_list:

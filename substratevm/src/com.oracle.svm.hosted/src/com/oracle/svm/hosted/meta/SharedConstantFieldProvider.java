@@ -24,19 +24,26 @@
  */
 package com.oracle.svm.hosted.meta;
 
+import java.util.function.BooleanSupplier;
+
 import org.graalvm.nativeimage.Platform;
 import org.graalvm.nativeimage.Platforms;
 
+import com.oracle.graal.pointsto.api.PointstoOptions;
 import com.oracle.graal.pointsto.heap.ImageHeapConstant;
 import com.oracle.graal.pointsto.infrastructure.UniverseMetaAccess;
 import com.oracle.graal.pointsto.meta.AnalysisField;
+import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.core.graal.code.CGlobalDataBasePointer;
+import com.oracle.svm.core.imagelayer.ImageLayerBuildingSupport;
 import com.oracle.svm.core.meta.MethodRef;
 import com.oracle.svm.hosted.SVMHost;
 import com.oracle.svm.hosted.ameta.FieldValueInterceptionSupport;
+import com.oracle.svm.shared.BuildPhaseProvider;
 import com.oracle.svm.util.GuestAnnotationAccess;
 
 import jdk.graal.compiler.core.common.spi.JavaConstantFieldProvider;
+import jdk.graal.compiler.nodes.spi.CanonicalizerTool;
 import jdk.vm.ci.meta.JavaConstant;
 import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.MetaAccessProvider;
@@ -48,6 +55,8 @@ public abstract class SharedConstantFieldProvider extends JavaConstantFieldProvi
     protected final UniverseMetaAccess metaAccess;
     protected final SVMHost hostVM;
     protected final FieldValueInterceptionSupport fieldValueInterceptionSupport = FieldValueInterceptionSupport.singleton();
+
+    private static final BooleanSupplier AFTER_ANALYSIS = new BuildPhaseProvider.AfterAnalysis();
 
     public SharedConstantFieldProvider(MetaAccessProvider metaAccess, SVMHost hostVM) {
         super(metaAccess);
@@ -115,6 +124,34 @@ public abstract class SharedConstantFieldProvider extends JavaConstantFieldProvi
             return false;
         }
         return hostVM.allowConstantFolding(field);
+    }
+
+    /**
+     * Closed-world trusted finals. A final instance field whose only registered writes initialize
+     * a freshly constructed object (stores in instance initializers of its declaring class, or
+     * field values of allocations materialized by escape analysis) cannot change once its holder
+     * has been constructed: the verifier forbids other bytecode writes, and every other write path
+     * (Unsafe, reflection, JNI, Feature API registrations) is recorded as a write of unknown
+     * position during analysis. The compiler uses this to keep such loads alive across calls and
+     * to float them to the earliest point of the graph. Only valid after analysis, only for the
+     * points-to analysis (which records every bytecode field store), and disabled for layered
+     * images where another layer may write the field.
+     * <p>
+     * Like the trusted finals of HotSpot this assumes that an object passed as an argument is fully
+     * constructed; a constructor that publishes {@code this} to another thread and then writes a
+     * final field could still be observed with the old value by that thread.
+     */
+    @Override
+    public boolean isTrustedFinal(CanonicalizerTool tool, ResolvedJavaField field) {
+        if (!SubstrateOptions.TrustFinalInstanceFields.getValue() || !AFTER_ANALYSIS.getAsBoolean() || ImageLayerBuildingSupport.buildingImageLayer() ||
+                        PointstoOptions.UseExperimentalReachabilityAnalysis.getValue(hostVM.options())) {
+            return false;
+        }
+        if (!field.isFinal() || field.isStatic()) {
+            return false;
+        }
+        AnalysisField aField = asAnalysisField(field);
+        return !aField.isUnsafeAccessed() && aField.isWrittenOnlyByInitialization();
     }
 
     protected boolean isClassInitialized(ResolvedJavaField field) {

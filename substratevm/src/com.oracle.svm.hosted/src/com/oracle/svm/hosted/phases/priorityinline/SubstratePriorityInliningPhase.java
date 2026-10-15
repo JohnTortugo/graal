@@ -45,6 +45,7 @@ import com.oracle.svm.hosted.cai.PrefixTree;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.PGOBranchInstrumentationFeature;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.phases.OOMEExceptionEdgePolicy;
@@ -316,6 +317,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 HostedProviders providers = (HostedProviders) runtimeConfig.lookupBackend(targetMethod).getProviders();
                 HighTierContext highTierContext = new HighTierContext(providers, highTier, optimisticOpts);
                 applyPGOProfiles(graphCopy, highTierContext, replaceePosition);
+                PGOBranchInstrumentationFeature.instrumentExpandedGraph(graphCopy, replaceePosition);
 
                 ref = UseGraphCache.getValue(getOptions()) ? selectedGraphCache.createRef(targetMethod, graphCopy) : selectedGraphCache.createNonCounted(graphCopy);
             }
@@ -345,6 +347,9 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 if (isCFunctionInvoke(inlineCacheNode.invoke())) {
                     return;
                 }
+                if (!hasReceiverFrequencyProfile(inlineCacheNode.invoke())) {
+                    continue;
+                }
                 List<SubgraphNode> hotSubgraphNodes = inlineCacheNode.children().stream().filter(e -> !(e instanceof GenericNode)).filter(this::isCallSiteToHotCaller).map(this::expandIfCutoff).filter(
                                 Objects::nonNull).collect(Collectors.toList());
                 if (!hotSubgraphNodes.isEmpty()) {
@@ -353,6 +358,18 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                                     });
                 }
             }
+        }
+
+        /**
+         * Hot-callee devirtualization guards an inline cache by receiver, so it has to know how
+         * often each receiver is dispatched. Stack samples do not carry that information: they weight
+         * a callee by the time spent under it, which favours long-running callees over frequently
+         * dispatched ones. Guarding a hot call site on a rarely dispatched receiver makes every
+         * dispatch pay for a failing guard, so only devirtualize when a frequency-based receiver
+         * profile backs the call site.
+         */
+        private static boolean hasReceiverFrequencyProfile(Invoke invoke) {
+            return invoke.callTarget() instanceof SubstrateMethodCallTargetNode target && target.hasDynamicTypeProfile();
         }
 
         private void devirtualizeIndirectCallTargetInvokes(CoreProviders coreProviders) {
@@ -430,7 +447,16 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 applyProfilesPhase.apply(graphCopy, highTierContext);
                 return;
             }
-            assert !UseGraphCache.getValue(getOptions());
+            /*
+             * The profile is applied for this expansion's context, and with the graph cache on the
+             * resulting graph is shared with every later expansion of the same callee in this
+             * compilation unit, whatever their contexts. Cutoffs are expanded in priority order, so
+             * the shared graph carries the profile of the callee's highest-priority context, which
+             * measured better than per-context application (cache off: +1.2% on a binary-format
+             * reader workload with the post-high-tier profile, +4.0% with the aligned profile) because
+             * most deeper contexts have no record of their own and fall back to shortened contexts.
+             * The cache therefore stays on; -H:-UseGraphCache selects per-context application.
+             */
             assert inliningProvider != null : "Provider must not be null";
             PGOApplyProfilesPhase.createForExpandingCutoffs(replaceePosition, universe, pgoProfiles).apply(graphCopy, highTierContext);
         }
@@ -457,8 +483,8 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private void setHotness(CallTreeNode caller, Invoke invoke, ResolvedJavaMethod targetMethod, CallTreeNode substrateCutoffNode, SamplingCallTreeState samplingCallTreeState) {
             StructuredGraph rootGraph = caller.callTree().root().getReadonlySubgraph();
-            double hotness = getInliningProvider().compilationRootRelativeHotness((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
-            samplingCallTreeState.setHotness(substrateCutoffNode, hotness);
+            SubstrateInliningProvider.SamplingContext context = getInliningProvider().compilationRootSamplingContext((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
+            samplingCallTreeState.setSamplingContext(substrateCutoffNode, context);
         }
 
         /**
@@ -511,7 +537,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private static void setHotnessForExpandedNode(CutoffNode cutoffNode, CallTreeNode expanded) {
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(cutoffNode.callTree());
-            samplingCallTreeState.setHotness(expanded, samplingCallTreeState.hotness(cutoffNode));
+            samplingCallTreeState.setSamplingContext(expanded, samplingCallTreeState.samplingContext(cutoffNode));
         }
 
         @Override
