@@ -27,13 +27,22 @@ package com.oracle.svm.core;
 import com.oracle.svm.shared.config.ObjectLayout;
 import com.oracle.svm.guest.staging.core.IntrinsicCandidate;
 import com.oracle.svm.guest.staging.core.UnmanagedMemoryUtil;
+import com.oracle.svm.shared.AlwaysInline;
+import com.oracle.svm.shared.NeverInline;
 import com.oracle.svm.shared.Uninterruptible;
 import org.graalvm.word.Pointer;
 import org.graalvm.word.UnsignedWord;
 import org.graalvm.word.impl.Word;
 
+import com.oracle.svm.core.heap.Heap;
 import com.oracle.svm.core.hub.LayoutEncoding;
+import com.oracle.svm.shared.util.UnsignedUtils;
 import com.oracle.svm.shared.util.VMError;
+
+import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.LIKELY_PROBABILITY;
+import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.probability;
+
+import jdk.graal.compiler.api.replacements.Fold;
 
 import org.graalvm.word.impl.BarrieredAccess;
 
@@ -431,6 +440,7 @@ public final class JavaMemoryUtil {
      * perform any array store checks (i.e., it is up to the caller to ensure that the arrays are
      * compatible).
      */
+    @AlwaysInline("Keep the inlined short-copy loop of copyReferences* inlined into its callers.")
     public static void copyObjectArrayForward(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
         assert length >= 0 : length;
 
@@ -446,6 +456,7 @@ public final class JavaMemoryUtil {
      * perform any array store checks (i.e., it is up to the caller to ensure that the arrays are
      * compatible).
      */
+    @AlwaysInline("Keep the inlined short-copy loop of copyReferences* inlined into its callers.")
     public static void copyObjectArrayBackward(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
         assert length >= 0 : length;
 
@@ -461,14 +472,19 @@ public final class JavaMemoryUtil {
      * read/write barriers but does *NOT* perform any array store checks (i.e., if this is used for
      * copying between arrays, it is up to the caller to ensure that the arrays are compatible).
      */
+    @AlwaysInline("Short copies are common; keep them free of call overhead.")
     public static void copyReferencesForward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord length) {
         int elementSize = ObjectLayout.singleton().getReferenceSize();
         UnsignedWord size = length.multiply(elementSize);
-        UnsignedWord copied = Word.zero();
-        while (copied.belowThan(size)) {
-            BarrieredAccess.writeObject(to, toOffset.add(copied), BarrieredAccess.readObject(from, fromOffset.add(copied)));
-            copied = copied.add(elementSize);
+        if (!useBulkReferenceCopy() || probability(LIKELY_PROBABILITY, size.belowThan(BULK_REFERENCE_COPY_MIN_BYTES))) {
+            UnsignedWord copied = Word.zero();
+            while (copied.belowThan(size)) {
+                BarrieredAccess.writeObject(to, toOffset.add(copied), BarrieredAccess.readObject(from, fromOffset.add(copied)));
+                copied = copied.add(elementSize);
+            }
+            return;
         }
+        copyReferencesForwardBulk(from, fromOffset, to, toOffset, size, elementSize);
     }
 
     /**
@@ -476,12 +492,184 @@ public final class JavaMemoryUtil {
      * read/write barriers but does *NOT* perform any array store checks (i.e., if this is used for
      * copying between arrays, it is up to the caller to ensure that the arrays are compatible).
      */
+    @AlwaysInline("Short copies are common; keep them free of call overhead.")
     public static void copyReferencesBackward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord length) {
         int elementSize = ObjectLayout.singleton().getReferenceSize();
         UnsignedWord remaining = length.multiply(elementSize);
+        if (!useBulkReferenceCopy() || probability(LIKELY_PROBABILITY, remaining.belowThan(BULK_REFERENCE_COPY_MIN_BYTES))) {
+            while (remaining.aboveThan(0)) {
+                remaining = remaining.subtract(elementSize);
+                BarrieredAccess.writeObject(to, toOffset.add(remaining), BarrieredAccess.readObject(from, fromOffset.add(remaining)));
+            }
+            return;
+        }
+        copyReferencesBackwardBulk(from, fromOffset, to, toOffset, remaining, elementSize);
+    }
+
+    /**
+     * Below this size, references are copied one at a time. The barriers of a bulk copy have a
+     * fixed cost, so the per-reference loop is cheaper for very short copies.
+     */
+    private static final int BULK_REFERENCE_COPY_MIN_BYTES = 64;
+
+    /**
+     * Upper bound for the bytes copied without a safepoint check. Bounds the time-to-safepoint of a
+     * thread that copies a large array.
+     */
+    private static final int BULK_REFERENCE_COPY_CHUNK_BYTES = 64 * 1024;
+
+    /**
+     * Copies in chunks so that a safepoint can be reached between them. Forward order keeps
+     * overlapping copies with fromOffset > toOffset correct. Kept out of
+     * {@link #copyReferencesForward} so that short copies stay on a small, inlinable path.
+     */
+    @NeverInline("Keep the short-copy path small.")
+    private static void copyReferencesForwardBulk(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+        UnsignedWord chunkSize = Word.unsigned(BULK_REFERENCE_COPY_CHUNK_BYTES);
+        UnsignedWord copied = Word.zero();
+        while (copied.belowThan(size)) {
+            UnsignedWord bytes = UnsignedUtils.min(chunkSize, size.subtract(copied));
+            copyReferencesChunkForward(from, fromOffset.add(copied), to, toOffset.add(copied), bytes, elementSize);
+            copied = copied.add(bytes);
+        }
+    }
+
+    /**
+     * Copies in chunks, starting at the end, so that a safepoint can be reached between them.
+     * Backward order keeps overlapping copies with fromOffset < toOffset correct.
+     */
+    @NeverInline("Keep the short-copy path small.")
+    private static void copyReferencesBackwardBulk(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+        UnsignedWord chunkSize = Word.unsigned(BULK_REFERENCE_COPY_CHUNK_BYTES);
+        UnsignedWord remaining = size;
         while (remaining.aboveThan(0)) {
-            remaining = remaining.subtract(elementSize);
-            BarrieredAccess.writeObject(to, toOffset.add(remaining), BarrieredAccess.readObject(from, fromOffset.add(remaining)));
+            UnsignedWord bytes = UnsignedUtils.min(chunkSize, remaining);
+            remaining = remaining.subtract(bytes);
+            copyReferencesChunkBackward(from, fromOffset.add(remaining), to, toOffset.add(remaining), bytes, elementSize);
+        }
+    }
+
+    @Fold
+    static boolean useBulkReferenceCopy() {
+        return Heap.getHeap().supportsBulkReferenceCopy();
+    }
+
+    /*
+     * Each reference must be copied atomically (Java Language Specification, 17.7). An 8-byte
+     * access that is not 8-byte aligned is not guaranteed to be single-copy atomic (e.g., on
+     * AArch64 without FEAT_LSE2, or when it crosses a 16-byte boundary with it), so it could tear a
+     * 4-byte compressed reference. The copy therefore uses 8-byte accesses only where both source
+     * and destination are 8-byte aligned, and 4-byte accesses otherwise.
+     */
+    @Uninterruptible(reason = "Raw object addresses; no GC between the barriers and the copy.")
+    private static void copyReferencesChunkForward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+        Pointer src = Word.objectToUntrackedPointer(from).add(fromOffset);
+        Pointer dst = Word.objectToUntrackedPointer(to).add(toOffset);
+        UnsignedWord count = size.unsignedDivide(elementSize);
+        Heap heap = Heap.getHeap();
+        heap.referenceRangePreWriteBarrier(to, dst, count);
+        copyReferenceMemoryForward(src, dst, size);
+        heap.referenceRangePostWriteBarrier(to, dst, count);
+    }
+
+    @Uninterruptible(reason = "Raw object addresses; no GC between the barriers and the copy.")
+    private static void copyReferencesChunkBackward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+        Pointer src = Word.objectToUntrackedPointer(from).add(fromOffset);
+        Pointer dst = Word.objectToUntrackedPointer(to).add(toOffset);
+        UnsignedWord count = size.unsignedDivide(elementSize);
+        Heap heap = Heap.getHeap();
+        heap.referenceRangePreWriteBarrier(to, dst, count);
+        copyReferenceMemoryBackward(src, dst, size);
+        heap.referenceRangePostWriteBarrier(to, dst, count);
+    }
+
+    /**
+     * Copies {@code size} bytes of references in ascending address order. {@code src}, {@code dst}
+     * and {@code size} must be multiples of the reference size, which is 4 or 8 bytes.
+     */
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    private static void copyReferenceMemoryForward(Pointer src, Pointer dst, UnsignedWord size) {
+        if (probability(LIKELY_PROBABILITY, src.xor(dst).and(7).equal(0))) {
+            UnsignedWord offset = Word.zero();
+            if (src.and(7).notEqual(0)) {
+                dst.writeInt(0, src.readInt(0));
+                offset = Word.unsigned(4);
+            }
+            UnsignedWord longBytes = size.subtract(offset).and(Word.unsigned(7).not());
+            UnmanagedMemoryUtil.copyLongsForward(src.add(offset), dst.add(offset), longBytes);
+            offset = offset.add(longBytes);
+            if (offset.belowThan(size)) {
+                dst.writeInt(offset, src.readInt(offset));
+            }
+        } else {
+            copyIntsForward(src, dst, size);
+        }
+    }
+
+    /**
+     * Copies {@code size} bytes of references in descending address order. Same requirements as
+     * {@link #copyReferenceMemoryForward}.
+     */
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    private static void copyReferenceMemoryBackward(Pointer src, Pointer dst, UnsignedWord size) {
+        if (probability(LIKELY_PROBABILITY, src.xor(dst).and(7).equal(0))) {
+            UnsignedWord end = size;
+            if (src.add(end).and(7).notEqual(0)) {
+                end = end.subtract(4);
+                dst.writeInt(end, src.readInt(end));
+            }
+            UnsignedWord longBytes = end.and(Word.unsigned(7).not());
+            UnsignedWord head = end.subtract(longBytes);
+            UnmanagedMemoryUtil.copyLongsBackward(src.add(head), dst.add(head), longBytes);
+            if (head.notEqual(0)) {
+                dst.writeInt(0, src.readInt(0));
+            }
+        } else {
+            copyIntsBackward(src, dst, size);
+        }
+    }
+
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    private static void copyIntsForward(Pointer src, Pointer dst, UnsignedWord size) {
+        UnsignedWord offset = Word.zero();
+        for (UnsignedWord next = offset.add(16); next.belowOrEqual(size); next = offset.add(16)) {
+            Pointer s = src.add(offset);
+            Pointer d = dst.add(offset);
+            int i0 = s.readInt(0);
+            int i4 = s.readInt(4);
+            int i8 = s.readInt(8);
+            int i12 = s.readInt(12);
+            d.writeInt(0, i0);
+            d.writeInt(4, i4);
+            d.writeInt(8, i8);
+            d.writeInt(12, i12);
+            offset = next;
+        }
+        while (offset.belowThan(size)) {
+            dst.writeInt(offset, src.readInt(offset));
+            offset = offset.add(4);
+        }
+    }
+
+    @Uninterruptible(reason = "Called from uninterruptible code.", mayBeInlined = true)
+    private static void copyIntsBackward(Pointer src, Pointer dst, UnsignedWord size) {
+        UnsignedWord offset = size;
+        while (offset.aboveOrEqual(16)) {
+            offset = offset.subtract(16);
+            Pointer s = src.add(offset);
+            Pointer d = dst.add(offset);
+            int i12 = s.readInt(12);
+            int i8 = s.readInt(8);
+            int i4 = s.readInt(4);
+            int i0 = s.readInt(0);
+            d.writeInt(12, i12);
+            d.writeInt(8, i8);
+            d.writeInt(4, i4);
+            d.writeInt(0, i0);
+        }
+        while (offset.aboveThan(0)) {
+            offset = offset.subtract(4);
+            dst.writeInt(offset, src.readInt(offset));
         }
     }
 
