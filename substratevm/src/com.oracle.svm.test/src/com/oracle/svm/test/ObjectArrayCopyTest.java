@@ -218,4 +218,28 @@ public class ObjectArrayCopyTest {
             Assert.assertNull(copy[length]);
         }
     }
+
+    /** Short and long copies must throw the same exceptions, after copying the same elements. */
+    @Test
+    public void testExceptions() {
+        for (int length : LENGTHS) {
+            /* Store check fails at the last element: everything before it is copied. */
+            Object[] src = new Object[length];
+            for (int i = 0; i < length; i++) {
+                src[i] = i == length - 1 ? Integer.valueOf(i) : new Box(i);
+            }
+            Box[] dst = new Box[length];
+            if (length > 0) {
+                Assert.assertThrows(ArrayStoreException.class, () -> System.arraycopy(src, 0, dst, 0, length));
+                assertBoxes(dst, 0, length - 1, 0);
+                Assert.assertNull(dst[length - 1]);
+            }
+            Assert.assertThrows(ArrayStoreException.class, () -> System.arraycopy(src, 0, new int[length], 0, length));
+            Assert.assertThrows(ArrayIndexOutOfBoundsException.class, () -> System.arraycopy(src, 1, new Object[length], 0, length));
+            Assert.assertThrows(ArrayIndexOutOfBoundsException.class, () -> System.arraycopy(src, 0, new Object[length], 1, length));
+            Assert.assertThrows(ArrayIndexOutOfBoundsException.class, () -> System.arraycopy(src, 0, src, 0, -1 - length));
+            /* Type mismatch is reported before the bounds. */
+            Assert.assertThrows(ArrayStoreException.class, () -> System.arraycopy(src, 1, new int[length], 0, length));
+        }
+    }
 }

@@ -27,7 +27,6 @@ package com.oracle.svm.core;
 import com.oracle.svm.shared.config.ObjectLayout;
 import com.oracle.svm.guest.staging.core.IntrinsicCandidate;
 import com.oracle.svm.guest.staging.core.UnmanagedMemoryUtil;
-import com.oracle.svm.shared.AlwaysInline;
 import com.oracle.svm.shared.NeverInline;
 import com.oracle.svm.shared.Uninterruptible;
 import org.graalvm.word.Pointer;
@@ -440,7 +439,6 @@ public final class JavaMemoryUtil {
      * perform any array store checks (i.e., it is up to the caller to ensure that the arrays are
      * compatible).
      */
-    @AlwaysInline("Keep the inlined short-copy loop of copyReferences* inlined into its callers.")
     public static void copyObjectArrayForward(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
         assert length >= 0 : length;
 
@@ -456,7 +454,6 @@ public final class JavaMemoryUtil {
      * perform any array store checks (i.e., it is up to the caller to ensure that the arrays are
      * compatible).
      */
-    @AlwaysInline("Keep the inlined short-copy loop of copyReferences* inlined into its callers.")
     public static void copyObjectArrayBackward(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
         assert length >= 0 : length;
 
@@ -472,19 +469,14 @@ public final class JavaMemoryUtil {
      * read/write barriers but does *NOT* perform any array store checks (i.e., if this is used for
      * copying between arrays, it is up to the caller to ensure that the arrays are compatible).
      */
-    @AlwaysInline("Short copies are common; keep them free of call overhead.")
     public static void copyReferencesForward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord length) {
         int elementSize = ObjectLayout.singleton().getReferenceSize();
         UnsignedWord size = length.multiply(elementSize);
-        if (!useBulkReferenceCopy() || probability(LIKELY_PROBABILITY, size.belowThan(BULK_REFERENCE_COPY_MIN_BYTES))) {
-            UnsignedWord copied = Word.zero();
-            while (copied.belowThan(size)) {
-                BarrieredAccess.writeObject(to, toOffset.add(copied), BarrieredAccess.readObject(from, fromOffset.add(copied)));
-                copied = copied.add(elementSize);
-            }
-            return;
+        UnsignedWord copied = Word.zero();
+        while (copied.belowThan(size)) {
+            BarrieredAccess.writeObject(to, toOffset.add(copied), BarrieredAccess.readObject(from, fromOffset.add(copied)));
+            copied = copied.add(elementSize);
         }
-        copyReferencesForwardBulk(from, fromOffset, to, toOffset, size, elementSize);
     }
 
     /**
@@ -492,18 +484,13 @@ public final class JavaMemoryUtil {
      * read/write barriers but does *NOT* perform any array store checks (i.e., if this is used for
      * copying between arrays, it is up to the caller to ensure that the arrays are compatible).
      */
-    @AlwaysInline("Short copies are common; keep them free of call overhead.")
     public static void copyReferencesBackward(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord length) {
         int elementSize = ObjectLayout.singleton().getReferenceSize();
         UnsignedWord remaining = length.multiply(elementSize);
-        if (!useBulkReferenceCopy() || probability(LIKELY_PROBABILITY, remaining.belowThan(BULK_REFERENCE_COPY_MIN_BYTES))) {
-            while (remaining.aboveThan(0)) {
-                remaining = remaining.subtract(elementSize);
-                BarrieredAccess.writeObject(to, toOffset.add(remaining), BarrieredAccess.readObject(from, fromOffset.add(remaining)));
-            }
-            return;
+        while (remaining.aboveThan(0)) {
+            remaining = remaining.subtract(elementSize);
+            BarrieredAccess.writeObject(to, toOffset.add(remaining), BarrieredAccess.readObject(from, fromOffset.add(remaining)));
         }
-        copyReferencesBackwardBulk(from, fromOffset, to, toOffset, remaining, elementSize);
     }
 
     /**
@@ -519,34 +506,57 @@ public final class JavaMemoryUtil {
     private static final int BULK_REFERENCE_COPY_CHUNK_BYTES = 64 * 1024;
 
     /**
-     * Copies in chunks so that a safepoint can be reached between them. Forward order keeps
-     * overlapping copies with fromOffset > toOffset correct. Kept out of
-     * {@link #copyReferencesForward} so that short copies stay on a small, inlinable path.
+     * Whether an object array copy of {@code length} elements should use
+     * {@link #copyObjectArrayForwardBulk} or {@link #copyObjectArrayBackwardBulk}. Folds to
+     * {@code false} for heaps that do not support bulk reference copies. Callers check this once,
+     * so that the short-copy loops of {@link #copyReferencesForward} and
+     * {@link #copyReferencesBackward} stay as small as possible.
      */
-    @NeverInline("Keep the short-copy path small.")
-    private static void copyReferencesForwardBulk(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+    public static boolean useBulkObjectArrayCopy(int length) {
+        return useBulkReferenceCopy() && length >= bulkObjectArrayCopyMinLength();
+    }
+
+    /**
+     * Copies between Java object arrays in bulk, front to back, with one range barrier per chunk.
+     * Does *NOT* perform any array store or bounds checks. The chunks bound the time-to-safepoint of
+     * long copies. Forward order keeps overlapping copies with fromIndex > toIndex correct.
+     */
+    @NeverInline("Bulk copies are long; keep the callers small.")
+    public static void copyObjectArrayForwardBulk(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
+        int elementSize = ObjectLayout.singleton().getReferenceSize();
+        UnsignedWord fromOffset = LayoutEncoding.getArrayElementOffset(layoutEncoding, fromIndex);
+        UnsignedWord toOffset = LayoutEncoding.getArrayElementOffset(layoutEncoding, toIndex);
+        UnsignedWord size = Word.unsigned(length).multiply(elementSize);
         UnsignedWord chunkSize = Word.unsigned(BULK_REFERENCE_COPY_CHUNK_BYTES);
         UnsignedWord copied = Word.zero();
         while (copied.belowThan(size)) {
             UnsignedWord bytes = UnsignedUtils.min(chunkSize, size.subtract(copied));
-            copyReferencesChunkForward(from, fromOffset.add(copied), to, toOffset.add(copied), bytes, elementSize);
+            copyReferencesChunkForward(fromArray, fromOffset.add(copied), toArray, toOffset.add(copied), bytes, elementSize);
             copied = copied.add(bytes);
         }
     }
 
     /**
-     * Copies in chunks, starting at the end, so that a safepoint can be reached between them.
-     * Backward order keeps overlapping copies with fromOffset < toOffset correct.
+     * Same as {@link #copyObjectArrayForwardBulk}, but back to front. Backward order keeps
+     * overlapping copies with fromIndex < toIndex correct.
      */
-    @NeverInline("Keep the short-copy path small.")
-    private static void copyReferencesBackwardBulk(Object from, UnsignedWord fromOffset, Object to, UnsignedWord toOffset, UnsignedWord size, int elementSize) {
+    @NeverInline("Bulk copies are long; keep the callers small.")
+    public static void copyObjectArrayBackwardBulk(Object fromArray, int fromIndex, Object toArray, int toIndex, int length, int layoutEncoding) {
+        int elementSize = ObjectLayout.singleton().getReferenceSize();
+        UnsignedWord fromOffset = LayoutEncoding.getArrayElementOffset(layoutEncoding, fromIndex);
+        UnsignedWord toOffset = LayoutEncoding.getArrayElementOffset(layoutEncoding, toIndex);
         UnsignedWord chunkSize = Word.unsigned(BULK_REFERENCE_COPY_CHUNK_BYTES);
-        UnsignedWord remaining = size;
+        UnsignedWord remaining = Word.unsigned(length).multiply(elementSize);
         while (remaining.aboveThan(0)) {
             UnsignedWord bytes = UnsignedUtils.min(chunkSize, remaining);
             remaining = remaining.subtract(bytes);
-            copyReferencesChunkBackward(from, fromOffset.add(remaining), to, toOffset.add(remaining), bytes, elementSize);
+            copyReferencesChunkBackward(fromArray, fromOffset.add(remaining), toArray, toOffset.add(remaining), bytes, elementSize);
         }
+    }
+
+    @Fold
+    static int bulkObjectArrayCopyMinLength() {
+        return BULK_REFERENCE_COPY_MIN_BYTES / ObjectLayout.singleton().getReferenceSize();
     }
 
     @Fold
