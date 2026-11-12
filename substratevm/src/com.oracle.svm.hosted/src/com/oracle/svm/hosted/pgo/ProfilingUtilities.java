@@ -26,6 +26,7 @@ package com.oracle.svm.hosted.pgo;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.graalvm.collections.EconomicMap;
 
@@ -39,6 +40,9 @@ import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.extended.BytecodeExceptionNode;
 import jdk.graal.compiler.nodes.extended.SwitchNode;
 import jdk.vm.ci.code.BytecodeFrame;
+import jdk.vm.ci.meta.JavaType;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.Signature;
 
 public class ProfilingUtilities {
 
@@ -112,6 +116,142 @@ public class ProfilingUtilities {
 
     public static NodeIterable<Node> getConditionalNodesFromGraph(StructuredGraph graph) {
         return graph.getNodes().filter(n -> n instanceof IfNode || n instanceof SwitchNode);
+    }
+
+    /** A conditional and its calling context, innermost frame first. */
+    public record ConditionalSite(ControlSplitNode node, NodeSourcePosition context) {
+    }
+
+    /**
+     * Groups every candidate conditional by source position without the probability-based pruning
+     * of {@link #relevantConditionalNodesFromGraph}. All physical copies are kept because the
+     * profile entry of a branch is the sum over them: after loop transformations the bytecode
+     * branch of a loop header exists as a peeled guard (default probability) and as the in-loop
+     * exit condition (compiler-assigned probability); pruning would drop the copy that carries the
+     * iteration count.
+     */
+    private static EconomicMap<NodeSourcePosition, List<ControlSplitNode>> allConditionalNodesFromGraph(StructuredGraph graph) {
+        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = EconomicMap.create();
+        getConditionalNodesFromGraph(graph).filter(n -> isNotForImplicitException((ControlSplitNode) n)).filter(n -> !hasUnknownBci(n)).forEach(node -> {
+            NodeSourcePosition position = node.getNodeSourcePosition();
+            if (position != null) {
+                List<ControlSplitNode> nodes = groups.get(position);
+                if (nodes == null) {
+                    nodes = new ArrayList<>();
+                    groups.put(position, nodes);
+                }
+                nodes.add((ControlSplitNode) node);
+            }
+        });
+        return groups;
+    }
+
+    /**
+     * Enumerates the conditionals the producer instruments and the consumer applies profiles to,
+     * in deterministic graph iteration order. {@code inliningContext}, when present, is appended as
+     * the caller chain of every site.
+     */
+    public static List<ConditionalSite> relevantConditionalSitesFromGraph(StructuredGraph graph, NodeSourcePosition inliningContext) {
+        EconomicMap<NodeSourcePosition, List<ControlSplitNode>> groups = allConditionalNodesFromGraph(graph);
+        List<ConditionalSite> result = new ArrayList<>();
+        for (List<ControlSplitNode> group : groups.getValues()) {
+            for (ControlSplitNode node : group) {
+                NodeSourcePosition context = node.getNodeSourcePosition();
+                if (inliningContext != null) {
+                    context = context.addCaller(inliningContext);
+                }
+                result.add(new ConditionalSite(node, context));
+            }
+        }
+        return result;
+    }
+
+    /** The class of the tested condition, or of the split node itself for a switch. */
+    public static String conditionKind(ControlSplitNode node) {
+        return node instanceof IfNode ifNode ? ifNode.condition().getClass().getName() : node.getClass().getName();
+    }
+
+    private static String canonicalContext(NodeSourcePosition position) {
+        StringBuilder result = new StringBuilder();
+        for (NodeSourcePosition frame = position; frame != null; frame = frame.getCaller()) {
+            if (!result.isEmpty()) {
+                result.append('<');
+            }
+            result.append(methodDescriptor(frame.getMethod())).append(':').append(frame.getBCI());
+        }
+        return result.toString();
+    }
+
+    /** Hash over the condition's node classes and source positions, three inputs deep. */
+    public static long conditionFingerprint(ControlSplitNode node) {
+        long hash = fingerprintText(0xcbf29ce484222325L, node.getClass().getName());
+        if (node instanceof IfNode ifNode) {
+            hash = fingerprintNode(hash, ifNode.condition(), 3);
+        }
+        return hash;
+    }
+
+    private static long fingerprintNode(long hash, Node node, int depth) {
+        hash = fingerprintText(hash, node.getClass().getName());
+        NodeSourcePosition position = node.getNodeSourcePosition();
+        if (position != null) {
+            hash = fingerprintText(hash, canonicalContext(position));
+        }
+        if (depth > 0) {
+            for (Node input : node.inputs()) {
+                hash = fingerprintNode(hash, input, depth - 1);
+            }
+        }
+        return hash;
+    }
+
+    private static long fingerprintText(long hash, String value) {
+        long result = hash;
+        for (int i = 0; i < value.length(); i++) {
+            result ^= value.charAt(i);
+            result *= 0x100000001b3L;
+        }
+        return result;
+    }
+
+    /**
+     * Canonical identity of a resolved method in a profile's calling contexts:
+     * {@code <declaringClassDescriptor>.<name><signature>}, where the declaring class and every
+     * signature type are rendered as JVM type descriptors (for example {@code Ljava/lang/String;},
+     * {@code [I}, {@code I}).
+     */
+    public static String methodDescriptor(ResolvedJavaMethod method) {
+        if (method == null) {
+            return "";
+        }
+        /*
+         * Every instrumented site stores its whole calling context as descriptors, so the same
+         * method is rendered for millions of frames. Share one string per method; otherwise the
+         * duplicates fill the builder heap and the image heap.
+         */
+        return METHOD_DESCRIPTORS.computeIfAbsent(method, ProfilingUtilities::buildMethodDescriptor);
+    }
+
+    private static final ConcurrentHashMap<ResolvedJavaMethod, String> METHOD_DESCRIPTORS = new ConcurrentHashMap<>();
+
+    private static String buildMethodDescriptor(ResolvedJavaMethod method) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(method.getDeclaringClass().getName());
+        sb.append('.').append(method.getName());
+        Signature signature = method.getSignature();
+        sb.append('(');
+        int count = signature.getParameterCount(false);
+        for (int i = 0; i < count; i++) {
+            sb.append(typeDescriptor(signature.getParameterType(i, null)));
+        }
+        sb.append(')');
+        sb.append(typeDescriptor(signature.getReturnType(null)));
+        return sb.toString();
+    }
+
+    private static String typeDescriptor(JavaType type) {
+        // JVMCI JavaType.getName() already returns the JVM descriptor form.
+        return type.getName();
     }
 
     private static boolean hasNonDefaultProbability(ControlSplitNode n1) {
