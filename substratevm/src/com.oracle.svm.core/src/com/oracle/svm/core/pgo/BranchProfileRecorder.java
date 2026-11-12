@@ -47,6 +47,7 @@ import com.oracle.svm.guest.staging.option.RuntimeOptionKey;
 import com.oracle.svm.shared.BuildPhaseProvider.AfterCompilation;
 import com.oracle.svm.shared.Uninterruptible;
 import com.oracle.svm.shared.util.SubstrateUtil;
+import com.oracle.svm.shared.util.TimeUtils;
 
 import jdk.graal.compiler.nodes.NamedLocationIdentity;
 import jdk.graal.compiler.options.Option;
@@ -229,7 +230,7 @@ public final class BranchProfileRecorder {
         if (pattern.indexOf('%') < 0) {
             return pattern;
         }
-        return pattern.replace("%p", Long.toString(ProcessHandle.current().pid())).replace("%t", Long.toString(System.currentTimeMillis()));
+        return pattern.replace("%p", Long.toString(ProcessHandle.current().pid())).replace("%t", Long.toString(TimeUtils.currentTimeMillis()));
     }
 
     public static void dumpProfile() {
