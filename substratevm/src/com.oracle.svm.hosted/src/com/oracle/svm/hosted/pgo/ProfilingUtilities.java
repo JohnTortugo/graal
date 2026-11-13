@@ -40,11 +40,19 @@ import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.extended.BytecodeExceptionNode;
 import jdk.graal.compiler.nodes.extended.SwitchNode;
 import jdk.vm.ci.code.BytecodeFrame;
-import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
-import jdk.vm.ci.meta.Signature;
 
 public class ProfilingUtilities {
+
+    /** FNV-1a (64-bit) offset basis and prime, for {@link #conditionFingerprint}. */
+    private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
+    private static final long FNV_PRIME = 0x100000001b3L;
+
+    /** Levels of the condition's inputs that {@link #conditionFingerprint} hashes. */
+    private static final int FINGERPRINT_DEPTH = 3;
+
+    /** One shared descriptor string per method, see {@link #methodDescriptor}. */
+    private static final ConcurrentHashMap<ResolvedJavaMethod, String> METHOD_DESCRIPTORS = new ConcurrentHashMap<>();
 
     public static EconomicMap<NodeSourcePosition, List<ControlSplitNode>> relevantConditionalNodesFromGraph(StructuredGraph graph) {
         return chooseConditionalNodesToInstrument(
@@ -171,6 +179,10 @@ public class ProfilingUtilities {
         return node instanceof IfNode ifNode ? ifNode.condition().getClass().getName() : node.getClass().getName();
     }
 
+    /**
+     * The calling context of a node's source position as method descriptors and BCIs, innermost
+     * frame first. Part of {@link #conditionFingerprint}.
+     */
     private static String canonicalContext(NodeSourcePosition position) {
         StringBuilder result = new StringBuilder();
         for (NodeSourcePosition frame = position; frame != null; frame = frame.getCaller()) {
@@ -182,15 +194,27 @@ public class ProfilingUtilities {
         return result.toString();
     }
 
-    /** Hash over the condition's node classes and source positions, three inputs deep. */
+    /**
+     * Identifies the condition a branch tests. The profile writer sums all physical copies of a
+     * bytecode branch into one entry. Copies whose successors have no bytecode position (an inlined
+     * intrinsic or substitution, an exception edge) cannot be told apart by their successors, so
+     * the writer sums them only if their {@link #conditionKind} and fingerprint are equal (see
+     * {@code BranchProfileIprofWriter.conditionalEntries}).
+     * <p>
+     * The fingerprint is an FNV-1a hash over the node classes and source positions of the
+     * condition and of its inputs, {@link #FINGERPRINT_DEPTH} levels deep. Three levels cover a
+     * comparison, its operands and their inputs, and bound the cost, which grows with every level
+     * of the input tree.
+     */
     public static long conditionFingerprint(ControlSplitNode node) {
-        long hash = fingerprintText(0xcbf29ce484222325L, node.getClass().getName());
+        long hash = fingerprintText(FNV_OFFSET_BASIS, node.getClass().getName());
         if (node instanceof IfNode ifNode) {
-            hash = fingerprintNode(hash, ifNode.condition(), 3);
+            hash = fingerprintNode(hash, ifNode.condition(), FINGERPRINT_DEPTH);
         }
         return hash;
     }
 
+    /** Adds the class and source position of {@code node}, then of its inputs up to {@code depth} more levels. */
     private static long fingerprintNode(long hash, Node node, int depth) {
         hash = fingerprintText(hash, node.getClass().getName());
         NodeSourcePosition position = node.getNodeSourcePosition();
@@ -205,20 +229,22 @@ public class ProfilingUtilities {
         return hash;
     }
 
+    /** Adds each character of {@code value} to an FNV-1a hash. */
     private static long fingerprintText(long hash, String value) {
         long result = hash;
         for (int i = 0; i < value.length(); i++) {
             result ^= value.charAt(i);
-            result *= 0x100000001b3L;
+            result *= FNV_PRIME;
         }
         return result;
     }
 
     /**
      * Canonical identity of a resolved method in a profile's calling contexts:
-     * {@code <declaringClassDescriptor>.<name><signature>}, where the declaring class and every
-     * signature type are rendered as JVM type descriptors (for example {@code Ljava/lang/String;},
-     * {@code [I}, {@code I}).
+     * {@code <declaringClassDescriptor>.<name><methodDescriptor>}, for example
+     * {@code Ljava/lang/String;.indexOf(I)I}. JVMCI renders the declaring class and the signature
+     * in JVM descriptor form ({@link jdk.vm.ci.meta.JavaType#getName()},
+     * {@link jdk.vm.ci.meta.Signature#toMethodDescriptor()}).
      */
     public static String methodDescriptor(ResolvedJavaMethod method) {
         if (method == null) {
@@ -229,29 +255,7 @@ public class ProfilingUtilities {
          * method is rendered for millions of frames. Share one string per method; otherwise the
          * duplicates fill the builder heap and the image heap.
          */
-        return METHOD_DESCRIPTORS.computeIfAbsent(method, ProfilingUtilities::buildMethodDescriptor);
-    }
-
-    private static final ConcurrentHashMap<ResolvedJavaMethod, String> METHOD_DESCRIPTORS = new ConcurrentHashMap<>();
-
-    private static String buildMethodDescriptor(ResolvedJavaMethod method) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(method.getDeclaringClass().getName());
-        sb.append('.').append(method.getName());
-        Signature signature = method.getSignature();
-        sb.append('(');
-        int count = signature.getParameterCount(false);
-        for (int i = 0; i < count; i++) {
-            sb.append(typeDescriptor(signature.getParameterType(i, null)));
-        }
-        sb.append(')');
-        sb.append(typeDescriptor(signature.getReturnType(null)));
-        return sb.toString();
-    }
-
-    private static String typeDescriptor(JavaType type) {
-        // JVMCI JavaType.getName() already returns the JVM descriptor form.
-        return type.getName();
+        return METHOD_DESCRIPTORS.computeIfAbsent(method, m -> m.getDeclaringClass().getName() + "." + m.getName() + m.getSignature().toMethodDescriptor());
     }
 
     private static boolean hasNonDefaultProbability(ControlSplitNode n1) {

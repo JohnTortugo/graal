@@ -309,6 +309,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
             /*
              * Instrumented expansions carry counters keyed by this expansion's caller context, so a
              * cached copy would count every later expansion of the callee under the first context.
+             * Therefore the graph cache is not used while --pgo-instrument is enabled.
              */
             boolean useCache = UseGraphCache.getValue(getOptions()) && !PGOBranchInstrumentationFeature.enabled();
             GraphCache.Ref<ResolvedJavaMethod, StructuredGraph> ref = useCache ? selectedGraphCache.getRef(targetMethod) : null;
