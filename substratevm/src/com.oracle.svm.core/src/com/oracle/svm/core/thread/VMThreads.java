@@ -380,6 +380,8 @@ public abstract class VMThreads {
          * the VM can start a safepoint at any time.
          */
         IsolateThreadCache.set(currentThread);
+        /* Before the thread runs any Java code; see ThreadListener.afterThreadAttach. */
+        ThreadListenerSupport.get().afterThreadAttach(currentThread);
 
         if (startedByCurrentIsolate) {
             ThreadLocalHandshake.blockForHandshake();
