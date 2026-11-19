@@ -48,7 +48,7 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
  */
 public final class SamplingInliningProvider extends SubstrateInliningProvider {
 
-    private final SimpleConditionalProfilesLookup profiles;
+    private final IprofProfilesLookup profiles;
 
     public static final class Options {
         // @formatter:off
@@ -64,12 +64,12 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         @Option(help = "Report sampled compilation roots as hot callers (enables hot-callee devirtualization and hot-caller profile application).")//
         public static final HostedOptionKey<Boolean> PGOSamplingHotCaller = new HostedOptionKey<>(true);
 
-        @Option(help = "Expose sampled self time to the compiler (enables hot-code duplication budgets).")//
+        @Option(help = "Expose sampled self time to the compiler, which gives hot code larger budgets in duplication and loop unrolling.")//
         public static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
         // @formatter:on
     }
 
-    public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness, SimpleConditionalProfilesLookup profiles) {
+    public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness, IprofProfilesLookup profiles) {
         super(universe, hotness::cursorFor);
         this.profiles = profiles;
     }

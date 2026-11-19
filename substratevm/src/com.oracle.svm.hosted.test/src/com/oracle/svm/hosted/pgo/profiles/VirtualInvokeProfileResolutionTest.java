@@ -36,16 +36,20 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.oracle.graal.pointsto.meta.AnalysisType;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
-import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileContextResolver.VirtualInvokeDiagnostics;
-import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
+import com.oracle.svm.hosted.pgo.IprofParser;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
+import com.oracle.svm.hosted.pgo.profiles.IprofProfileResolver.VirtualInvokeDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 
+/**
+ * Unit tests for the {@code virtualInvokeProfiles} section: how the parser reads it and how the
+ * lookup resolves it, including the shorter-context fallback for receivers.
+ */
 public class VirtualInvokeProfileResolutionTest {
 
     private static final String TYPES_AND_METHODS = "\"types\":[" +
@@ -61,7 +65,7 @@ public class VirtualInvokeProfileResolutionTest {
 
     private static ParsedProfile parse(String virtualInvokeProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"virtualInvokeProfiles\":[" + virtualInvokeProfiles + "]}";
-        return new IprofConditionalParser().parse(new StringReader(json));
+        return new IprofParser().parse(new StringReader(json));
     }
 
     @Test
@@ -76,7 +80,7 @@ public class VirtualInvokeProfileResolutionTest {
     @Test
     public void sectionIsOptional() throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[]}";
-        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(json));
+        ParsedProfile parsed = new IprofParser().parse(new StringReader(json));
         Assert.assertTrue(parsed.virtualInvokeEntries().isEmpty());
     }
 
@@ -105,7 +109,7 @@ public class VirtualInvokeProfileResolutionTest {
                         "{\"ctx\":\"1001:9<1001:14\",\"records\":[101,5]}," +
                         "{\"ctx\":\"99999:1\",\"records\":[101,1]}");
         Map<String, AnalysisType> noTypes = Map.of();
-        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(ConditionalProfileContextResolverTest.BAR_DESC), noTypes);
+        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC), noTypes);
 
         VirtualInvokeDiagnostics d = lookup.virtualInvokeDiagnostics();
         Assert.assertEquals(3, d.totalEntries());
@@ -116,8 +120,8 @@ public class VirtualInvokeProfileResolutionTest {
         Assert.assertEquals(3, d.droppedReceiverRecords());
         Assert.assertEquals(15, d.receiverEvents());
         Assert.assertEquals(15, d.droppedReceiverEvents());
-        Assert.assertFalse(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.VIRTUAL_INVOKE_PROFILES_CATEGORY));
-        Optional<Map<AnalysisType, Long>> result = lookup.getVirtualInvokeProfile(new BytecodePosition(null, ConditionalProfileContextResolverTest.mockBarMethod(), 9));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.VIRTUAL_INVOKE_PROFILES_CATEGORY));
+        Optional<Map<AnalysisType, Long>> result = lookup.getVirtualInvokeProfile(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 9));
         Assert.assertTrue(result.isEmpty());
     }
 
@@ -128,17 +132,18 @@ public class VirtualInvokeProfileResolutionTest {
      */
     @Test
     public void shortenedContextFallbackServesInlinedCopies() {
-        ResolvedJavaMethod bar = ConditionalProfileContextResolverTest.mockBarMethod();
+        ResolvedJavaMethod bar = IprofProfileResolverTest.mockBarMethod();
         Map<AnalysisType, Long> receivers = Collections.singletonMap(null, 7L);
-        Map<List<FrameKey>, Map<AnalysisType, Long>> data = Map.of(List.of(new FrameKey(ConditionalProfileContextResolverTest.BAR_DESC, 9)), receivers);
+        Map<List<FrameKey>, Map<AnalysisType, Long>> data = Map.of(List.of(new FrameKey(IprofProfileResolverTest.BAR_DESC, 9)), receivers);
         BytecodePosition inlinedTwice = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 14), bar, 9);
 
-        SimpleConditionalProfilesLookup exactOnly = new SimpleConditionalProfilesLookup(Map.of(), null, data, null);
+        IprofProfilesLookup exactOnly = new IprofProfilesLookup(Map.of(), null, data, null);
+        exactOnly.setReceiverContextFallback(false);
         Assert.assertTrue(exactOnly.getVirtualInvokeProfile(inlinedTwice).isEmpty());
         Assert.assertEquals(1, exactOnly.virtualInvokeMissCount());
         Assert.assertEquals(0, exactOnly.virtualInvokeFallbackCount());
 
-        SimpleConditionalProfilesLookup withFallback = new SimpleConditionalProfilesLookup(Map.of(), null, data, null);
+        IprofProfilesLookup withFallback = new IprofProfilesLookup(Map.of(), null, data, null);
         withFallback.setReceiverContextFallback(true);
         Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(inlinedTwice).orElseThrow());
         Assert.assertEquals(1, withFallback.virtualInvokeHitCount());

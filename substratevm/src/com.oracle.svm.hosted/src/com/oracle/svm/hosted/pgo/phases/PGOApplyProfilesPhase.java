@@ -286,22 +286,29 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         }
     }
 
+    /**
+     * Applies the conditional profiles to the branches and switches that the instrumentation phase
+     * instruments, each queried under its own calling context ({@link ConditionalSite#context()}),
+     * the context it was recorded under.
+     */
     private void updateProfilesForConditionals(StructuredGraph graph) {
         if (!pgoProfiles.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
             return;
         }
-        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext)) {
+        List<ConditionalSite> sites = ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext);
+        for (ConditionalSite site : sites) {
             if (shouldApplyConditional(site.node())) {
                 updateConditionalProbabilitiesBasedOnSamples(site.node());
             }
         }
-        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext)) {
+        for (ConditionalSite site : sites) {
             if (shouldApplyConditional(site.node())) {
                 updateConditionalProbabilities(site);
             }
         }
     }
 
+    /** {@code -H:-PGOUseSwitchProfiles} and {@code -H:-PGOUseBranchProfiles} leave their kind of site unprofiled. */
     private static boolean shouldApplyConditional(ControlSplitNode node) {
         return node instanceof SwitchNode ? Options.PGOUseSwitchProfiles.getValue() : Options.PGOUseBranchProfiles.getValue();
     }
@@ -604,6 +611,10 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         countSuccess();
     }
 
+    /**
+     * How many successor probabilities the record has ({@code profiledSuccessors}) and how many of
+     * them were set on successors of the graph node ({@code appliedSuccessors}).
+     */
     private record ConditionalApplication(int profiledSuccessors, int appliedSuccessors) {
     }
 
@@ -623,6 +634,12 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         return new ConditionalApplication(aggregatedProbabilities.get().size(), matchingProfiles.size());
     }
 
+    /**
+     * A switch profile records how often each successor ran, but a {@link SwitchNode} keeps one
+     * probability per key, and several keys can share a successor. The profile is applied only when
+     * every live successor has its own bytecode position and a recorded probability; otherwise the
+     * switch keeps its prior.
+     */
     private static ConditionalApplication setSwitchProbabilities(ProfileData.ProfileSource source, long[] records, SwitchNode switchNode) {
         Optional<Map<Integer, Double>> probabilities = aggregatedProbabilities(records);
         List<Node> successors = switchNode.successors().snapshot();
@@ -655,6 +672,16 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         return new ConditionalApplication(probabilities.get().size(), successors.size());
     }
 
+    /**
+     * Splits each successor's recorded probability among the keys that lead to it, in proportion to
+     * the keys' prior probabilities, or evenly when the priors of a successor's keys are all zero.
+     * The result keeps one probability per key and still sums to the successors' total.
+     *
+     * @param successorCount number of switch successors
+     * @param keySuccessors for every key (the default key last), the index of its successor
+     * @param prior the switch's key probabilities before the profile is applied
+     * @param successorProbabilities the recorded probability of every successor
+     */
     public static double[] distributeSwitchProbabilities(int successorCount, int[] keySuccessors, double[] prior, double[] successorProbabilities) {
         double[] priorBySuccessor = new double[successorCount];
         int[] keysBySuccessor = new int[successorCount];

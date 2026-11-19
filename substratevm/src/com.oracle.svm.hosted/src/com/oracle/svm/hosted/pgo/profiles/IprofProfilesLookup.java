@@ -38,6 +38,7 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
+import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.DisallowLayered;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
@@ -46,25 +47,24 @@ import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import jdk.graal.compiler.nodes.ProfileData.ProfileSource;
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.vm.ci.code.BytecodePosition;
-import jdk.vm.ci.meta.JavaType;
 
 /**
- * A conditional-only {@link PGOProfilesLookup}. It answers
- * {@link #getConditionalProfile(BytecodePosition)} from an immutable table keyed by a canonical
- * calling context, and reports exactly one recorded category: {@code conditionalProfiles}. Every
- * other profile category (call counts, virtual invokes, instanceof, monitors, sampling, image
- * heap) is intentionally absent so this consumer applies one and only one optimization -- rewriting
- * conditional branch probabilities.
- *
+ * The {@link PGOProfilesLookup} that serves a parsed iprof profile to the compiler.
  * <p>
- * The table is built by {@code PGOConditionalProfilesFeature} once the {@code HostedUniverse} is
- * available; see {@link ConditionalProfileContextResolver} for the resolution algorithm. Instances
- * are immutable after construction.
+ * It answers four recorded categories: {@code conditionalProfiles} (branch and switch successor
+ * counts), {@code callCountProfiles}, {@code virtualInvokeProfiles} (receiver types) and
+ * {@code samplingProfiles} (stack samples). Each is looked up by a canonical calling context. The
+ * iprof file records no instanceof or image-heap profiles, so those queries answer as for an absent
+ * profile.
+ * <p>
+ * The tables are built by {@code PGOProfileUseFeature} once the {@code HostedUniverse} is
+ * available; see {@link IprofProfileResolver} for the resolution algorithm. The tables do not
+ * change after construction; the counters only record how the compiler used them.
  */
 @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = DisallowLayered.class)
-public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup {
+public final class IprofProfilesLookup implements PGOProfilesLookup {
 
-    /** The profile category this consumer supports; must match the phase's constant. */
+    /** Section names of the iprof file, as written by {@code IprofWriter}. */
     public static final String CONDITIONAL_PROFILES_CATEGORY = "conditionalProfiles";
     public static final String CALL_COUNT_PROFILES_CATEGORY = "callCountProfiles";
     public static final String VIRTUAL_INVOKE_PROFILES_CATEGORY = "virtualInvokeProfiles";
@@ -90,17 +90,17 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     private final Map<NodeSourcePosition, Long> sampleCounts;
     private final Map<String, Long> callCountsByMethod;
     private final Map<List<FrameKey>, Long> callCountsByContext;
-    private final ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics;
-    private final ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics;
+    private final IprofProfileResolver.CallCountDiagnostics callCountDiagnostics;
+    private final IprofProfileResolver.SamplingDiagnostics samplingDiagnostics;
     private final Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData;
-    private final ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
+    private final IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
     private final AtomicLong virtualInvokeHitCount = new AtomicLong();
     private final AtomicLong virtualInvokeMissCount = new AtomicLong();
     private final Set<List<FrameKey>> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
     /** Receiver-profile hits obtained by dropping outermost frames of the query context. */
     private final AtomicLong virtualInvokeFallbackCount = new AtomicLong();
     private final AtomicLong virtualInvokeFallbackDroppedFrames = new AtomicLong();
-    private volatile boolean receiverContextFallback;
+    private volatile boolean receiverContextFallback = true;
     private final AtomicLong impossibleReceiverRecords = new AtomicLong();
     private final AtomicLong impossibleReceiverEvents = new AtomicLong();
     private final ConditionalProfileDiagnostics diagnostics;
@@ -127,25 +127,29 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     /** Best successor-record coverage observed for every matched context. */
     private final Map<Object, ApplicationCoverage> applicationCoverage = new ConcurrentHashMap<>();
 
+    /**
+     * How many successor records of a matched context the profile has, and how many of them the
+     * phase could match to successors in the graph.
+     */
     private record ApplicationCoverage(int profiledSuccessors, int appliedSuccessors) {
     }
 
-    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, ConditionalProfileDiagnostics diagnostics) {
+    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, ConditionalProfileDiagnostics diagnostics) {
         this(conditionalData, diagnostics, Map.of(), null, Map.of(), null, Map.of(), Map.of(), null);
     }
 
-    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
+    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
-                    ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
+                    IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
         this(conditionalData, diagnostics, virtualInvokeData, virtualInvokeDiagnostics, Map.of(), null, Map.of(), Map.of(), null);
     }
 
-    public SimpleConditionalProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
+    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
-                    ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,
-                    Map<NodeSourcePosition, Long> sampleCounts, ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics,
+                    IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,
+                    Map<NodeSourcePosition, Long> sampleCounts, IprofProfileResolver.SamplingDiagnostics samplingDiagnostics,
                     Map<String, Long> callCountsByMethod, Map<List<FrameKey>, Long> callCountsByContext,
-                    ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics) {
+                    IprofProfileResolver.CallCountDiagnostics callCountDiagnostics) {
         this.sampleCounts = Map.copyOf(sampleCounts);
         this.callCountsByMethod = Map.copyOf(callCountsByMethod);
         this.callCountsByContext = Map.copyOf(callCountsByContext);
@@ -158,27 +162,35 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         this.diagnostics = diagnostics;
     }
 
-    /** Adds every entry's records to each prefix of its context, including the full context. */
+    /** A branch or switch arm of a conditional record: its successor bci and successor index. */
+    private record Arm(long successorBci, long successorIndex) {
+    }
+
+    /**
+     * Adds every entry's records to each prefix of its context, including the full context. A
+     * record is {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE} longs: successor bci,
+     * successor index and count. The counts of one arm are summed; arms keep the order of their
+     * first record.
+     */
     static Map<List<FrameKey>, long[]> prefixSums(Map<List<FrameKey>, long[]> conditionalData) {
-        Map<List<FrameKey>, Map<Long, Long>> sums = new HashMap<>();
+        Map<List<FrameKey>, Map<Arm, Long>> sums = new HashMap<>();
         for (Map.Entry<List<FrameKey>, long[]> entry : conditionalData.entrySet()) {
             List<FrameKey> context = entry.getKey();
             long[] records = entry.getValue();
             for (int depth = 1; depth <= context.size(); depth++) {
-                Map<Long, Long> counts = sums.computeIfAbsent(List.copyOf(context.subList(0, depth)), _ -> new LinkedHashMap<>());
-                for (int i = 0; i + 2 < records.length; i += 3) {
-                    /* A record is (successor bci, successor index, count); bci and index identify the arm. */
-                    counts.merge((records[i] << 32) | (records[i + 1] & 0xFFFF_FFFFL), records[i + 2], Long::sum);
+                Map<Arm, Long> counts = sums.computeIfAbsent(List.copyOf(context.subList(0, depth)), _ -> new LinkedHashMap<>());
+                for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
+                    counts.merge(new Arm(records[i], records[i + 1]), records[i + 2], Long::sum);
                 }
             }
         }
         Map<List<FrameKey>, long[]> result = new HashMap<>(sums.size());
         sums.forEach((context, counts) -> {
-            long[] records = new long[counts.size() * 3];
+            long[] records = new long[counts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
             int i = 0;
-            for (Map.Entry<Long, Long> arm : counts.entrySet()) {
-                records[i++] = arm.getKey() >> 32;
-                records[i++] = (int) (long) arm.getKey();
+            for (Map.Entry<Arm, Long> arm : counts.entrySet()) {
+                records[i++] = arm.getKey().successorBci();
+                records[i++] = arm.getKey().successorIndex();
                 records[i++] = arm.getValue();
             }
             result.put(context, records);
@@ -219,7 +231,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
     }
 
     /** Deterministic quality/summary information gathered while building the table. */
-    public ConditionalProfileDiagnostics diagnostics() {
+    public ConditionalProfileDiagnostics conditionalDiagnostics() {
         return diagnostics;
     }
 
@@ -386,7 +398,7 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         cleared = true;
     }
 
-    // --- Out-of-scope categories: intentionally empty for a conditional-only consumer -----------
+    // --- Call counts ---------------------------------------------------------------------------
 
     public Optional<Long> getContextCallCount(BytecodePosition callingContext) {
         if (cleared || !useCallCounts || callingContext == null) {
@@ -395,20 +407,24 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         return Optional.ofNullable(callCountsByContext.get(canonicalize(callingContext)));
     }
 
-    long getMethodCallCount(String methodDescriptor) {
-        return callCountsByMethod.getOrDefault(methodDescriptor, 0L);
-    }
-
-    public ConditionalProfileContextResolver.CallCountDiagnostics callCountDiagnostics() {
+    public IprofProfileResolver.CallCountDiagnostics callCountDiagnostics() {
         return callCountDiagnostics;
     }
 
     @Override
     public Optional<ProfiledValue<Long>> getCallCountProfile(HostedMethod method) {
-        if (cleared || !useCallCounts || method == null) {
+        if (method == null) {
             return Optional.empty();
         }
-        Long count = callCountsByMethod.get(ProfilingUtilities.methodDescriptor(method));
+        return methodCallCount(ProfilingUtilities.methodDescriptor(method));
+    }
+
+    /** The call count of the method with the given canonical descriptor, summed over all contexts. */
+    Optional<ProfiledValue<Long>> methodCallCount(String methodDescriptor) {
+        if (cleared || !useCallCounts) {
+            return Optional.empty();
+        }
+        Long count = callCountsByMethod.get(methodDescriptor);
         return count == null ? Optional.empty() : Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, count));
     }
 
@@ -470,11 +486,11 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         return cleared || !useStackSamples || sampleCounts.isEmpty() ? Optional.empty() : Optional.of(sampleCounts);
     }
 
-    public ConditionalProfileContextResolver.SamplingDiagnostics samplingDiagnostics() {
+    public IprofProfileResolver.SamplingDiagnostics samplingDiagnostics() {
         return samplingDiagnostics;
     }
 
-    public ConditionalProfileContextResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics() {
+    public IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics() {
         return virtualInvokeDiagnostics;
     }
 
@@ -508,6 +524,8 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
         return impossibleReceiverEvents.get();
     }
 
+    // --- Categories the iprof file does not record: answered as absent ----------------------
+
     @Override
     public Optional<Map<AnalysisMethod, Long>> getVirtualInvokeMethodProfile(BytecodePosition callingContext) {
         return Optional.empty();
@@ -525,11 +543,6 @@ public final class SimpleConditionalProfilesLookup implements PGOProfilesLookup 
 
     @Override
     public Optional<Map<AnalysisType, Long>> getMonitorProfiles() {
-        return Optional.empty();
-    }
-
-    @Override
-    public Optional<Map<JavaType, Long>> getInstanceofProfile(BytecodePosition callingContext) {
         return Optional.empty();
     }
 }

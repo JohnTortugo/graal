@@ -206,7 +206,11 @@ public final class SamplingHotness {
         return coldCompilationUnits.get();
     }
 
-    /** Per-graph provider consulted by the inliner, duplication, and hot-callee devirtualization. */
+    /**
+     * Per-graph provider. {@code hotCaller} lets the inliner devirtualize hot callees and apply
+     * profiles while it expands callees; self time gives hot code larger budgets in the phases that
+     * ask {@code GlobalProfilesOptimizationUtility}, such as duplication and loop unrolling.
+     */
     public StructuredGraph.GlobalProfileProvider providerFor(HostedMethod method) {
         double selfTime = SamplingInliningProvider.Options.PGOSamplingSelfTime.getValue() ? selfTimeShare(method) : StructuredGraph.GlobalProfileProvider.GLOBAL_PROFILE_PROVIDER_DISABLED;
         boolean hot = SamplingInliningProvider.Options.PGOSamplingHotCaller.getValue() && isSampled(method);
@@ -238,7 +242,7 @@ public final class SamplingHotness {
 
         @Override
         public boolean profileCategoryRecorded(String category) {
-            return SimpleConditionalProfilesLookup.SAMPLING_PROFILES_CATEGORY.equals(category);
+            return IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY.equals(category);
         }
 
         @Override

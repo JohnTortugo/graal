@@ -56,84 +56,6 @@ public final class PgoWorkload {
 
     // ---------------------------------------------------------------- receivers by context
 
-    static final class ProfiledLock {
-        private int value;
-
-        synchronized void increment() {
-            value++;
-        }
-
-        synchronized int value() {
-            return value;
-        }
-    }
-
-    static final class FallbackLock {
-        private int value;
-        private boolean released;
-
-        synchronized void increment() {
-            value++;
-        }
-
-        synchronized int value() {
-            return value;
-        }
-
-        synchronized void awaitRelease(CountDownLatch waiting) {
-            waiting.countDown();
-            while (!released) {
-                try {
-                    wait();
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("interrupted while waiting", exception);
-                }
-            }
-        }
-
-        synchronized void release() {
-            released = true;
-            notifyAll();
-        }
-    }
-
-    static long exerciseMonitorFallback(int records) {
-        ProfiledLock profiled = new ProfiledLock();
-        FallbackLock fallback = new FallbackLock();
-        int iterations = Math.max(1, records / 1000);
-        boolean exerciseFallback = (records & 1) != 0;
-        for (int i = 0; i < iterations; i++) {
-            profiled.increment();
-        }
-        if (exerciseFallback) {
-            int fallbackIterations = Math.max(10_000, iterations);
-            CountDownLatch waiting = new CountDownLatch(1);
-            Thread worker = new Thread(() -> {
-                fallback.awaitRelease(waiting);
-                for (int i = 0; i < fallbackIterations; i++) {
-                    fallback.increment();
-                }
-            });
-            worker.start();
-            try {
-                waiting.await();
-                fallback.release();
-                for (int i = 0; i < fallbackIterations; i++) {
-                    fallback.increment();
-                }
-                worker.join();
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("interrupted while exercising monitor fallback", exception);
-            }
-            if (fallback.value() != 2 * fallbackIterations) {
-                throw new IllegalStateException("lost updates through the secondary monitor map");
-            }
-        }
-        return profiled.value() * 31L + (exerciseFallback ? fallback.value() : 0);
-    }
-
     interface Shape {
         double area();
 
@@ -707,34 +629,6 @@ public final class PgoWorkload {
         }
     }
 
-    static final class FinalFieldHolder {
-        final int limit;
-
-        FinalFieldHolder(int limit) {
-            this.limit = limit;
-        }
-    }
-
-    static synchronized int finalFieldBarrier(FinalFieldHolder holder, int value) {
-        return value ^ (System.identityHashCode(holder) & 1);
-    }
-
-    static int finalFieldAcrossCall(FinalFieldHolder holder, int[] values) {
-        int sum = 0;
-        for (int i = 0; i < holder.limit; i++) {
-            sum += values[i] + finalFieldBarrier(holder, i);
-        }
-        return sum;
-    }
-
-    static int exerciseFinalField() {
-        int[] values = new int[256];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = i * 7;
-        }
-        return finalFieldAcrossCall(new FinalFieldHolder(128), values);
-    }
-
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
         int records = Integer.parseInt(args[1]);
@@ -771,11 +665,10 @@ public final class PgoWorkload {
         System.out.println("shapes=" + shapes + " bytes=" + data.length + " splits=" + splits + " units=" + units);
         ThreadLifecycleResult lifecycle = exerciseThreadLifecycle(records);
         ThreadLifecycleResult liveSnapshot = exerciseLiveSnapshot();
-        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles + " locks=" + exerciseMonitorFallback(records) +
+        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles +
                         " splitCalls=" + splitCalls + " switchChecksum=" + switchChecksum + " switchZero=" + switchZero + " switchOne=" + switchOne + " switchTwo=" + switchTwo +
                         " threadChecksum=" + lifecycle.checksum() + " threadTrue=" + lifecycle.trueCount() + " threadFalse=" + lifecycle.falseCount() +
-                        " liveChecksum=" + liveSnapshot.checksum() + " liveTrue=" + liveSnapshot.trueCount() + " liveFalse=" + liveSnapshot.falseCount() +
-                        " finals=" + exerciseFinalField());
+                        " liveChecksum=" + liveSnapshot.checksum() + " liveTrue=" + liveSnapshot.trueCount() + " liveFalse=" + liveSnapshot.falseCount());
     }
 
     /**

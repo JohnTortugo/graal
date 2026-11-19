@@ -31,13 +31,16 @@ import java.util.List;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
 
-/** Unit tests for {@link IprofConditionalParser}. */
-public class IprofConditionalParserTest {
+/**
+ * Unit tests for {@link IprofParser}: the sections it reads, the sections it skips, and the
+ * malformed input it rejects.
+ */
+public class IprofParserTest {
 
     private static final String TYPES_AND_METHODS = "\"types\":[" +
                     "{\"id\":4,\"name\":\"int\"}," +
@@ -52,7 +55,7 @@ public class IprofConditionalParserTest {
                     "],";
 
     private static ParsedProfile parse(String json) throws IOException {
-        return new IprofConditionalParser().parse(new StringReader(json));
+        return new IprofParser().parse(new StringReader(json));
     }
 
     private static String profile(String version, String conditionalProfiles) {
@@ -180,49 +183,14 @@ public class IprofConditionalParserTest {
     }
 
     @Test
-    public void ignoresRetiredPreciseConditionalProfilesSection() throws IOException {
-        // Profiles written before the precise branch-site section was retired still load: the
-        // section is skipped like any other unknown category, even if its content is malformed.
+    public void skipsSectionsItDoesNotRead() throws IOException {
+        /* The producer writes monitorProfiles, which nothing reads yet: skipped, even if malformed. */
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
                         "\"conditionalProfiles\":[{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}]," +
-                        "\"preciseConditionalProfiles\":[{\"stage\":\"UNKNOWN\",\"ctx\":\"1001:9\",\"successors\":[20,53]," +
-                        "\"conditionKind\":\"IntegerEqualsNode\",\"conditionFingerprint\":\"ab\",\"occurrence\":0,\"records\":[21,0,10]}]}";
+                        "\"monitorProfiles\":[{\"ctx\":\"not a context\",\"records\":[-1]}]}";
         ParsedProfile parsed = parse(json);
         Assert.assertEquals(1, parsed.conditionalEntries().size());
         Assert.assertArrayEquals(new long[]{20, 0, 10, 53, 1, 1}, parsed.conditionalEntries().getFirst().records());
-    }
-
-    @Test
-    public void parsesMonitorProfilesAndDistinguishesAbsentFromEmpty() throws IOException {
-        String withProfiles = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
-                        "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[100,7,101,3]}]}";
-        ParsedProfile parsed = parse(withProfiles);
-        Assert.assertTrue(parsed.monitorProfilesRecorded());
-        Assert.assertEquals(1, parsed.monitorEntries().size());
-        Assert.assertArrayEquals(new long[]{100, 7, 101, 3}, parsed.monitorEntries().get(0).records());
-
-        ParsedProfile empty = parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[]}");
-        Assert.assertTrue(empty.monitorProfilesRecorded());
-        Assert.assertTrue(empty.monitorEntries().isEmpty());
-
-        ParsedProfile absent = parse(profile("1.1.0", ""));
-        Assert.assertFalse(absent.monitorProfilesRecorded());
-        Assert.assertTrue(absent.monitorEntries().isEmpty());
-    }
-
-    @Test
-    public void rejectsMalformedMonitorProfiles() {
-        String prefix = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":";
-        assertRejected(() -> parse(prefix + "[100]}]}"), "not a multiple");
-        assertRejected(() -> parse(prefix + "[999,1]}]}"), "undeclared type id");
-        assertRejected(() -> parse(prefix + "[4,1]}]}"), "primitive type");
-        assertRejected(() -> parse(prefix + "[100,-1]}]}"), "Negative monitor count");
-        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":null}"), "must be a JSON array");
-        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"1001:0\",\"records\":[100,1]}]}"),
-                        "global sentinel");
-        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
-                        "\"conditionalProfiles\":[],\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[100,1]},{\"ctx\":\"0:0\",\"records\":[101,1]}]}"),
-                        "at most one");
     }
 
     private interface ThrowingParse {

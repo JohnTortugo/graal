@@ -1010,7 +1010,9 @@ def pgo_e2e_test_task(extra_image_args=None):
     checker_classpath = mx.classpath(['compiler:GRAAL_IGVUTIL', 'compiler:GRAAL'], unique=True)
     checker_dir = join(output_dir, 'effects-check')
     mx_util.ensure_dir_exists(checker_dir)
-    mx.run([mx.get_jdk().javac, '-cp', checker_classpath, '-d', checker_dir, join(test_dir, 'PgoEffectsCheck.java')])
+    # The checker uses compile-time constants of the compiler and of JVMCI, whose module is not visible to it by default.
+    mx.run([mx.get_jdk().javac, '--add-modules=jdk.internal.vm.ci', '--add-exports=jdk.internal.vm.ci/jdk.vm.ci.code=ALL-UNNAMED', '-cp', checker_classpath, '-d', checker_dir,
+            join(test_dir, 'PgoEffectsCheck.java')])
 
     train_a = ['1', '200000']
     train_b = ['2', '200000']
@@ -1077,6 +1079,9 @@ def pgo_e2e_test_task(extra_image_args=None):
                 mx.abort('PGO end-to-end check failed: ' + message)
 
         # 1. Instrumented images. The default one trains on two inputs, the variants on one.
+        # These builds also check the producer's own options (stack sampling and branch recording
+        # switched off, %p/%t dump paths, samples from joined and live threads), because those
+        # checks need the same training runs as the optimized builds below.
         # Instrumented images write a profile on every run; functional runs direct it to a scratch file.
         scratch_profile = '-XX:ProfilesDumpFile=' + join(output_dir, 'scratch.iprof')
         lifecycle_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.threadedBranch,' + main_class + '.liveSnapshotBranch,' + main_class +
@@ -1153,7 +1158,7 @@ def pgo_e2e_test_task(extra_image_args=None):
         # An instrumented image that compiles the workload's interface-call wrappers standalone
         # records their receivers under a one-frame context; optimized images inline the wrappers,
         # so the same sites are queried under deeper contexts and exercise the context fallback.
-        shallow_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.areaOf', '-H:NeverInline=' + main_class + '.kindOf', '-H:-PGOProfileMonitors'])
+        shallow_options = svm_experimental_options(['-H:NeverInline=' + main_class + '.areaOf', '-H:NeverInline=' + main_class + '.kindOf'])
         shallow_instrumented, _ = build('pgo-instrumented-shallow', ['--pgo-instrument'] + shallow_options)
         check_output('shallow instrumented image', [shallow_instrumented, scratch_profile])
         profile_shallow = join(output_dir, 'train-shallow.iprof')
@@ -1162,7 +1167,6 @@ def pgo_e2e_test_task(extra_image_args=None):
             expect(exists(profile) and os.path.getsize(profile) > 1000, 'profile not written: ' + profile)
         with open(profile_a, encoding='utf-8') as fp:
             default_profile_data = json.load(fp)
-        expect('monitorProfiles' in default_profile_data, 'default --pgo-instrument profile lacks monitorProfiles')
         expect(len(default_profile_data.get('samplingProfiles', [])) > 0, 'default --pgo-instrument profile lacks runtime stack samples')
         sampled_method_names = {entry['id']: entry['name'] for entry in default_profile_data['methods']}
         sampled_frames = {sampled_method_names.get(int(frame.split(':', 1)[0]))
@@ -1174,9 +1178,6 @@ def pgo_e2e_test_task(extra_image_args=None):
         call_only_data.pop('samplingProfiles', None)
         with open(call_only_profile, 'w', encoding='utf-8') as fp:
             json.dump(call_only_data, fp, separators=(',', ':'))
-        with open(profile_shallow, encoding='utf-8') as fp:
-            monitor_opt_out_data = json.load(fp)
-        expect('monitorProfiles' not in monitor_opt_out_data, '-H:-PGOProfileMonitors did not omit monitorProfiles')
 
         # 2. Reference without a profile.
         plain, _ = build('pgo-none', dump_options('none'))
@@ -1185,7 +1186,7 @@ def pgo_e2e_test_task(extra_image_args=None):
 
         # 3. Optimized variants. Each must resolve the whole profile and reproduce the JDK output.
         variants = [
-            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': 'profiled', 'early_hits': True}),
+            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': 'profiled', 'profile_hits': True}),
             ('pgo-receivers-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseReceiverProfiles', '-H:-PGOSamplingMethodProfiles']) +
              dump_options('receivers-disabled'), {'effects': 'profiled-receivers-disabled', 'receivers': False}),
             ('pgo-switches-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseSwitchProfiles']) + dump_options('switches-disabled'),
@@ -1210,11 +1211,11 @@ def pgo_e2e_test_task(extra_image_args=None):
                 expect('sampling overlap' in merge_summary, name + ': directory profiles were not merged with overlap diagnostics: ' + merge_summary)
             if checks.get('samples') is False:
                 expect(any('stack samples not used: -H:-PGOUseStackSamples' in line for line in build_log), name + ': the build does not report the unused stack samples')
-            if checks.get('early_hits'):
-                early_application = [line for line in build_log if re.search(r'\[PGO\] \d+ queries, \d+ hits', line)]
-                expect(len(early_application) == 1, name + ': missing early application summary: ' + str(early_application))
-                expect(summary_int(early_application[0], r'\d+ queries, (\d+) hits') > 0,
-                       name + ': no conditional profile matched in the early stage: ' + early_application[0])
+            if checks.get('profile_hits'):
+                application = [line for line in build_log if re.search(r'\[PGO\] \d+ queries, \d+ hits', line)]
+                expect(len(application) == 1, name + ': missing profile application summary: ' + str(application))
+                expect(summary_int(application[0], r'\d+ queries, (\d+) hits') > 0,
+                       name + ': no branch or switch profile matched a compiler query: ' + application[0])
             receiver_lines = [line for line in build_log if 'virtual invokes:' in line]
             expect(receiver_lines, name + ': build emitted no receiver-profile summary')
             hits = max(summary_int(line, r'(\d+) hits') for line in receiver_lines)

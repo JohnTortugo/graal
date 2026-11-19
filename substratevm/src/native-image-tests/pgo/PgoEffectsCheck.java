@@ -51,7 +51,9 @@ import jdk.graal.compiler.graphio.parsing.model.GraphDocument;
 import jdk.graal.compiler.graphio.parsing.model.InputEdge;
 import jdk.graal.compiler.graphio.parsing.model.InputGraph;
 import jdk.graal.compiler.graphio.parsing.model.InputNode;
+import jdk.graal.compiler.nodes.extended.BranchProbabilityNode;
 import jdk.graal.compiler.util.json.JsonParser;
+import jdk.vm.ci.code.BytecodeFrame;
 
 /**
  * Checks what PGO did to the compiled graphs of {@link PgoWorkload}, from the graph dumps a build
@@ -74,7 +76,6 @@ import jdk.graal.compiler.util.json.JsonParser;
  * the program printed for the training input, so the profile is checked against ground truth.
  */
 public final class PgoEffectsCheck {
-    private static final double EXTREMELY_SLOW_PATH_PROBABILITY = 0.000001;
     private static final double TOLERANCE = 1e-6;
 
     private static final Pattern PROBABILITY = Pattern.compile("^(\\w+) designatedSuccessorProbability: (\\S+)$");
@@ -329,7 +330,7 @@ public final class PgoEffectsCheck {
         /**
          * The records the consumer would use for this context: the exact chain, else the sum of all
          * entries whose chain starts with the longest matching part of it, outermost frames dropped
-         * first (the shortened-context fallback, {@code SimpleConditionalProfilesLookup}).
+         * first (the shortened-context fallback, {@code IprofProfilesLookup}).
          */
         List<long[]> conditionalFor(List<String> context) {
             List<long[]> exact = conditionals.get(context);
@@ -396,10 +397,10 @@ public final class PgoEffectsCheck {
         }
         long zeros = Arrays.stream(shares).filter(p -> p == 0.0).count();
         if (zeros > 0) {
-            double adjustment = zeros * EXTREMELY_SLOW_PATH_PROBABILITY;
-            double scale = 1 / (1 - (entries - zeros) * EXTREMELY_SLOW_PATH_PROBABILITY);
+            double adjustment = zeros * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
+            double scale = 1 / (1 - (entries - zeros) * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY);
             for (int e = 0; e < entries; e++) {
-                shares[e] = shares[e] == 0.0 ? EXTREMELY_SLOW_PATH_PROBABILITY : shares[e] - adjustment * (shares[e] - EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
+                shares[e] = shares[e] == 0.0 ? BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY : shares[e] - adjustment * (shares[e] - BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
             }
         }
         Map<Long, Double> byKey = new HashMap<>();
@@ -437,10 +438,10 @@ public final class PgoEffectsCheck {
         double[] probabilities = countByBci.values().stream().mapToDouble(c -> (double) c / sum).toArray();
         long zeros = Arrays.stream(probabilities).filter(p -> p == 0.0).count();
         if (zeros > 0) {
-            double adjustment = zeros * EXTREMELY_SLOW_PATH_PROBABILITY;
-            double scale = 1 / (1 - (probabilities.length - zeros) * EXTREMELY_SLOW_PATH_PROBABILITY);
+            double adjustment = zeros * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
+            double scale = 1 / (1 - (probabilities.length - zeros) * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY);
             for (int i = 0; i < probabilities.length; i++) {
-                probabilities[i] = probabilities[i] == 0.0 ? EXTREMELY_SLOW_PATH_PROBABILITY : probabilities[i] - adjustment * (probabilities[i] - EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
+                probabilities[i] = probabilities[i] == 0.0 ? BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY : probabilities[i] - adjustment * (probabilities[i] - BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
             }
         }
         Map<Integer, Double> result = new LinkedHashMap<>();
@@ -1015,11 +1016,13 @@ public final class PgoEffectsCheck {
     }
 
     /**
-     * The producer skips a branch whose position has a frame with {@code BytecodeFrame.UNKNOWN_BCI}
-     * (-5) or {@code BytecodeFrame.INVALID_FRAMESTATE_BCI} (-6).
+     * The producer skips a branch whose position has a frame with {@link BytecodeFrame#UNKNOWN_BCI}
+     * or {@link BytecodeFrame#INVALID_FRAMESTATE_BCI}.
      */
     private static boolean hasBytecodePositions(InputNode node) {
         List<String> context = context(node);
-        return !context.isEmpty() && context.stream().map(frame -> frame.substring(frame.lastIndexOf(':') + 1)).noneMatch(bci -> bci.equals("-5") || bci.equals("-6"));
+        String unknown = String.valueOf(BytecodeFrame.UNKNOWN_BCI);
+        String invalid = String.valueOf(BytecodeFrame.INVALID_FRAMESTATE_BCI);
+        return !context.isEmpty() && context.stream().map(frame -> frame.substring(frame.lastIndexOf(':') + 1)).noneMatch(bci -> bci.equals(unknown) || bci.equals(invalid));
     }
 }

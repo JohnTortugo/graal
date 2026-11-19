@@ -30,43 +30,47 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.oracle.svm.hosted.pgo.IprofConditionalParser;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
 
 import jdk.vm.ci.code.BytecodePosition;
 
+/**
+ * Unit tests for the {@code callCountProfiles} section: how the parser reads it and how the lookup
+ * resolves and answers it.
+ */
 public class CallCountProfileResolutionTest {
     private static final String PREFIX = "{\"version\":\"1.1.0\",\"types\":[{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"}]," +
                     "\"methods\":[{\"id\":7,\"name\":\"bar\",\"signature\":[1,2,3]},{\"id\":8,\"name\":\"caller\",\"signature\":[1,2,3]}],\"conditionalProfiles\":[],\"callCountProfiles\":";
 
     private static ParsedProfile parse(String entries) throws Exception {
-        return new IprofConditionalParser().parse(new StringReader(PREFIX + entries + "}"));
+        return new IprofParser().parse(new StringReader(PREFIX + entries + "}"));
     }
 
     @Test
     public void parsesResolvesAndAggregatesContexts() throws Exception {
         ParsedProfile parsed = parse("[{\"ctx\":\"7:0\",\"records\":[3]},{\"ctx\":\"7:0\",\"records\":[4]}]");
         Assert.assertEquals(2, parsed.callCountEntries().size());
-        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(ConditionalProfileContextResolverTest.BAR_DESC));
-        Assert.assertTrue(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
-        Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, ConditionalProfileContextResolverTest.mockBarMethod(), 0)).orElseThrow());
+        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).orElseThrow());
         Assert.assertEquals(2, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(7, lookup.callCountDiagnostics().totalCount());
 
         lookup.setUseCallCounts(false);
-        Assert.assertFalse(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
-        Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, ConditionalProfileContextResolverTest.mockBarMethod(), 0)).isEmpty());
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).isEmpty());
     }
 
     @Test
     public void missingOuterFrameDoesNotUndercountPresentMethod() throws Exception {
         ParsedProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
-        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, Set.of(ConditionalProfileContextResolverTest.BAR_DESC));
+        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());
-        Assert.assertTrue(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
-        Assert.assertEquals(9, lookup.getMethodCallCount(ConditionalProfileContextResolverTest.BAR_DESC));
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertEquals(Long.valueOf(9), lookup.methodCallCount(IprofProfileResolverTest.BAR_DESC).orElseThrow().value());
     }
 
     @Test(expected = IprofFormatException.class)

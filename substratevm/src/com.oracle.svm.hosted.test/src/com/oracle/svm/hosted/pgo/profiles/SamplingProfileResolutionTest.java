@@ -32,13 +32,17 @@ import java.util.Map;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.oracle.svm.hosted.pgo.IprofConditionalParser;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.SamplingEntry;
+import com.oracle.svm.hosted.pgo.IprofParser;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
 
+/**
+ * Unit tests for the {@code samplingProfiles} section: how the parser reads the sampled stacks and
+ * how the lookup resolves and hides them.
+ */
 public class SamplingProfileResolutionTest {
 
     private static final String TYPES_AND_METHODS = "\"types\":[" +
@@ -53,7 +57,7 @@ public class SamplingProfileResolutionTest {
 
     private static ParsedProfile parse(String samplingProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"samplingProfiles\":[" + samplingProfiles + "]}";
-        return new IprofConditionalParser().parse(new StringReader(json));
+        return new IprofParser().parse(new StringReader(json));
     }
 
     @Test
@@ -62,14 +66,14 @@ public class SamplingProfileResolutionTest {
         Assert.assertEquals(1, parsed.samplingEntries().size());
         SamplingEntry entry = parsed.samplingEntries().getFirst();
         Assert.assertEquals(42, entry.count());
-        Assert.assertEquals(List.of(1001, 1005), entry.context().stream().map(IprofConditionalParser.ContextFrame::methodId).toList());
+        Assert.assertEquals(List.of(1001, 1005), entry.context().stream().map(IprofParser.ContextFrame::methodId).toList());
         Assert.assertEquals(9, entry.context().getFirst().bci());
     }
 
     @Test
     public void sectionIsOptional() throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[]}";
-        ParsedProfile parsed = new IprofConditionalParser().parse(new StringReader(json));
+        ParsedProfile parsed = new IprofParser().parse(new StringReader(json));
         Assert.assertTrue(parsed.samplingEntries().isEmpty());
     }
 
@@ -90,31 +94,31 @@ public class SamplingProfileResolutionTest {
     @Test
     public void accountsForUnresolvableStacks() throws IOException {
         ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
-        SimpleConditionalProfilesLookup lookup = ConditionalProfileContextResolver.buildLookup(parsed, java.util.Set.of(ConditionalProfileContextResolverTest.BAR_DESC));
-        ConditionalProfileContextResolver.SamplingDiagnostics d = lookup.samplingDiagnostics();
+        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
+        IprofProfileResolver.SamplingDiagnostics d = lookup.samplingDiagnostics();
         Assert.assertEquals(2, d.totalEntries());
         Assert.assertEquals(0, d.resolvedEntries());
         Assert.assertEquals(2, d.unresolvedEntries());
         Assert.assertEquals(12, d.samples());
         Assert.assertEquals(12, d.droppedSamples());
         Assert.assertTrue(lookup.getSampleCounts().isEmpty());
-        Assert.assertFalse(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.SAMPLING_PROFILES_CATEGORY));
-        Assert.assertTrue(d.summary().contains(ConditionalProfileContextResolverTest.BAR_DESC));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Assert.assertTrue(d.summary().contains(IprofProfileResolverTest.BAR_DESC));
     }
 
     /*
      * -H:-PGOUseStackSamples: the lookup then answers as for a profile without stack samples, so no
-     * consumer sees them (sampled hotness, sampled callee profiles, intrinsics, layout).
+     * consumer sees them (sampled hotness, sampled callee profiles, self time).
      */
     @Test
     public void stackSamplesCanBeHidden() {
-        Map<NodeSourcePosition, Long> samples = Map.of(new NodeSourcePosition(null, ConditionalProfileContextResolverTest.mockBarMethod(), 9), 42L);
-        SimpleConditionalProfilesLookup lookup = new SimpleConditionalProfilesLookup(Map.of(), null, Map.of(), null, samples, null, Map.of(), Map.of(), null);
-        Assert.assertTrue(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Map<NodeSourcePosition, Long> samples = Map.of(new NodeSourcePosition(null, IprofProfileResolverTest.mockBarMethod(), 9), 42L);
+        IprofProfilesLookup lookup = new IprofProfilesLookup(Map.of(), null, Map.of(), null, samples, null, Map.of(), Map.of(), null);
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
         Assert.assertEquals(List.of(42L), List.copyOf(lookup.getSampleCounts().orElseThrow().values()));
 
         lookup.setUseStackSamples(false);
-        Assert.assertFalse(lookup.profileCategoryRecorded(SimpleConditionalProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
         Assert.assertTrue(lookup.getSampleCounts().isEmpty());
     }
 }
