@@ -50,7 +50,7 @@ public final class ProfileDumper {
 
     public static final class Options {
         @Option(help = "File path for the profile produced by a --pgo-instrument image. %p is replaced by the process id and %t by the time of the dump in " +
-                        "milliseconds, so that several training runs can write into one directory without overwriting each other.")//
+                        "milliseconds, so that several training runs can write into one directory without overwriting each other; pass that directory to --pgo.")//
         public static final RuntimeOptionKey<String> ProfilesDumpFile = new RuntimeOptionKey<>("default.iprof");
 
         @Option(help = "Print what the profile dump wrote and what each recorder saw, one line per profile kind. Disable with -XX:-ProfilesDumpStatistics.")//

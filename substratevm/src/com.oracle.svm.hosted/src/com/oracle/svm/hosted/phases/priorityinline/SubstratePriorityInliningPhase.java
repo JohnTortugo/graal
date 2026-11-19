@@ -29,8 +29,10 @@ import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPh
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -277,6 +279,8 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
     private class SubstrateCallTree extends CallTree {
         private final SubgraphNode root;
         private final IdentityHashMap<CallTreeNode, PrefixTree.Cursor> nodeContextMap = new IdentityHashMap<>();
+        /** Graph caches keyed by the caller context profiles are applied under. */
+        private final Map<List<Object>, GraphCache<ResolvedJavaMethod, StructuredGraph>> profileContextGraphCaches = new HashMap<>();
 
         SubstrateCallTree(Expander.Policy expanderPolicy, TuningPolicy tuningPolicy, HighTierContext context, GraphCache<ResolvedJavaMethod, StructuredGraph> graphCache, SubgraphNode root,
                         OptionValues options) {
@@ -313,7 +317,12 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
             HostedMethod inlinee = CompileQueue.selectInlineeMethod(caller, (HostedMethod) targetMethod);
             CompileQueue.verifyInliningProviders((HostedMethod) root.getReadonlySubgraph().method(), inlinee, runtimeConfig);
 
-            GraphCache<ResolvedJavaMethod, StructuredGraph> selectedGraphCache = getGraphCache(inOOMEProtectedInlineContext);
+            /*
+             * With profiles, the expanded graph carries the profile of this expansion's caller
+             * context, so it may only be shared with expansions of the same context.
+             */
+            GraphCache<ResolvedJavaMethod, StructuredGraph> selectedGraphCache = pgoProfiles != null ? profileContextGraphCache(replaceePosition, inOOMEProtectedInlineContext)
+                            : getGraphCache(inOOMEProtectedInlineContext);
             /*
              * Instrumented expansions carry counters keyed by this expansion's caller context, so a
              * cached copy would count every later expansion of the callee under the first context.
@@ -338,6 +347,27 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
             return ref;
         }
 
+        /**
+         * Returns the graph cache for expansions whose profile is applied under
+         * {@code replaceePosition}. Profiles are looked up with the full caller chain of that
+         * position (see {@link PGOApplyProfilesPhase#createPointContext}), so two expansions of a
+         * callee read the same profile exactly when their caller chains are equal.
+         */
+        private GraphCache<ResolvedJavaMethod, StructuredGraph> profileContextGraphCache(NodeSourcePosition replaceePosition, boolean inOOMEProtectedInlineContext) {
+            List<Object> key = new ArrayList<>();
+            key.add(inOOMEProtectedInlineContext);
+            for (NodeSourcePosition position = replaceePosition; position != null; position = position.getCaller()) {
+                key.add(position.getMethod());
+                key.add(position.getBCI());
+            }
+            GraphCache<ResolvedJavaMethod, StructuredGraph> cache = profileContextGraphCaches.get(key);
+            if (cache == null) {
+                cache = new GraphCache<>();
+                profileContextGraphCaches.put(key, cache);
+            }
+            return cache;
+        }
+
         @Override
         /*
          * TODO BS GR-42485 Refactor fully. Unify the two different devirtualization approaches used
@@ -359,6 +389,9 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 if (isCFunctionInvoke(inlineCacheNode.invoke())) {
                     return;
                 }
+                if (!hasReceiverFrequencyProfile(inlineCacheNode.invoke())) {
+                    continue;
+                }
                 List<SubgraphNode> hotSubgraphNodes = inlineCacheNode.children().stream().filter(e -> !(e instanceof GenericNode)).filter(this::isCallSiteToHotCaller).map(this::expandIfCutoff).filter(
                                 Objects::nonNull).collect(Collectors.toList());
                 if (!hotSubgraphNodes.isEmpty()) {
@@ -367,6 +400,18 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                                     });
                 }
             }
+        }
+
+        /**
+         * Hot-callee devirtualization guards an inline cache by receiver, so it has to know how
+         * often each receiver is dispatched. Stack samples do not carry that information: they weight
+         * a callee by the time spent under it, which favours long-running callees over frequently
+         * dispatched ones. Guarding a hot call site on a rarely dispatched receiver makes every
+         * dispatch pay for a failing guard, so only devirtualize when a frequency-based receiver
+         * profile backs the call site.
+         */
+        private static boolean hasReceiverFrequencyProfile(Invoke invoke) {
+            return invoke.callTarget() instanceof SubstrateMethodCallTargetNode target && target.hasDynamicTypeProfile();
         }
 
         private void devirtualizeIndirectCallTargetInvokes(CoreProviders coreProviders) {
@@ -444,7 +489,11 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
                 applyProfilesPhase.apply(graphCopy, highTierContext);
                 return;
             }
-            assert !UseGraphCache.getValue(getOptions());
+            /*
+             * The profile is applied for this expansion's context. The graph cache shares the
+             * resulting graph only with expansions of the same context (see
+             * profileContextGraphCache), so each expansion reads its own context's profile.
+             */
             assert inliningProvider != null : "Provider must not be null";
             PGOApplyProfilesPhase.createForExpandingCutoffs(replaceePosition, universe, pgoProfiles).apply(graphCopy, highTierContext);
         }
