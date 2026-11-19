@@ -36,22 +36,22 @@ import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.CallCountEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.SamplingEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.CallCountEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
+import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser;
+import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
-import com.oracle.svm.hosted.pgo.profiles.SimpleConditionalProfilesLookup.FrameKey;
+import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
 
 /**
  * Resolves a {@link ParsedProfile}'s conditional entries against a {@link HostedUniverse}, producing
- * the immutable table consumed by {@link SimpleConditionalProfilesLookup}.
+ * the immutable table consumed by {@link IprofProfilesLookup}.
  *
  * <p>
  * The core idea is a single canonical method-identity string in JVM-descriptor form, computed the
@@ -66,9 +66,9 @@ import jdk.graal.compiler.graph.NodeSourcePosition;
  * the {@link jdk.vm.ci.code.BytecodePosition} chains the compiler passes to the lookup, without
  * relying on {@code NodeSourcePosition} identity.
  */
-public final class ConditionalProfileContextResolver {
+public final class IprofProfileResolver {
 
-    private ConditionalProfileContextResolver() {
+    private IprofProfileResolver() {
     }
 
     /**
@@ -97,10 +97,6 @@ public final class ConditionalProfileContextResolver {
         return sb.toString();
     }
 
-    public static String descriptorForProfileType(int typeId, Map<Integer, String> typeNamesById) {
-        return descriptorForTypeId(typeId, typeNamesById);
-    }
-
     private static String descriptorForTypeId(int typeId, Map<Integer, String> typeNamesById) {
         String name = typeNamesById.get(typeId);
         return name == null ? null : toDescriptor(name);
@@ -118,7 +114,7 @@ public final class ConditionalProfileContextResolver {
      *
      * @param iprofTypeName a non-empty iprof type name.
      * @throws IllegalArgumentException if {@code iprofTypeName} is {@code null} or empty. The parser
-     *             already rejects empty type names strictly (see {@code IprofConditionalParser}),
+     *             already rejects empty type names strictly (see {@code IprofParser}),
      *             so this guard converts any remaining empty input into a clear failure rather than
      *             an opaque {@link String#charAt(int)} {@link StringIndexOutOfBoundsException}.
      */
@@ -162,7 +158,7 @@ public final class ConditionalProfileContextResolver {
      * slash that JVMCI renders as a dot in the descriptor ({@code LFoo$$Lambda.0x1234;}), so the two
      * characters are swapped rather than dots merely replaced.
      */
-    public static String binaryToInternalName(String binaryName) {
+    private static String binaryToInternalName(String binaryName) {
         StringBuilder result = new StringBuilder(binaryName.length());
         for (int i = 0; i < binaryName.length(); i++) {
             char c = binaryName.charAt(i);
@@ -176,15 +172,15 @@ public final class ConditionalProfileContextResolver {
      *
      * @return a fully constructed, immutable lookup.
      */
-    public static SimpleConditionalProfilesLookup resolve(ParsedProfile profile, HostedUniverse universe) {
+    public static IprofProfilesLookup resolve(ParsedProfile profile, HostedUniverse universe) {
         return buildLookup(profile, indexUniverseMethods(universe), indexUniverseTypes(universe));
     }
 
-    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
+    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
         return buildLookup(profile, presentDescriptors, Map.of());
     }
 
-    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
+    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
         Map<String, HostedMethod> methods = new HashMap<>();
         for (String descriptor : presentDescriptors) {
             methods.put(descriptor, null);
@@ -202,7 +198,7 @@ public final class ConditionalProfileContextResolver {
      *            descriptor (see {@link ProfilingUtilities#methodDescriptor}).
      * @param typesByDescriptor types available in the image, keyed by their descriptor.
      */
-    static SimpleConditionalProfilesLookup buildLookup(ParsedProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
+    static IprofProfilesLookup buildLookup(ParsedProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
         Set<String> presentDescriptors = methodsByDescriptor.keySet();
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
         Map<List<FrameKey>, long[]> conditionalTable = new HashMap<>();
@@ -240,16 +236,23 @@ public final class ConditionalProfileContextResolver {
         Map<List<FrameKey>, Long> callCountsByContext = new HashMap<>();
         Map<String, Long> callCountsByMethod = new HashMap<>();
         CallCountDiagnostics callCountDiagnostics = resolveCallCounts(profile, descriptorByMethodId, presentDescriptors, callCountsByContext, callCountsByMethod);
-        return new SimpleConditionalProfilesLookup(conditionalTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics,
+        return new IprofProfilesLookup(conditionalTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics,
                         callCountsByMethod, callCountsByContext, callCountDiagnostics);
     }
 
+    /** Resolution statistics for the {@code callCountProfiles} section. */
     public record CallCountDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, long totalCount) {
         public String summary() {
             return String.format("iprof callCountProfiles: %d entries, %d resolved, %d unresolved; total count %d", totalEntries, resolvedEntries, unresolvedEntries, totalCount);
         }
     }
 
+    /**
+     * Resolves {@code callCountProfiles}. A context counts calls of its innermost method made from
+     * that chain of callers. The count is added to the context only if every frame is in the image,
+     * as for conditional entries. It is added to the method's total whenever the method itself is
+     * in the image, so a caller that the image lacks does not lower the method's count.
+     */
     private static CallCountDiagnostics resolveCallCounts(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<List<FrameKey>, Long> byContext, Map<String, Long> byMethod) {
         int resolved = 0;
@@ -308,7 +311,7 @@ public final class ConditionalProfileContextResolver {
             }
             Map<AnalysisType, Long> receivers = new HashMap<>();
             long[] raw = entry.records();
-            for (int i = 0; i < raw.length; i += IprofConditionalParser.VIRTUAL_INVOKE_RECORD_SIZE) {
+            for (int i = 0; i < raw.length; i += IprofParser.VIRTUAL_INVOKE_RECORD_SIZE) {
                 records++;
                 long count = raw[i + 1];
                 events += count;
@@ -338,9 +341,12 @@ public final class ConditionalProfileContextResolver {
     /** Resolution statistics for the {@code samplingProfiles} section. */
     public record SamplingDiagnostics(int totalEntries, int resolvedEntries, int truncatedEntries, int unresolvedEntries, long samples, long droppedSamples,
                     int distinctMethods, Map<String, Long> missingFrameSamples) {
+        /** How many of the unresolvable frames with the most samples the summary names. */
+        private static final int REPORTED_MISSING_FRAMES = 8;
+
         public String summary() {
             StringBuilder missing = new StringBuilder();
-            missingFrameSamples.entrySet().stream().sorted((a, b) -> Long.compare(b.getValue(), a.getValue())).limit(8)
+            missingFrameSamples.entrySet().stream().sorted((a, b) -> Long.compare(b.getValue(), a.getValue())).limit(REPORTED_MISSING_FRAMES)
                             .forEach(e -> missing.append(missing.isEmpty() ? "" : ", ").append(e.getKey()).append('=').append(e.getValue()));
             return String.format("iprof samplingProfiles: %d stacks, %d fully resolved, %d truncated at an unresolvable outer frame, %d unresolved; " +
                             "samples %d (%d dropped); %d distinct methods; top unresolvable frames by samples: %s",

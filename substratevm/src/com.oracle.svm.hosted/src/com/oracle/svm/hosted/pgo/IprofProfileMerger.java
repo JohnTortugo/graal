@@ -27,26 +27,28 @@ package com.oracle.svm.hosted.pgo;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.CallCountEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ConditionalEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.MonitorEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.SamplingEntry;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.VirtualInvokeEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.CallCountEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
+import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
+import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 
 /**
  * Merges several parsed iprof files into one, the way {@code llvm-profdata merge} and
  * {@code gcov-tool merge} combine training runs: type and method ids of every input are remapped
  * into one namespace by their canonical identity, and the counts of entries with the same identity
  * are added, each input scaled by its weight.
- *
+ * <p>
  * Counts add correctly only across runs of the same instrumented image (or images whose contexts
  * still resolve); entries that no longer resolve are dropped by the resolver as for a single file.
  * The relative importance of each input is proportional to its counts, so a longer training run
@@ -64,18 +66,20 @@ public final class IprofProfileMerger {
         }
     }
 
+    /**
+     * The identity of a method across files: the names of its declaring class, return type and
+     * parameter types, and its name. Ids differ between files; this identity does not.
+     */
     private record MethodIdentity(String declaringType, String name, String returnType, List<String> parameterTypes) {
     }
 
     private final Map<String, Integer> typeIds = new LinkedHashMap<>();
     private final Map<MethodIdentity, Integer> methodIds = new LinkedHashMap<>();
     private final Map<Integer, MethodDescriptor> methodsById = new LinkedHashMap<>();
-    private final Map<List<ContextFrame>, Map<Long, Long>> conditionals = new LinkedHashMap<>();
+    private final Map<List<ContextFrame>, Map<Arm, Long>> conditionals = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Long> callCounts = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Map<Integer, Long>> receivers = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Long> samples = new LinkedHashMap<>();
-    private final Map<Integer, Long> monitors = new LinkedHashMap<>();
-    private boolean monitorProfilesRecorded = true;
     private String version;
 
     private IprofProfileMerger() {
@@ -109,7 +113,7 @@ public final class IprofProfileMerger {
     private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedProfile profile) {
         Map<MethodIdentity, Long> counts = new HashMap<>();
         for (SamplingEntry entry : profile.samplingEntries()) {
-            java.util.Set<Integer> seen = new java.util.HashSet<>();
+            Set<Integer> seen = new HashSet<>();
             for (ContextFrame frame : entry.context()) {
                 if (seen.add(frame.methodId())) {
                     MethodDescriptor method = profile.methodsById().get(frame.methodId());
@@ -172,23 +176,12 @@ public final class IprofProfileMerger {
         for (VirtualInvokeEntry entry : profile.virtualInvokeEntries()) {
             Map<Integer, Long> counts = receivers.computeIfAbsent(remap(entry.context(), methodMap), _ -> new LinkedHashMap<>());
             long[] records = entry.records();
-            for (int i = 0; i + 1 < records.length; i += 2) {
+            for (int i = 0; i + 1 < records.length; i += IprofParser.VIRTUAL_INVOKE_RECORD_SIZE) {
                 counts.merge(typeMap.get((int) records[i]), scale(records[i + 1], weight), IprofProfileMerger::addCounts);
             }
         }
         for (SamplingEntry entry : profile.samplingEntries()) {
             samples.merge(remap(entry.context(), methodMap), scale(entry.count(), weight), IprofProfileMerger::addCounts);
-        }
-        /*
-         * Absence means that input did not record monitor behavior, not that it observed zero
-         * monitor operations. Only an all-instrumented input set is safe for field omission.
-         */
-        monitorProfilesRecorded &= profile.monitorProfilesRecorded();
-        for (MonitorEntry entry : profile.monitorEntries()) {
-            long[] records = entry.records();
-            for (int i = 0; i + 1 < records.length; i += 2) {
-                monitors.merge(typeMap.get((int) records[i]), scaleObservedCount(records[i + 1], weight), IprofProfileMerger::addCounts);
-            }
         }
     }
 
@@ -212,32 +205,30 @@ public final class IprofProfileMerger {
         return result;
     }
 
-    /** Records are {@code [successorBci, branchIndex, count]} triples; the key packs the first two. */
-    private static void addRecords(Map<Long, Long> target, long[] records, double weight) {
-        for (int i = 0; i + 2 < records.length; i += 3) {
-            long key = (records[i] << 32) | (records[i + 1] & 0xFFFFFFFFL);
-            target.merge(key, scale(records[i + 2], weight), IprofProfileMerger::addCounts);
+    /** A branch or switch arm of a conditional record: its successor bci and successor index. */
+    private record Arm(long successorBci, long successorIndex) {
+    }
+
+    /** Adds conditional records, {@code [successorBci, successorIndex, count]} triples, by arm. */
+    private static void addRecords(Map<Arm, Long> target, long[] records, double weight) {
+        for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
+            target.merge(new Arm(records[i], records[i + 1]), scale(records[i + 2], weight), IprofProfileMerger::addCounts);
         }
     }
 
-    private static long[] toRecords(Map<Long, Long> counts) {
+    private static long[] toRecords(Map<Arm, Long> counts) {
         long total = 0;
         for (long count : counts.values()) {
             total = addCounts(total, count);
         }
-        long[] result = new long[counts.size() * 3];
+        long[] result = new long[counts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
         int i = 0;
-        for (Map.Entry<Long, Long> entry : counts.entrySet()) {
-            result[i++] = entry.getKey() >> 32;
-            result[i++] = (int) (entry.getKey() & 0xFFFFFFFFL);
+        for (Map.Entry<Arm, Long> entry : counts.entrySet()) {
+            result[i++] = entry.getKey().successorBci();
+            result[i++] = entry.getKey().successorIndex();
             result[i++] = entry.getValue();
         }
         return result;
-    }
-
-    private static long scaleObservedCount(long count, double weight) {
-        long scaled = scale(count, weight);
-        return count > 0 ? Math.max(1, scaled) : scaled;
     }
 
     private static long scale(long count, double weight) {
@@ -271,7 +262,7 @@ public final class IprofProfileMerger {
         callCounts.forEach((context, count) -> callCountEntries.add(new CallCountEntry(context, count)));
         List<VirtualInvokeEntry> receiverEntries = new ArrayList<>();
         receivers.forEach((context, counts) -> {
-            long[] records = new long[counts.size() * 2];
+            long[] records = new long[counts.size() * IprofParser.VIRTUAL_INVOKE_RECORD_SIZE];
             int i = 0;
             for (Map.Entry<Integer, Long> entry : counts.entrySet()) {
                 records[i++] = entry.getKey();
@@ -281,14 +272,6 @@ public final class IprofProfileMerger {
         });
         List<SamplingEntry> samplingEntries = new ArrayList<>();
         samples.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
-        long[] monitorRecords = new long[monitors.size() * 2];
-        int monitorIndex = 0;
-        for (Map.Entry<Integer, Long> entry : monitors.entrySet()) {
-            monitorRecords[monitorIndex++] = entry.getKey();
-            monitorRecords[monitorIndex++] = entry.getValue();
-        }
-        List<MonitorEntry> monitorEntries = monitorProfilesRecorded ? List.of(new MonitorEntry(monitorRecords)) : List.of();
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, receiverEntries, samplingEntries,
-                        monitorEntries, monitorProfilesRecorded);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, receiverEntries, samplingEntries);
     }
 }

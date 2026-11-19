@@ -33,9 +33,9 @@ import org.junit.Test;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 
 /**
- * Exercises the public conditional-probability math on {@link PGOApplyProfilesPhase} that the
- * conditional-only consumer relies on. These are pure functions over the {@code long[]} record
- * arrays produced by {@link IprofConditionalParser}, so no image build is required.
+ * Exercises the public branch and switch probability math on {@link PGOApplyProfilesPhase} that
+ * {@code --pgo} relies on. These are pure functions over the {@code long[]} record arrays produced
+ * by {@link IprofParser}, so no image build is required.
  */
 public class ConditionalProbabilityMathTest {
 

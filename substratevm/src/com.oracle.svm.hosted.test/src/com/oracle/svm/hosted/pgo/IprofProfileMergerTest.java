@@ -32,13 +32,16 @@ import java.util.Map;
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ContextFrame;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofConditionalParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
+import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
 import com.oracle.svm.hosted.pgo.IprofProfileMerger.WeightedProfile;
 
-/** Unit tests for {@link IprofProfileMerger}. */
+/**
+ * Unit tests for {@link IprofProfileMerger}: ids are remapped across files, counts are added with
+ * their weights, and the sampling overlap compares runs.
+ */
 public class IprofProfileMergerTest {
 
     /* Two files describing the same program with different id assignments. */
@@ -48,8 +51,7 @@ public class IprofProfileMergerTest {
                     "\"conditionalProfiles\":[{\"ctx\":\"1:9\",\"records\":[20,0,10,53,1,1]}]," +
                     "\"callCountProfiles\":[{\"ctx\":\"2:0<1:30\",\"records\":[100]}]," +
                     "\"virtualInvokeProfiles\":[{\"ctx\":\"1:40\",\"records\":[101,7]}]," +
-                    "\"samplingProfiles\":[{\"ctx\":\"2:5<1:30\",\"records\":[3]}]," +
-                    "\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[101,7]}]}";
+                    "\"samplingProfiles\":[{\"ctx\":\"2:5<1:30\",\"records\":[3]}]}";
 
     private static final String SECOND = "{\"version\":\"1.1.0\"," +
                     "\"types\":[{\"id\":0,\"name\":\"com.example.Impl\"},{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"},{\"id\":5,\"name\":\"com.example.Other\"}]," +
@@ -57,11 +59,10 @@ public class IprofProfileMergerTest {
                     "\"conditionalProfiles\":[{\"ctx\":\"8:9\",\"records\":[20,0,5,53,1,9]},{\"ctx\":\"9:3\",\"records\":[6,0,1,8,1,1]}]," +
                     "\"callCountProfiles\":[{\"ctx\":\"7:0<8:30\",\"records\":[50]}]," +
                     "\"virtualInvokeProfiles\":[{\"ctx\":\"8:40\",\"records\":[0,1,5,2]}]," +
-                    "\"samplingProfiles\":[{\"ctx\":\"7:5<8:30\",\"records\":[1]},{\"ctx\":\"9:3\",\"records\":[4]}]," +
-                    "\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[0,1,5,2]}]}";
+                    "\"samplingProfiles\":[{\"ctx\":\"7:5<8:30\",\"records\":[1]},{\"ctx\":\"9:3\",\"records\":[4]}]}";
 
     private static ParsedProfile parse(String json) throws IOException {
-        return new IprofConditionalParser().parse(new StringReader(json));
+        return new IprofParser().parse(new StringReader(json));
     }
 
     private static int methodId(ParsedProfile profile, String name) {
@@ -108,35 +109,6 @@ public class IprofProfileMergerTest {
 
         Assert.assertEquals(2, merged.samplingEntries().size());
         Assert.assertEquals(3 + 2 * 1, merged.samplingEntries().stream().filter(e -> e.context().size() == 2).findFirst().orElseThrow().count());
-
-        Assert.assertTrue(merged.monitorProfilesRecorded());
-        Assert.assertEquals(1, merged.monitorEntries().size());
-        long[] monitors = merged.monitorEntries().get(0).records();
-        Assert.assertEquals(4, monitors.length);
-        Assert.assertEquals(typeId(merged, "com.example.Impl"), (int) monitors[0]);
-        Assert.assertEquals(7 + 2 * 1, monitors[1]);
-        Assert.assertEquals(typeId(merged, "com.example.Other"), (int) monitors[2]);
-        Assert.assertEquals(2 * 2, monitors[3]);
-    }
-
-    @Test
-    public void positiveMonitorCountsSurviveFractionalWeights() throws IOException {
-        ParsedProfile merged = IprofProfileMerger.merge(List.of(new WeightedProfile(parse(SECOND), 0.1)));
-        long[] records = merged.monitorEntries().getFirst().records();
-
-        Assert.assertTrue(merged.monitorProfilesRecorded());
-        Assert.assertEquals(4, records.length);
-        Assert.assertEquals(1, records[1]);
-        Assert.assertEquals(1, records[3]);
-    }
-
-    @Test
-    public void mixedMonitorCategoryPresenceDisablesMergedMonitorProfile() throws IOException {
-        String firstWithoutMonitors = FIRST.replace(",\"monitorProfiles\":[{\"ctx\":\"0:0\",\"records\":[101,7]}]", "");
-        ParsedProfile merged = IprofProfileMerger.merge(List.of(new WeightedProfile(parse(firstWithoutMonitors), 1.0), new WeightedProfile(parse(SECOND), 1.0)));
-
-        Assert.assertFalse(merged.monitorProfilesRecorded());
-        Assert.assertTrue(merged.monitorEntries().isEmpty());
     }
 
     @Test

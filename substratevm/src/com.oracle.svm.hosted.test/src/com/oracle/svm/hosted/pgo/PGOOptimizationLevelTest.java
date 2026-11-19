@@ -45,7 +45,7 @@ public class PGOOptimizationLevelTest {
 
     private static final List<Consumer<EconomicMap<OptionKey<?>, Object>>> PGO_OPTIONS = List.of(
                     values -> PGOInstrumentationFeature.Options.PGOInstrument.update(values, true),
-                    values -> PGOConditionalProfilesFeature.Options.ConditionalProfilesUse.update(values, "app.iprof"));
+                    values -> PGOProfileUseFeature.Options.PGOProfileUse.update(values, "app.iprof"));
 
     private static EconomicMap<OptionKey<?>, Object> builderDefaults() {
         EconomicMap<OptionKey<?>, Object> values = OptionValues.newOptionMap();
@@ -90,7 +90,7 @@ public class PGOOptimizationLevelTest {
     public void optionsThatEnableNoPGOLeaveTheLevel() {
         EconomicMap<OptionKey<?>, Object> values = builderDefaults();
         PGOInstrumentationFeature.Options.PGOInstrument.update(values, false);
-        PGOConditionalProfilesFeature.Options.ConditionalProfilesUse.update(values, "");
+        PGOProfileUseFeature.Options.PGOProfileUse.update(values, "");
         Assert.assertEquals(SubstrateOptions.Optimize.getDefaultValue(), values.get(SubstrateOptions.Optimize));
     }
 }

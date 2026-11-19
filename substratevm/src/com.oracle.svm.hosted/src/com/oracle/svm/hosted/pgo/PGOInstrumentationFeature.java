@@ -229,7 +229,7 @@ public final class PGOInstrumentationFeature implements InternalFeature {
             /* Below -O3 the priority inliner explores less, so code only -O3 inlines gets no sites in its caller's context. */
             LogUtils.warning("--pgo-instrument should be used with -O3, the level of the optimized build; otherwise code that only -O3 inlines is profiled without its caller's context");
         }
-        if (PGOConditionalProfilesFeature.anyProfileEnabled()) {
+        if (PGOProfileUseFeature.enabled()) {
             throw UserError.abort("Profile instrumentation and profile consumption cannot be used in the same image build");
         }
         RuntimeSupport.getRuntimeSupport().addTearDownHook(ProfileDumper.getTeardownHook());

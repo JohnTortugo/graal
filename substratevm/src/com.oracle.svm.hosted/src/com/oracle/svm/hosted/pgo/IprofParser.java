@@ -39,23 +39,20 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import jdk.graal.compiler.util.json.JsonParser;
 
 /**
- * Reader for the iprof file format categories consumed by CE Native Image PGO.
- * The parser is intentionally free of any Native Image singletons or universe state so it can be
- * unit-tested in isolation; method-id resolution against the {@code HostedUniverse} happens later
- * (see {@code PGOConditionalProfilesFeature}).
- *
+ * Reader for the iprof files that {@code --pgo-instrument} images write and {@code --pgo} reads.
+ * The parser is free of any Native Image singletons or universe state so it can be unit-tested in
+ * isolation; method ids are resolved against the {@code HostedUniverse} later (see
+ * {@code IprofProfileResolver}).
  * <p>
- * The {@code conditionalProfiles}, call-count, virtual-invoke, sampling, and monitor sections are
- * consumed. Other categories are ignored. Monitor records are
- * parsed as global dynamic-type counts; their standard entry context is validated but otherwise
- * unused.
- *
+ * It reads the {@code conditionalProfiles}, {@code callCountProfiles},
+ * {@code virtualInvokeProfiles} and {@code samplingProfiles} sections. Other sections, such as
+ * {@code monitorProfiles}, are skipped without being validated, because nothing reads them.
  * <p>
  * {@code version}, {@code types} and {@code methods} are required and strictly validated. The
  * {@code conditionalProfiles} section is <em>optional</em> per the iprof schema: when it is absent
- * the document is well-formed and parses with an empty conditional-entry list (the consumer is
- * expected to warn that no applicable profile was found). When it IS present it must be a JSON
- * array whose entries are structurally valid.
+ * the document is well-formed and parses with an empty conditional-entry list
+ * ({@code PGOProfileUseFeature} then warns that the profile has no branch profiles). When it IS
+ * present it must be a JSON array whose entries are structurally valid.
  *
  * <p>
  * Supported schema versions are {@value #VERSION_1_0_0} and {@value #VERSION_1_1_0}; the
@@ -64,7 +61,7 @@ import jdk.graal.compiler.util.json.JsonParser;
  * length is not a multiple of {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE}) is rejected
  * with an {@link IprofFormatException}.
  */
-public final class IprofConditionalParser {
+public final class IprofParser {
 
     public static final String VERSION_1_0_0 = "1.0.0";
     public static final String VERSION_1_1_0 = "1.1.0";
@@ -76,7 +73,6 @@ public final class IprofConditionalParser {
     private static final String KEY_CALL_COUNT_PROFILES = "callCountProfiles";
     private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
     private static final String KEY_SAMPLING_PROFILES = "samplingProfiles";
-    private static final String KEY_MONITOR_PROFILES = "monitorProfiles";
     private static final String KEY_ID = "id";
     private static final String KEY_NAME = "name";
     private static final String KEY_SIGNATURE = "signature";
@@ -125,10 +121,10 @@ public final class IprofConditionalParser {
     public record SamplingEntry(List<ContextFrame> context, long count) {
     }
 
-    /** One parsed {@code monitorProfiles} entry containing {@code [typeId, count]} pairs. */
-    public record MonitorEntry(long[] records) {
-    }
-
+    /**
+     * One entry of the {@code methods} table: the method's id in the file, its name, and the type
+     * ids of its declaring class, return type and parameters.
+     */
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
@@ -141,13 +137,10 @@ public final class IprofConditionalParser {
         private final List<CallCountEntry> callCountEntries;
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         private final List<SamplingEntry> samplingEntries;
-        private final List<MonitorEntry> monitorEntries;
-        private final boolean monitorProfilesRecorded;
 
         ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries,
-                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries,
-                        List<MonitorEntry> monitorEntries, boolean monitorProfilesRecorded) {
+                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
@@ -155,8 +148,6 @@ public final class IprofConditionalParser {
             this.callCountEntries = Collections.unmodifiableList(callCountEntries);
             this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
             this.samplingEntries = Collections.unmodifiableList(samplingEntries);
-            this.monitorEntries = Collections.unmodifiableList(monitorEntries);
-            this.monitorProfilesRecorded = monitorProfilesRecorded;
         }
 
         public String version() {
@@ -185,14 +176,6 @@ public final class IprofConditionalParser {
 
         public List<SamplingEntry> samplingEntries() {
             return samplingEntries;
-        }
-
-        public List<MonitorEntry> monitorEntries() {
-            return monitorEntries;
-        }
-
-        public boolean monitorProfilesRecorded() {
-            return monitorProfilesRecorded;
         }
     }
 
@@ -224,7 +207,7 @@ public final class IprofConditionalParser {
          * conditionalProfiles is an optional category per the iprof schema. When the section is
          * absent the file is well-formed; it simply carries no conditional data. We parse this as
          * an empty list rather than rejecting the file as malformed. The consumer
-         * (PGOConditionalProfilesFeature) is responsible for emitting a prominent
+         * (PGOProfileUseFeature) is responsible for emitting a prominent
          * no-applicable-profile warning in that case. When the key IS present it must still be a
          * JSON array and every entry must be structurally valid.
          */
@@ -232,11 +215,8 @@ public final class IprofConditionalParser {
         List<CallCountEntry> callCountEntries = optionalCallCountProfiles(top);
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
         List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
-        boolean monitorProfilesRecorded = top.containsKey(KEY_MONITOR_PROFILES);
-        List<MonitorEntry> monitorEntries = optionalMonitorProfiles(top, typeNamesById);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries,
-                        monitorEntries, monitorProfilesRecorded);
+        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {
@@ -375,52 +355,6 @@ public final class IprofConditionalParser {
             case "boolean", "byte", "short", "char", "int", "long", "float", "double", "void" -> true;
             default -> false;
         };
-    }
-
-    /** Returns parsed {@code monitorProfiles}; records are {@code [typeId, count]} pairs. */
-    private static List<MonitorEntry> optionalMonitorProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
-        if (!top.containsKey(KEY_MONITOR_PROFILES)) {
-            return Collections.emptyList();
-        }
-        Object value = top.get(KEY_MONITOR_PROFILES);
-        if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + KEY_MONITOR_PROFILES + "' must be a JSON array");
-        }
-        @SuppressWarnings("unchecked")
-        List<Object> profiles = (List<Object>) value;
-        if (profiles.size() > 1) {
-            throw new IprofFormatException("Key '" + KEY_MONITOR_PROFILES + "' must contain at most one global entry");
-        }
-        List<MonitorEntry> result = new ArrayList<>(profiles.size());
-        for (Object element : profiles) {
-            EconomicMap<String, Object> entry = asObject(element, KEY_MONITOR_PROFILES);
-            String ctx = requireString(entry, KEY_CTX);
-            if (!"0:0".equals(ctx)) {
-                throw new IprofFormatException("Monitor profile context must be the global sentinel '0:0' but found '" + ctx + "'");
-            }
-            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
-            if (rawRecords.size() % VIRTUAL_INVOKE_RECORD_SIZE != 0) {
-                throw new IprofFormatException("Monitor records length " + rawRecords.size() + " for context '" + ctx + "' is not a multiple of " + VIRTUAL_INVOKE_RECORD_SIZE);
-            }
-            long[] records = new long[rawRecords.size()];
-            for (int i = 0; i < rawRecords.size(); i++) {
-                records[i] = asLong(rawRecords.get(i), KEY_RECORDS);
-            }
-            for (int i = 0; i < records.length; i += VIRTUAL_INVOKE_RECORD_SIZE) {
-                if (records[i] < 0 || records[i] > Integer.MAX_VALUE || !typeNamesById.containsKey((int) records[i])) {
-                    throw new IprofFormatException("Monitor context '" + ctx + "' references undeclared type id " + records[i]);
-                }
-                int typeId = (int) records[i];
-                if (isPrimitiveProfileType(typeNamesById.get(typeId))) {
-                    throw new IprofFormatException("Monitor context '" + ctx + "' references primitive type " + typeNamesById.get(typeId));
-                }
-                if (records[i + 1] < 0) {
-                    throw new IprofFormatException("Negative monitor count for context '" + ctx + "'");
-                }
-            }
-            result.add(new MonitorEntry(records));
-        }
-        return result;
     }
 
     /** Returns the parsed {@code samplingProfiles} entries; each has exactly one record, the sample count. */
