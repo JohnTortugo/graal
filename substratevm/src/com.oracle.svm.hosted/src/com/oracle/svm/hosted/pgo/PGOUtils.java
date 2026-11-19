@@ -61,10 +61,11 @@ public final class PGOUtils {
     }
 
     /**
-     * Raises the default optimization level to {@code -O3}, the level of the optimized build, for
-     * the instrumented build ({@code --pgo-instrument}). Below {@code -O3} the priority inliner
-     * explores less, so the instrumented build would profile code that only {@code -O3} inlines
-     * without its caller's context.
+     * Raises the default optimization level to {@code -O3}: both PGO builds run at {@code -O3}.
+     * Below {@code -O3} the priority inliner explores less, so the instrumented build
+     * ({@code --pgo-instrument}) would profile code that only {@code -O3} inlines without its
+     * caller's context, and the optimized build ({@code --pgo}) would inline less than the profile
+     * was recorded for and leave those records unused.
      * <p>
      * The builder sets {@code -O} to its default before it parses the command line, so an explicit
      * {@code -O2} cannot be told apart from none. A level that still holds the default is raised to
