@@ -52,7 +52,7 @@ public class CallCountProfileResolutionTest {
     public void parsesResolvesAndAggregatesContexts() throws Exception {
         ParsedProfile parsed = parse("[{\"ctx\":\"7:0\",\"records\":[3]},{\"ctx\":\"7:0\",\"records\":[4]}]");
         Assert.assertEquals(2, parsed.callCountEntries().size());
-        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
+        IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
         Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).orElseThrow());
         Assert.assertEquals(2, lookup.callCountDiagnostics().resolvedEntries());
@@ -66,7 +66,7 @@ public class CallCountProfileResolutionTest {
     @Test
     public void missingOuterFrameDoesNotUndercountPresentMethod() throws Exception {
         ParsedProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
-        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
+        IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));

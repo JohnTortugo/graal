@@ -170,6 +170,11 @@ public final class PgoWorkload {
     static long circles;
     static long squares;
     static long triangles;
+    /** Circles built by {@link #mixed}; {@link #circlesOnly} builds the others. */
+    static long mixedCircles;
+    /** How often {@link #unitAreas} called {@link #areaOf}, and the simple class name of its receiver. */
+    static long unitAreaCalls;
+    static String unitReceiver;
 
     /** Context A: all circles. */
     static double circlesOnly(int n, long seed) {
@@ -195,6 +200,7 @@ public final class PgoWorkload {
             } else {
                 shapes[i] = new Circle(v);
                 circles++;
+                mixedCircles++;
             }
         }
         return sumAreas(shapes) + countKinds(shapes, "square") * 1000 + countKinds(shapes, "triangle") * 1_000_000;
@@ -214,6 +220,8 @@ public final class PgoWorkload {
         for (long i = 0; i < iterations; i++) {
             total += areaOf(unit);
         }
+        unitAreaCalls += iterations;
+        unitReceiver = unit.getClass().getSimpleName();
         return total;
     }
 
@@ -636,8 +644,10 @@ public final class PgoWorkload {
         Reader reader = new Reader(data);
         long recordSum = 0;
         int count = 0;
+        long parseCalls = 0;
         while (true) {
             long v = parseRecord(reader);
+            parseCalls++;
             if (v == Long.MIN_VALUE) {
                 break;
             }
@@ -665,7 +675,8 @@ public final class PgoWorkload {
         System.out.println("shapes=" + shapes + " bytes=" + data.length + " splits=" + splits + " units=" + units);
         ThreadLifecycleResult lifecycle = exerciseThreadLifecycle(records);
         ThreadLifecycleResult liveSnapshot = exerciseLiveSnapshot();
-        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles +
+        System.out.println("circles=" + circles + " squares=" + squares + " triangles=" + triangles + " mixedCircles=" + mixedCircles +
+                        " unitAreaCalls=" + unitAreaCalls + " unitReceiver=" + unitReceiver + " parseCalls=" + parseCalls +
                         " splitCalls=" + splitCalls + " switchChecksum=" + switchChecksum + " switchZero=" + switchZero + " switchOne=" + switchOne + " switchTwo=" + switchTwo +
                         " threadChecksum=" + lifecycle.checksum() + " threadTrue=" + lifecycle.trueCount() + " threadFalse=" + lifecycle.falseCount() +
                         " liveChecksum=" + liveSnapshot.checksum() + " liveTrue=" + liveSnapshot.trueCount() + " liveFalse=" + liveSnapshot.falseCount());

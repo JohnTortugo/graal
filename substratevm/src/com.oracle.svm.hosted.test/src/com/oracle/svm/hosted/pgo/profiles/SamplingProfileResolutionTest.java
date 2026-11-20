@@ -94,7 +94,7 @@ public class SamplingProfileResolutionTest {
     @Test
     public void accountsForUnresolvableStacks() throws IOException {
         ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
-        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
+        IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
         IprofProfileResolver.SamplingDiagnostics d = lookup.samplingDiagnostics();
         Assert.assertEquals(2, d.totalEntries());
         Assert.assertEquals(0, d.resolvedEntries());
@@ -113,7 +113,7 @@ public class SamplingProfileResolutionTest {
     @Test
     public void stackSamplesCanBeHidden() {
         Map<NodeSourcePosition, Long> samples = Map.of(new NodeSourcePosition(null, IprofProfileResolverTest.mockBarMethod(), 9), 42L);
-        IprofProfilesLookup lookup = new IprofProfilesLookup(Map.of(), null, Map.of(), null, samples, null, Map.of(), Map.of(), null);
+        IprofProfilesLookup lookup = IprofProfileResolverTest.samplingLookup(samples);
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
         Assert.assertEquals(List.of(42L), List.copyOf(lookup.getSampleCounts().orElseThrow().values()));
 

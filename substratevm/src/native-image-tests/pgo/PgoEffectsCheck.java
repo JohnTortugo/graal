@@ -60,7 +60,7 @@ import jdk.vm.ci.code.BytecodeFrame;
  * wrote with {@code -H:Dump=:1 -H:MethodFilter=PgoWorkload.*}. Three modes:
  *
  * <ul>
- * <li>{@code profiled <dumpDir> <iprof> <records> <circles> <squares> <triangles>}: every branch
+ * <li>{@code profiled <dumpDir> <iprof> <name>=<count>...}: every branch
  * probability the compiler marked as profiled equals what the profile file records for that
  * branch (through the same context lookup the consumer performs); the profile file itself records
  * exactly the branch, switch, receiver, and call-edge counts the program reports; the monomorphic
@@ -72,8 +72,8 @@ import jdk.vm.ci.code.BytecodeFrame;
  * the inliner, the graphs carry the counter nodes.</li>
  * </ul>
  *
- * The {@code records}, {@code circles}, {@code squares} and {@code triangles} arguments are what
- * the program printed for the training input, so the profile is checked against ground truth.
+ * The {@code name=count} arguments are what the program printed for the training input, so the
+ * profile is checked against ground truth without repeating how the workload computes them.
  */
 public final class PgoEffectsCheck {
     private static final double TOLERANCE = 1e-6;
@@ -126,24 +126,40 @@ public final class PgoEffectsCheck {
         checked.merge(what, 1, Integer::sum);
     }
 
+    /** The counts the training run printed, passed by the gate as {@code name=count} arguments. */
+    private static final class TrainingCounts {
+        private final Map<String, String> values = new HashMap<>();
+
+        TrainingCounts(String[] args, int first) {
+            for (int i = first; i < args.length; i++) {
+                int separator = args[i].indexOf('=');
+                if (separator <= 0) {
+                    throw new IllegalArgumentException("expected name=count, got " + args[i]);
+                }
+                values.put(args[i].substring(0, separator), args[i].substring(separator + 1));
+            }
+        }
+
+        String text(String name) {
+            String value = values.get(name);
+            if (value == null) {
+                throw new IllegalArgumentException("the training run did not print " + name + "; it printed " + values.keySet());
+            }
+            return value;
+        }
+
+        long count(String name) {
+            return Long.parseLong(text(name));
+        }
+    }
+
     private void checkProfiled(String[] args, Map<String, InputGraph> graphs, boolean expectReceiverEffects, boolean expectSwitchEffects,
                     boolean expectRecordedSwitch) throws IOException {
         Profile profile = Profile.read(Path.of(args[2]));
-        long records = Long.parseLong(args[3]);
-        long circles = Long.parseLong(args[4]);
-        long squares = Long.parseLong(args[5]);
-        long triangles = Long.parseLong(args[6]);
-        long splitCalls = Long.parseLong(args[7]);
-        long switchZero = Long.parseLong(args[8]);
-        long switchOne = Long.parseLong(args[9]);
-        long switchTwo = Long.parseLong(args[10]);
-        long threadTrue = Long.parseLong(args[11]);
-        long threadFalse = Long.parseLong(args[12]);
-        long liveTrue = Long.parseLong(args[13]);
-        long liveFalse = Long.parseLong(args[14]);
+        TrainingCounts counts = new TrainingCounts(args, 3);
         checkProfiledBranches(graphs, profile);
-        checkGroundTruth(profile, records, circles, squares, triangles, splitCalls, switchZero, switchOne, switchTwo, threadTrue, threadFalse, liveTrue, liveFalse, expectRecordedSwitch);
-        checkDistributionBranches(graphs, records, circles, squares, triangles);
+        checkGroundTruth(profile, counts, expectRecordedSwitch);
+        checkDistributionBranches(graphs, counts);
         checkDevirtualized(graphs, expectReceiverEffects);
         if (expectSwitchEffects) {
             checkSwitch(graphs, profile);
@@ -339,24 +355,24 @@ public final class PgoEffectsCheck {
             }
             for (int depth = context.size(); depth >= 1; depth--) {
                 List<String> prefix = context.subList(0, depth);
-                Map<Long, Long> counts = new LinkedHashMap<>();
+                /* A record is (successor bci, successor index, count); the first two identify the arm. */
+                Map<List<Long>, Long> counts = new LinkedHashMap<>();
                 for (Map.Entry<List<String>, List<long[]>> entry : conditionals.entrySet()) {
                     if (entry.getKey().size() < depth || !entry.getKey().subList(0, depth).equals(prefix)) {
                         continue;
                     }
                     for (long[] records : entry.getValue()) {
                         for (int i = 0; i + 2 < records.length; i += 3) {
-                            /* A record is (successor bci, successor index, count); bci and index identify the arm. */
-                            counts.merge((records[i] << 32) | (records[i + 1] & 0xFFFF_FFFFL), records[i + 2], Long::sum);
+                            counts.merge(List.of(records[i], records[i + 1]), records[i + 2], Long::sum);
                         }
                     }
                 }
                 if (!counts.isEmpty()) {
                     long[] sum = new long[counts.size() * 3];
                     int i = 0;
-                    for (Map.Entry<Long, Long> arm : counts.entrySet()) {
-                        sum[i++] = arm.getKey() >> 32;
-                        sum[i++] = (int) (long) arm.getKey();
+                    for (Map.Entry<List<Long>, Long> arm : counts.entrySet()) {
+                        sum[i++] = arm.getKey().get(0);
+                        sum[i++] = arm.getKey().get(1);
                         sum[i++] = arm.getValue();
                     }
                     return List.of(sum);
@@ -509,23 +525,29 @@ public final class PgoEffectsCheck {
     }
 
     /** The profile file records exactly the counts the program itself reports for the training run. */
-    private void checkGroundTruth(Profile profile, long records, long circles, long squares, long triangles, long splitCalls,
-                    long switchZero, long switchOne, long switchTwo, long threadTrue, long threadFalse, long liveTrue, long liveFalse, boolean expectRecordedSwitch) {
-        long shapeRounds = Math.max(1, records / 100);
-        long circlesInMixed = circles - 64 * shapeRounds;
+    private void checkGroundTruth(Profile profile, TrainingCounts counts, boolean expectRecordedSwitch) {
+        long squares = counts.count("squares");
+        long triangles = counts.count("triangles");
+        long circlesInMixed = counts.count("mixedCircles");
+        long threadTrue = counts.count("threadTrue");
+        long threadFalse = counts.count("threadFalse");
+        long liveTrue = counts.count("liveTrue");
+        long liveFalse = counts.count("liveFalse");
+        /* The last call of parseRecord finds the end of input; every earlier one returns a record. */
+        long records = counts.count("parseCalls") - 1;
         expectBranchCounts(profile, "PgoWorkload.parseRecord", 1, records, "the end-of-input check: one exit after " + records + " records");
         expectBranchCounts(profile, "PgoWorkload.mixed", squares, triangles + circlesInMixed, "squares against the other shapes");
         expectBranchCounts(profile, "PgoWorkload.mixed", triangles, circlesInMixed, "triangles against circles");
-        expectReceivers(profile, List.of("PgoWorkload.areaOf", "PgoWorkload.sumAreas"), Map.of("Circle", circles, "Square", squares, "Triangle", triangles));
-        expectReceivers(profile, List.of("PgoWorkload.areaOf", "PgoWorkload.unitAreas"), Map.of(records % 2 == 0 ? "Square" : "Circle", 20L * records));
+        expectReceivers(profile, List.of("PgoWorkload.areaOf", "PgoWorkload.sumAreas"), Map.of("Circle", counts.count("circles"), "Square", squares, "Triangle", triangles));
+        expectReceivers(profile, List.of("PgoWorkload.areaOf", "PgoWorkload.unitAreas"), Map.of(counts.text("unitReceiver"), counts.count("unitAreaCalls")));
         expectReceivers(profile, List.of("PgoWorkload.threadedReceiver"), Map.of("Square", threadTrue + threadFalse, "Circle", liveTrue + liveFalse));
-        expectCallCount(profile, "PgoWorkload.splitFields", splitCalls);
+        expectCallCount(profile, "PgoWorkload.splitFields", counts.count("splitCalls"));
         expectCallCount(profile, "PgoWorkload.threadedBranch", threadTrue + threadFalse);
         expectBranchCounts(profile, "PgoWorkload.threadedBranch", threadTrue, threadFalse, "short-lived thread branch outcomes merged at thread exit");
         expectCallCount(profile, "PgoWorkload.liveSnapshotBranch", liveTrue + liveFalse);
         expectBranchCounts(profile, "PgoWorkload.liveSnapshotBranch", liveTrue, liveFalse, "live daemon-thread outcomes collected by the teardown snapshot");
         if (expectRecordedSwitch) {
-            expectSwitchCounts(profile, "PgoWorkload.profiledSwitch", switchZero, switchOne, switchTwo);
+            expectSwitchCounts(profile, "PgoWorkload.profiledSwitch", counts.count("switchZero"), counts.count("switchOne"), counts.count("switchTwo"));
         }
     }
 
@@ -627,9 +649,10 @@ public final class PgoEffectsCheck {
      * The two profiled branches of the shape distribution carry the distribution the program built,
      * on the successor the source puts the squares and triangles on.
      */
-    private void checkDistributionBranches(Map<String, InputGraph> graphs, long records, long circles, long squares, long triangles) {
-        long shapeRounds = Math.max(1, records / 100);
-        long circlesInMixed = circles - 64 * shapeRounds;
+    private void checkDistributionBranches(Map<String, InputGraph> graphs, TrainingCounts counts) {
+        long squares = counts.count("squares");
+        long triangles = counts.count("triangles");
+        long circlesInMixed = counts.count("mixedCircles");
         double squareShare = (double) squares / (squares + triangles + circlesInMixed);
         double triangleShare = (double) triangles / (triangles + circlesInMixed);
         expectProfiledBranch(graphs, List.of("PgoWorkload.mixed"), squareShare, "the square share of the mixed shapes");
@@ -638,7 +661,7 @@ public final class PgoEffectsCheck {
          * parseRecord tests for the end of input and returns Long.MIN_VALUE, which main tests again.
          * Once parseRecord is inlined into main the two tests fold into one, at either position.
          */
-        expectProfiledBranch(graphs, List.of("PgoWorkload.parseRecord", "PgoWorkload.main"), 1.0 / (records + 1), "the end-of-input exit");
+        expectProfiledBranch(graphs, List.of("PgoWorkload.parseRecord", "PgoWorkload.main"), 1.0 / counts.count("parseCalls"), "the end-of-input exit");
     }
 
     /** A profiled branch of one of {@code methods} has {@code expected}, in its own graph or in one it was inlined into. */

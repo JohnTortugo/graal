@@ -176,18 +176,6 @@ public final class IprofProfileResolver {
         return buildLookup(profile, indexUniverseMethods(universe), indexUniverseTypes(universe));
     }
 
-    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
-        return buildLookup(profile, presentDescriptors, Map.of());
-    }
-
-    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
-        Map<String, HostedMethod> methods = new HashMap<>();
-        for (String descriptor : presentDescriptors) {
-            methods.put(descriptor, null);
-        }
-        return buildLookup(profile, methods, typesByDescriptor);
-    }
-
     /**
      * Builds the lookup and diagnostics from a parsed profile and the set of canonical method
      * descriptors present in the image. This is the universe-independent core of {@link #resolve}
@@ -408,12 +396,19 @@ public final class IprofProfileResolver {
         return new SamplingDiagnostics(profile.samplingEntries().size(), resolved, truncated, unresolved, samples, dropped, methods.size(), missing);
     }
 
-    /** Indexes image types by JVM descriptor so profile type names resolve to analysis types. */
+    /**
+     * Indexes image types by JVM descriptor so profile type names resolve to analysis types. As for
+     * methods, a name that two image types share names neither of them.
+     */
     private static Map<String, AnalysisType> indexUniverseTypes(HostedUniverse universe) {
         Map<String, AnalysisType> typesByDescriptor = new HashMap<>();
+        Set<String> ambiguous = new HashSet<>();
         for (HostedType type : universe.getTypes()) {
-            typesByDescriptor.putIfAbsent(type.getName(), type.getWrapped());
+            if (typesByDescriptor.putIfAbsent(type.getName(), type.getWrapped()) != null) {
+                ambiguous.add(type.getName());
+            }
         }
+        typesByDescriptor.keySet().removeAll(ambiguous);
         return typesByDescriptor;
     }
 
@@ -446,19 +441,23 @@ public final class IprofProfileResolver {
     }
 
     /**
-     * Indexes universe methods by their canonical descriptor. Descriptor collisions (which should
-     * not occur for a fully-qualified signature) resolve first-wins; such contexts simply match the
-     * first-registered method, and any mismatch degrades to a lookup miss handled gracefully by the
-     * phase.
+     * Indexes image methods by their canonical descriptor. A descriptor that two image methods
+     * share (classes of the same name from different class loaders) names neither of them: their
+     * profile entries stay unresolved rather than being applied to whichever method came first.
      */
     private static Map<String, HostedMethod> indexUniverseMethods(HostedUniverse universe) {
         Map<String, HostedMethod> methodsByDescriptor = new HashMap<>();
+        Set<String> ambiguous = new HashSet<>();
         for (HostedMethod method : universe.getMethods()) {
             if (!method.isOriginalMethod()) {
                 continue;
             }
-            methodsByDescriptor.putIfAbsent(ProfilingUtilities.methodDescriptor(method), method);
+            String descriptor = ProfilingUtilities.methodDescriptor(method);
+            if (methodsByDescriptor.putIfAbsent(descriptor, method) != null) {
+                ambiguous.add(descriptor);
+            }
         }
+        methodsByDescriptor.keySet().removeAll(ambiguous);
         return methodsByDescriptor;
     }
 }
