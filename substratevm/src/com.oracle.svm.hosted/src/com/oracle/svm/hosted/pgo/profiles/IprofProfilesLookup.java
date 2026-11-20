@@ -134,16 +134,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     private record ApplicationCoverage(int profiledSuccessors, int appliedSuccessors) {
     }
 
-    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData, ConditionalProfileDiagnostics diagnostics) {
-        this(conditionalData, diagnostics, Map.of(), null, Map.of(), null, Map.of(), Map.of(), null);
-    }
-
-    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
-                    ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
-                    IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
-        this(conditionalData, diagnostics, virtualInvokeData, virtualInvokeDiagnostics, Map.of(), null, Map.of(), Map.of(), null);
-    }
-
     public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
                     ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
                     IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,

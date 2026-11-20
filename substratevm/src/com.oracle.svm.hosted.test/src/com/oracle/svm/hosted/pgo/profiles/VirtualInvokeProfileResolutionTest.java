@@ -109,7 +109,7 @@ public class VirtualInvokeProfileResolutionTest {
                         "{\"ctx\":\"1001:9<1001:14\",\"records\":[101,5]}," +
                         "{\"ctx\":\"99999:1\",\"records\":[101,1]}");
         Map<String, AnalysisType> noTypes = Map.of();
-        IprofProfilesLookup lookup = IprofProfileResolver.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC), noTypes);
+        IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC), noTypes);
 
         VirtualInvokeDiagnostics d = lookup.virtualInvokeDiagnostics();
         Assert.assertEquals(3, d.totalEntries());
@@ -137,13 +137,13 @@ public class VirtualInvokeProfileResolutionTest {
         Map<List<FrameKey>, Map<AnalysisType, Long>> data = Map.of(List.of(new FrameKey(IprofProfileResolverTest.BAR_DESC, 9)), receivers);
         BytecodePosition inlinedTwice = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 14), bar, 9);
 
-        IprofProfilesLookup exactOnly = new IprofProfilesLookup(Map.of(), null, data, null);
+        IprofProfilesLookup exactOnly = IprofProfileResolverTest.receiverLookup(data);
         exactOnly.setReceiverContextFallback(false);
         Assert.assertTrue(exactOnly.getVirtualInvokeProfile(inlinedTwice).isEmpty());
         Assert.assertEquals(1, exactOnly.virtualInvokeMissCount());
         Assert.assertEquals(0, exactOnly.virtualInvokeFallbackCount());
 
-        IprofProfilesLookup withFallback = new IprofProfilesLookup(Map.of(), null, data, null);
+        IprofProfilesLookup withFallback = IprofProfileResolverTest.receiverLookup(data);
         withFallback.setReceiverContextFallback(true);
         Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(inlinedTwice).orElseThrow());
         Assert.assertEquals(1, withFallback.virtualInvokeHitCount());

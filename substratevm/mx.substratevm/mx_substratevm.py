@@ -1103,14 +1103,10 @@ def pgo_e2e_test_task(extra_image_args=None):
         mx_util.ensure_dir_exists(profile_dir)
         shutil.copyfile(profile_a, join(profile_dir, 'a.iprof'))
         shutil.copyfile(profile_b, join(profile_dir, 'b.iprof'))
-        # What the program counted while training; the profile must record exactly these.
-        shape_counts = dict(re.findall(r'(circles|squares|triangles)=(\d+)', training_output[-1]))
-        expect(len(shape_counts) == 3, 'the training run did not print its shape counts: ' + str(training_output))
-        execution_counts = dict(re.findall(r'(splitCalls|switchZero|switchOne|switchTwo|threadTrue|threadFalse|liveTrue|liveFalse)=(\d+)', training_output[-1]))
-        expect(len(execution_counts) == 8, 'the training run did not print its call/switch/thread counts: ' + str(training_output))
-        effect_counts = (train_a[1], shape_counts['circles'], shape_counts['squares'], shape_counts['triangles'],
-                         execution_counts['splitCalls'], execution_counts['switchZero'], execution_counts['switchOne'], execution_counts['switchTwo'],
-                         execution_counts['threadTrue'], execution_counts['threadFalse'], execution_counts['liveTrue'], execution_counts['liveFalse'])
+        # What the program counted while training, passed to the effects checker as name=count; the
+        # profile must record exactly these.
+        effect_counts = [name + '=' + value for name, value in re.findall(r'(\w+)=(\S+)', training_output[-1])]
+        expect(effect_counts, 'the training run did not print its counts: ' + str(training_output))
         sampling_disabled, _ = build('pgo-instrumented-without-sampling', ['--pgo-instrument'] + svm_experimental_options(['-H:-PGOSampleStacks']))
         check_output('sampling-disabled instrumented image', [sampling_disabled, scratch_profile])
         profile_without_sampling = join(output_dir, 'train-without-sampling.iprof')
