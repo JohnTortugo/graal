@@ -53,8 +53,8 @@ import jdk.vm.ci.code.BytecodePosition;
  * <p>
  * It answers four recorded categories: {@code conditionalProfiles} (branch and switch successor
  * counts), {@code callCountProfiles}, {@code virtualInvokeProfiles} (receiver types) and
- * {@code samplingProfiles} (stack samples). Each is looked up by a canonical calling context. The
- * iprof file records no instanceof or image-heap profiles, so those queries answer as for an absent
+ * {@code samplingProfiles} (stack samples). Each is looked up by a canonical calling context. All
+ * other queries, such as instanceof, image-heap and monitor profiles, answer as for an absent
  * profile.
  * <p>
  * The tables are built by {@code PGOProfileUseFeature} once the {@code HostedUniverse} is
@@ -514,7 +514,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return impossibleReceiverEvents.get();
     }
 
-    // --- Categories the iprof file does not record: answered as absent ----------------------
+    // --- Profiles this lookup does not serve: answered as absent ------------------------------
 
     @Override
     public Optional<Map<AnalysisMethod, Long>> getVirtualInvokeMethodProfile(BytecodePosition callingContext) {
