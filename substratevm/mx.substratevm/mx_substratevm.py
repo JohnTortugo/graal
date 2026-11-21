@@ -588,15 +588,18 @@ def svm_gate_body(args, tasks):
         if t:
             runtime_assertions_test_task(args.extra_image_builder_arguments)
 
+    # Every pgo check but the unit tests builds --pgo-instrument images, which have not been tried on Windows yet.
     with Task('pgo end-to-end', tasks, tags=[GraalTags.pgo]) as t:
         if t:
-            pgo_e2e_test_task(args.extra_image_builder_arguments)
+            if mx.is_windows():
+                mx.warn('Skipping the PGO end-to-end check on Windows.')
+            else:
+                pgo_e2e_test_task(args.extra_image_builder_arguments)
 
     with Task('pgo unit tests', tasks, tags=[GraalTags.pgo]) as t:
         if t:
             jvm_unittest(['com.oracle.svm.core.pgo', 'com.oracle.svm.hosted.pgo'])
 
-    # The two checks below build --pgo-instrument images and are skipped on Windows, where such images are not tested.
     with Task('pgo recorder native tests', tasks, tags=[GraalTags.pgo]) as t:
         if t:
             if mx.is_windows():
@@ -1102,7 +1105,7 @@ def pgo_e2e_test_task(extra_image_args=None):
             expect(line is not None, 'training run lacks ' + category + ' telemetry: ' + str(training_log))
             expect(summary_int(line, r'dropped=(\d+)') == 0, 'training run dropped recorder events: ' + line)
             if category == 'stack samples=':
-                expect(summary_int(line, r'threads=(\d+)') >= 10, 'sampler did not retain tables for joined and live lifecycle threads: ' + line)
+                expect(summary_int(line, r'threads=(\d+)') >= 10, 'sampler did not sample the joined and live lifecycle threads: ' + line)
                 expect(summary_int(line, r'stack samples=(\d+)') > 0, 'sampler recorded no runtime stacks: ' + line)
         pattern_dir = join(output_dir, 'pattern-profiles')
         mx_util.ensure_dir_exists(pattern_dir)
@@ -1291,11 +1294,13 @@ def pgo_native_unittests_task(extra_image_args=None):
 
     recorder_selector = ['com.oracle.svm.core.pgo.RecorderTableNativeTest']
     recorder_profile = join(output_dir, 'recorder-tables.iprof')
-    recorder_plain = run_corpus('recorder tables plain image', [], [], recorder_selector)
-    recorder_instrumented = run_corpus('recorder tables instrumented image', ['--pgo-instrument'], ['-XX:ProfilesDumpFile=' + recorder_profile], recorder_selector)
+    # A snapshot that holds a lock across a safepoint hangs the image; a safepoint that takes more than a minute fails the run instead.
+    promptness = ['-XX:SafepointPromptnessFailureNanos=60000000000']
+    recorder_plain = run_corpus('recorder tables plain image', [], promptness, recorder_selector)
+    recorder_instrumented = run_corpus('recorder tables instrumented image', ['--pgo-instrument'], promptness + ['-XX:ProfilesDumpFile=' + recorder_profile], recorder_selector)
     if not exists(recorder_profile):
         mx.abort('the instrumented recorder-table image wrote no profile to ' + recorder_profile)
-    recorder_optimized = run_corpus('recorder tables optimized image', ['--pgo=' + recorder_profile], [], recorder_selector)
+    recorder_optimized = run_corpus('recorder tables optimized image', ['--pgo=' + recorder_profile], promptness, recorder_selector)
     if recorder_plain or recorder_instrumented or recorder_optimized:
         mx.abort('recorder table native tests must pass in plain, instrumented, and optimized images')
 
