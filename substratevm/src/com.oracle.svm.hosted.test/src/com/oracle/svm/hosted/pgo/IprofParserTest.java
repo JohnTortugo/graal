@@ -34,7 +34,7 @@ import org.junit.Test;
 import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 
 /**
  * Unit tests for {@link IprofParser}: the sections it reads, the sections it skips, and the
@@ -54,7 +54,7 @@ public class IprofParserTest {
                     "{\"id\":1002,\"name\":\"baz\",\"signature\":[100,4,101]}" +
                     "],";
 
-    private static ParsedProfile parse(String json) throws IOException {
+    private static ParsedIprofProfile parse(String json) throws IOException {
         return new IprofParser().parse(new StringReader(json));
     }
 
@@ -64,7 +64,7 @@ public class IprofParserTest {
 
     @Test
     public void parsesSingleFrameContext() throws IOException {
-        ParsedProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
 
         Assert.assertEquals("1.0.0", parsed.version());
         Assert.assertEquals(1, parsed.conditionalEntries().size());
@@ -75,7 +75,7 @@ public class IprofParserTest {
 
     @Test
     public void parsesInlinedContextInnermostFirst() throws IOException {
-        ParsedProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9<1002:1<1003:6<1004:2\",\"records\":[12,0,6,14,1,0]}"));
+        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9<1002:1<1003:6<1004:2\",\"records\":[12,0,6,14,1,0]}"));
 
         ConditionalEntry entry = parsed.conditionalEntries().get(0);
         Assert.assertEquals(
@@ -85,13 +85,13 @@ public class IprofParserTest {
 
     @Test
     public void acceptsVersion110() throws IOException {
-        ParsedProfile parsed = parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+        ParsedIprofProfile parsed = parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
         Assert.assertEquals("1.1.0", parsed.version());
     }
 
     @Test
     public void parsesTypeAndMethodTables() throws IOException {
-        ParsedProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
 
         Assert.assertEquals("com.example.Foo", parsed.typeNamesById().get(100));
         Assert.assertEquals("bar", parsed.methodsById().get(1001).name());
@@ -124,7 +124,7 @@ public class IprofParserTest {
     public void parsesAbsentConditionalProfilesAsEmpty() throws IOException {
         // conditionalProfiles is optional; when the section is absent the file is well-formed and
         // parses with an empty conditional-entry list rather than being rejected as malformed.
-        ParsedProfile parsed = parse("{\"version\":\"1.0.0\"," + TYPES_AND_METHODS.substring(0, TYPES_AND_METHODS.length() - 1) + "}");
+        ParsedIprofProfile parsed = parse("{\"version\":\"1.0.0\"," + TYPES_AND_METHODS.substring(0, TYPES_AND_METHODS.length() - 1) + "}");
         Assert.assertEquals("1.0.0", parsed.version());
         Assert.assertTrue(parsed.conditionalEntries().isEmpty());
         // Required sections remain populated.
@@ -134,7 +134,7 @@ public class IprofParserTest {
 
     @Test
     public void parsesEmptyConditionalProfilesArrayAsEmpty() throws IOException {
-        ParsedProfile parsed = parse(profile("1.0.0", ""));
+        ParsedIprofProfile parsed = parse(profile("1.0.0", ""));
         Assert.assertTrue(parsed.conditionalEntries().isEmpty());
     }
 
@@ -188,7 +188,7 @@ public class IprofParserTest {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS +
                         "\"conditionalProfiles\":[{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}]," +
                         "\"monitorProfiles\":[{\"ctx\":\"not a context\",\"records\":[-1]}]}";
-        ParsedProfile parsed = parse(json);
+        ParsedIprofProfile parsed = parse(json);
         Assert.assertEquals(1, parsed.conditionalEntries().size());
         Assert.assertArrayEquals(new long[]{20, 0, 10, 53, 1, 1}, parsed.conditionalEntries().getFirst().records());
     }

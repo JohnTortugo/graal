@@ -105,6 +105,16 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     private final AtomicLong impossibleReceiverEvents = new AtomicLong();
     private final ConditionalProfileDiagnostics diagnostics;
     private volatile boolean useCallCounts = true;
+    /** Call-count lookups per call edge and per method, and how many of them found a count. */
+    private final AtomicLong contextCallCountQueries = new AtomicLong();
+    private final AtomicLong contextCallCountHits = new AtomicLong();
+    private final AtomicLong methodCallCountQueries = new AtomicLong();
+    private final AtomicLong methodCallCountHits = new AtomicLong();
+    /** Image descriptors that name more than one method or type; no profile entry is applied to those. */
+    private volatile int ambiguousImageMethods;
+    private volatile int ambiguousImageTypes;
+    /** Readable contexts of the entries the resolver dropped, collected only when asked for. */
+    private volatile List<String> droppedContexts = List.of();
     /** Whether consumers see the stack samples; when not, the lookup answers as for a profile without them. */
     private volatile boolean useStackSamples = true;
     private volatile boolean cleared;
@@ -202,6 +212,30 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
 
     public void setReceiverContextFallback(boolean enabled) {
         this.receiverContextFallback = enabled;
+    }
+
+    /** Records how many image methods and types share their descriptor with another one. */
+    public void setAmbiguousImageDescriptors(int methods, int types) {
+        this.ambiguousImageMethods = methods;
+        this.ambiguousImageTypes = types;
+    }
+
+    public int ambiguousImageMethods() {
+        return ambiguousImageMethods;
+    }
+
+    public int ambiguousImageTypes() {
+        return ambiguousImageTypes;
+    }
+
+    /** Records the readable contexts of the entries the resolver dropped. */
+    public void setDroppedContexts(List<String> contexts) {
+        this.droppedContexts = List.copyOf(contexts);
+    }
+
+    /** The dropped entries, if the resolver was asked to collect them; otherwise empty. */
+    public List<String> droppedContexts() {
+        return droppedContexts;
     }
 
     public long virtualInvokeFallbackCount() {
@@ -394,11 +428,34 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared || !useCallCounts || callingContext == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(callCountsByContext.get(canonicalize(callingContext)));
+        contextCallCountQueries.incrementAndGet();
+        Long count = callCountsByContext.get(canonicalize(callingContext));
+        if (count != null) {
+            contextCallCountHits.incrementAndGet();
+        }
+        return Optional.ofNullable(count);
     }
 
     public IprofProfileResolver.CallCountDiagnostics callCountDiagnostics() {
         return callCountDiagnostics;
+    }
+
+    /** Number of call-edge lookups ({@link #getContextCallCount}) and how many found a count. */
+    public long contextCallCountQueries() {
+        return contextCallCountQueries.get();
+    }
+
+    public long contextCallCountHits() {
+        return contextCallCountHits.get();
+    }
+
+    /** Number of method call-count lookups and how many found a count. */
+    public long methodCallCountQueries() {
+        return methodCallCountQueries.get();
+    }
+
+    public long methodCallCountHits() {
+        return methodCallCountHits.get();
     }
 
     @Override
@@ -414,8 +471,13 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared || !useCallCounts) {
             return Optional.empty();
         }
+        methodCallCountQueries.incrementAndGet();
         Long count = callCountsByMethod.get(methodDescriptor);
-        return count == null ? Optional.empty() : Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, count));
+        if (count == null) {
+            return Optional.empty();
+        }
+        methodCallCountHits.incrementAndGet();
+        return Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, count));
     }
 
     @Override

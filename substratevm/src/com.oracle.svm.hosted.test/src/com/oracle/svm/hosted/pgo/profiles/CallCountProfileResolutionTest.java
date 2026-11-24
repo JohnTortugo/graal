@@ -32,7 +32,7 @@ import org.junit.Test;
 
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 
 import jdk.vm.ci.code.BytecodePosition;
 
@@ -44,17 +44,21 @@ public class CallCountProfileResolutionTest {
     private static final String PREFIX = "{\"version\":\"1.1.0\",\"types\":[{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"}]," +
                     "\"methods\":[{\"id\":7,\"name\":\"bar\",\"signature\":[1,2,3]},{\"id\":8,\"name\":\"caller\",\"signature\":[1,2,3]}],\"conditionalProfiles\":[],\"callCountProfiles\":";
 
-    private static ParsedProfile parse(String entries) throws Exception {
+    private static ParsedIprofProfile parse(String entries) throws Exception {
         return new IprofParser().parse(new StringReader(PREFIX + entries + "}"));
     }
 
     @Test
     public void parsesResolvesAndAggregatesContexts() throws Exception {
-        ParsedProfile parsed = parse("[{\"ctx\":\"7:0\",\"records\":[3]},{\"ctx\":\"7:0\",\"records\":[4]}]");
+        ParsedIprofProfile parsed = parse("[{\"ctx\":\"7:0\",\"records\":[3]},{\"ctx\":\"7:0\",\"records\":[4]}]");
         Assert.assertEquals(2, parsed.callCountEntries().size());
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
         Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).orElseThrow());
+        Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 5)).isEmpty());
+        /* The statistics count every call-edge lookup and the ones that found a count. */
+        Assert.assertEquals(2, lookup.contextCallCountQueries());
+        Assert.assertEquals(1, lookup.contextCallCountHits());
         Assert.assertEquals(2, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(7, lookup.callCountDiagnostics().totalCount());
 
@@ -65,7 +69,7 @@ public class CallCountProfileResolutionTest {
 
     @Test
     public void missingOuterFrameDoesNotUndercountPresentMethod() throws Exception {
-        ParsedProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
+        ParsedIprofProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());

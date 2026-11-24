@@ -38,7 +38,7 @@ import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
@@ -58,7 +58,7 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 public final class IprofProfileMerger {
 
     /** One input of a merge: a parsed profile and the factor applied to all of its counts. */
-    public record WeightedProfile(ParsedProfile profile, double weight) {
+    public record WeightedProfile(ParsedIprofProfile profile, double weight) {
         public WeightedProfile {
             if (!Double.isFinite(weight) || !(weight > 0.0)) {
                 throw new IllegalArgumentException("Profile weight must be finite and positive: " + weight);
@@ -91,14 +91,36 @@ public final class IprofProfileMerger {
      * {@code a_i} is the inclusive sample count of method {@code i}. 1 means the two runs spent
      * their time in the same methods in the same proportions; values well below 1 mean the runs
      * exercise different code and the merged profile is a compromise between them.
+     *
+     * @return the overlap, or {@link Double#NaN} if either profile has no stack samples, because
+     *         the overlap is not defined then
      */
-    public static double samplingOverlap(ParsedProfile a, ParsedProfile b) {
-        Map<MethodIdentity, Long> countsA = inclusiveSamplesByMethod(a);
-        Map<MethodIdentity, Long> countsB = inclusiveSamplesByMethod(b);
+    public static double samplingOverlap(ParsedIprofProfile a, ParsedIprofProfile b) {
+        return overlap(inclusiveSamplesByMethod(a), inclusiveSamplesByMethod(b));
+    }
+
+    /**
+     * The {@link #samplingOverlap} of every pair of the given profiles: entry {@code [i][j]} for
+     * profiles {@code i} and {@code j}. The matrix is symmetric; its diagonal is 1, or
+     * {@link Double#NaN} for a profile without stack samples.
+     */
+    public static double[][] samplingOverlaps(List<ParsedIprofProfile> profiles) {
+        List<Map<MethodIdentity, Long>> counts = profiles.stream().map(IprofProfileMerger::inclusiveSamplesByMethod).toList();
+        double[][] result = new double[profiles.size()][profiles.size()];
+        for (int i = 0; i < profiles.size(); i++) {
+            for (int j = i; j < profiles.size(); j++) {
+                result[i][j] = overlap(counts.get(i), counts.get(j));
+                result[j][i] = result[i][j];
+            }
+        }
+        return result;
+    }
+
+    private static double overlap(Map<MethodIdentity, Long> countsA, Map<MethodIdentity, Long> countsB) {
         double totalA = countsA.values().stream().mapToLong(Long::longValue).sum();
         double totalB = countsB.values().stream().mapToLong(Long::longValue).sum();
         if (totalA == 0 || totalB == 0) {
-            return 0.0;
+            return Double.NaN;
         }
         double overlap = 0.0;
         for (Map.Entry<MethodIdentity, Long> entry : countsA.entrySet()) {
@@ -110,7 +132,7 @@ public final class IprofProfileMerger {
         return overlap;
     }
 
-    private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedProfile profile) {
+    private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedIprofProfile profile) {
         Map<MethodIdentity, Long> counts = new HashMap<>();
         for (SamplingEntry entry : profile.samplingEntries()) {
             Set<Integer> seen = new HashSet<>();
@@ -126,12 +148,12 @@ public final class IprofProfileMerger {
         return counts;
     }
 
-    private static MethodIdentity identity(ParsedProfile profile, MethodDescriptor method) {
+    private static MethodIdentity identity(ParsedIprofProfile profile, MethodDescriptor method) {
         return new MethodIdentity(typeName(profile, method.declaringTypeId()), method.name(), typeName(profile, method.returnTypeId()),
                         Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
     }
 
-    public static ParsedProfile merge(List<WeightedProfile> inputs) {
+    public static ParsedIprofProfile merge(List<WeightedProfile> inputs) {
         if (inputs.isEmpty()) {
             throw new IllegalArgumentException("At least one profile is required");
         }
@@ -145,7 +167,7 @@ public final class IprofProfileMerger {
         return merger.result();
     }
 
-    private void add(ParsedProfile profile, double weight) {
+    private void add(ParsedIprofProfile profile, double weight) {
         if (version == null) {
             version = profile.version();
         } else if (!version.equals(profile.version())) {
@@ -185,7 +207,7 @@ public final class IprofProfileMerger {
         }
     }
 
-    private static String typeName(ParsedProfile profile, int typeId) {
+    private static String typeName(ParsedIprofProfile profile, int typeId) {
         String name = profile.typeNamesById().get(typeId);
         if (name == null) {
             throw new IprofFormatException("Method table refers to undeclared type id " + typeId);
@@ -253,7 +275,7 @@ public final class IprofProfileMerger {
         }
     }
 
-    private ParsedProfile result() {
+    private ParsedIprofProfile result() {
         Map<Integer, String> typeNamesById = new LinkedHashMap<>();
         typeIds.forEach((name, id) -> typeNamesById.put(id, name));
         List<ConditionalEntry> conditionalEntries = new ArrayList<>();
@@ -272,6 +294,6 @@ public final class IprofProfileMerger {
         });
         List<SamplingEntry> samplingEntries = new ArrayList<>();
         samples.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, receiverEntries, samplingEntries);
+        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, receiverEntries, samplingEntries);
     }
 }

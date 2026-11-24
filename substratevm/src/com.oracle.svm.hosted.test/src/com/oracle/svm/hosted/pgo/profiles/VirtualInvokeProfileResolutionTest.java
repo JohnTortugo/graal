@@ -38,7 +38,7 @@ import org.junit.Test;
 import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfileResolver.VirtualInvokeDiagnostics;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
@@ -63,14 +63,14 @@ public class VirtualInvokeProfileResolutionTest {
                     "{\"id\":1001,\"name\":\"bar\",\"signature\":[100,8,4]}" +
                     "],\"conditionalProfiles\":[],";
 
-    private static ParsedProfile parse(String virtualInvokeProfiles) throws IOException {
+    private static ParsedIprofProfile parse(String virtualInvokeProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"virtualInvokeProfiles\":[" + virtualInvokeProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
     }
 
     @Test
     public void parsesReceiverTypePairs() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[101,7,102,3]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[101,7,102,3]}");
         Assert.assertEquals(1, parsed.virtualInvokeEntries().size());
         VirtualInvokeEntry entry = parsed.virtualInvokeEntries().getFirst();
         Assert.assertEquals(1, entry.context().size());
@@ -80,7 +80,7 @@ public class VirtualInvokeProfileResolutionTest {
     @Test
     public void sectionIsOptional() throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[]}";
-        ParsedProfile parsed = new IprofParser().parse(new StringReader(json));
+        ParsedIprofProfile parsed = new IprofParser().parse(new StringReader(json));
         Assert.assertTrue(parsed.virtualInvokeEntries().isEmpty());
     }
 
@@ -105,7 +105,7 @@ public class VirtualInvokeProfileResolutionTest {
      */
     @Test
     public void accountsForContextsAndDroppedReceivers() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[101,7,102,3]}," +
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[101,7,102,3]}," +
                         "{\"ctx\":\"1001:9<1001:14\",\"records\":[101,5]}," +
                         "{\"ctx\":\"99999:1\",\"records\":[101,1]}");
         Map<String, AnalysisType> noTypes = Map.of();

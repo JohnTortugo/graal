@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,7 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup.ProfiledValue;
 
@@ -65,11 +66,11 @@ public class IprofProfileResolverTest {
      * resolver only needs to know which are present, and stack samples, which need the method,
      * stay unresolved.
      */
-    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors) {
+    static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Set<String> presentDescriptors) {
         return buildLookup(profile, presentDescriptors, Map.of());
     }
 
-    static IprofProfilesLookup buildLookup(ParsedProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
+    static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
         Map<String, HostedMethod> methods = new HashMap<>();
         for (String descriptor : presentDescriptors) {
             methods.put(descriptor, null);
@@ -105,7 +106,7 @@ public class IprofProfileResolverTest {
                     "{\"id\":1002,\"name\":\"baz\",\"signature\":[100,101,4]}" +
                     "],";
 
-    private static ParsedProfile parse(String conditionalProfiles) throws IOException {
+    private static ParsedIprofProfile parse(String conditionalProfiles) throws IOException {
         String json = "{\"version\":\"1.0.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
     }
@@ -124,7 +125,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void buildsCanonicalMethodDescriptor() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         MethodDescriptor bar = parsed.methodsById().get(1001);
         MethodDescriptor baz = parsed.methodsById().get(1002);
         Assert.assertEquals(BAR_DESC, IprofProfileResolver.descriptorForProfileMethod(bar, parsed.typeNamesById()));
@@ -135,7 +136,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void resolvesSingleFrameContextWhenMethodPresent() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
         Assert.assertTrue(lookup.profileCategoryRecorded("conditionalProfiles"));
@@ -149,7 +150,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void resolvesInlinedContextWhenAllFramesPresent() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC, BAZ_DESC));
 
         ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
@@ -161,7 +162,7 @@ public class IprofProfileResolverTest {
     @Test
     public void dropsEntryWhenAnyContextFrameMethodAbsent() throws IOException {
         // Inlined context needs both bar and baz; only bar is present -> entry dropped.
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
         ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
@@ -170,11 +171,23 @@ public class IprofProfileResolverTest {
         Assert.assertFalse(lookup.profileCategoryRecorded("conditionalProfiles"));
     }
 
+    @Test
+    public void listsDroppedEntriesWithTheFramesTheImageLacks() throws IOException {
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]},{\"ctx\":\"1001:12\",\"records\":[20,0,10,53,1,1]}");
+        Map<String, HostedMethod> methods = new HashMap<>();
+        methods.put(BAR_DESC, null);
+        List<String> dropped = new ArrayList<>();
+        IprofProfileResolver.buildLookup(parsed, methods, Map.of(), dropped);
+
+        /* Only the entry with the absent frame is dropped; the absent frame is marked, the present one is not. */
+        Assert.assertEquals(List.of("branch or switch: " + BAR_DESC + ":9 < " + BAZ_DESC + ":1 (not in the image)"), dropped);
+    }
+
     // --- table build: duplicate-context merge (first-wins) --------------------------------------
 
     @Test
     public void mergesDuplicateContextFirstWins() throws IOException {
-        ParsedProfile parsed = parse(
+        ParsedIprofProfile parsed = parse(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:9\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
@@ -190,7 +203,7 @@ public class IprofProfileResolverTest {
     @Test
     public void oppositeBranchProfilesForDistinctContextsBothResolve() throws IOException {
         // Same method, different bci in the leaf frame -> distinct contexts, both retained.
-        ParsedProfile parsed = parse(
+        ParsedIprofProfile parsed = parse(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:42\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
@@ -202,7 +215,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void clearDisablesLookup() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         Assert.assertTrue(lookup.profileCategoryRecorded("conditionalProfiles"));
         lookup.clear();
@@ -213,7 +226,7 @@ public class IprofProfileResolverTest {
     /** The fixture has only a conditionalProfiles section, so no other category is recorded. */
     @Test
     public void sectionsAbsentFromTheProfileAreNotRecorded() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CONDITIONAL_PROFILES_CATEGORY));
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
@@ -249,7 +262,7 @@ public class IprofProfileResolverTest {
     @Test
     public void emptyProfileYieldsNoRecordedCategory() throws IOException {
         // conditionalProfiles present but empty -> nothing resolves -> category not recorded.
-        ParsedProfile parsed = parse("");
+        ParsedIprofProfile parsed = parse("");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         Assert.assertEquals(0, lookup.conditionalDiagnostics().totalEntries());
         Assert.assertEquals(0, lookup.conditionalDiagnostics().resolvedEntries());
@@ -261,7 +274,7 @@ public class IprofProfileResolverTest {
     /* A query for a context the profile has returns that entry as is, without any fallback. */
     @Test
     public void exactContextReturnsItsEntry() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,11,53,1,11]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,11,53,1,11]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
 
@@ -314,7 +327,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void tracksDistinctSuccessorApplicationCoverage() throws IOException {
-        ParsedProfile parsed = parse(
+        ParsedIprofProfile parsed = parse(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:42\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
@@ -398,7 +411,7 @@ public class IprofProfileResolverTest {
 
     @Test
     public void nullContextFindsNoProfileAndIsNotCounted() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
         Assert.assertEquals(0, lookup.hitCount());

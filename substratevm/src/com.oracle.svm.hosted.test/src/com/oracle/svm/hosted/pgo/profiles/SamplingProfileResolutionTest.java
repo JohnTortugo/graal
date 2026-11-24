@@ -34,7 +34,7 @@ import org.junit.Test;
 
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
@@ -55,14 +55,14 @@ public class SamplingProfileResolutionTest {
                     "{\"id\":1005,\"name\":\"main\",\"signature\":[100,8]}" +
                     "],\"conditionalProfiles\":[],";
 
-    private static ParsedProfile parse(String samplingProfiles) throws IOException {
+    private static ParsedIprofProfile parse(String samplingProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"samplingProfiles\":[" + samplingProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
     }
 
     @Test
     public void parsesStacksInnermostFirst() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[42]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[42]}");
         Assert.assertEquals(1, parsed.samplingEntries().size());
         SamplingEntry entry = parsed.samplingEntries().getFirst();
         Assert.assertEquals(42, entry.count());
@@ -73,7 +73,7 @@ public class SamplingProfileResolutionTest {
     @Test
     public void sectionIsOptional() throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[]}";
-        ParsedProfile parsed = new IprofParser().parse(new StringReader(json));
+        ParsedIprofProfile parsed = new IprofParser().parse(new StringReader(json));
         Assert.assertTrue(parsed.samplingEntries().isEmpty());
     }
 
@@ -93,7 +93,7 @@ public class SamplingProfileResolutionTest {
      */
     @Test
     public void accountsForUnresolvableStacks() throws IOException {
-        ParsedProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
+        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
         IprofProfileResolver.SamplingDiagnostics d = lookup.samplingDiagnostics();
         Assert.assertEquals(2, d.totalEntries());

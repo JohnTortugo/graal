@@ -87,13 +87,13 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         @Option(help = "Print the quality metrics (relevance and applicability) for the provided profiles i.e. iprof file(s).")//
         public static final HostedOptionKey<Boolean> PGOPrintProfileQuality = new HostedOptionKey<>(false);
 
-        @Option(help = "Apply virtualInvokeProfiles receiver frequencies. Disable with -H:-PGOUseReceiverProfiles.")//
+        @Option(help = "Apply virtualInvokeProfiles receiver frequencies.")//
         public static final HostedOptionKey<Boolean> PGOUseReceiverProfiles = new HostedOptionKey<>(true);
 
-        @Option(help = "Apply conditionalProfiles to SwitchNode successors. Disable with -H:-PGOUseSwitchProfiles.")//
+        @Option(help = "Apply conditionalProfiles to SwitchNode successors.")//
         public static final HostedOptionKey<Boolean> PGOUseSwitchProfiles = new HostedOptionKey<>(true);
 
-        @Option(help = "Apply conditionalProfiles to IfNode branches. Disable with -H:-PGOUseBranchProfiles: branches keep their unprofiled probabilities.")//
+        @Option(help = "Apply conditionalProfiles to IfNode branches.")//
         public static final HostedOptionKey<Boolean> PGOUseBranchProfiles = new HostedOptionKey<>(true);
         // @formatter:on
     }
@@ -145,7 +145,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles) {
         ProfileQuality.Level level = ProfileQuality.Level.NOT_TRACKING;
-        if (PGOPrintProfileQuality.getValue()) {
+        /* The details are a superset of the metrics, so asking for them alone also tracks the metrics. */
+        if (PGOPrintProfileQuality.getValue() || PGOPrintProfileQualityDetails.getValue()) {
             level = ProfileQuality.Level.TRACKING;
             if (PGOPrintProfileQualityDetails.getValue()) {
                 level = ProfileQuality.Level.TRACKING_DETAILS;

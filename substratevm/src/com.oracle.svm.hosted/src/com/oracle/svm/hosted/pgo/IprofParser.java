@@ -50,9 +50,9 @@ import jdk.graal.compiler.util.json.JsonParser;
  * <p>
  * {@code version}, {@code types} and {@code methods} are required and strictly validated. The
  * {@code conditionalProfiles} section is <em>optional</em> per the iprof schema: when it is absent
- * the document is well-formed and parses with an empty conditional-entry list
- * ({@code PGOProfileUseFeature} then warns that the profile has no branch profiles). When it IS
- * present it must be a JSON array whose entries are structurally valid.
+ * the document is well-formed and parses with an empty conditional-entry list, and the profile
+ * then sets no branch or switch probabilities. When it IS present it must be a JSON array whose
+ * entries are structurally valid.
  *
  * <p>
  * Supported schema versions are {@value #VERSION_1_0_0} and {@value #VERSION_1_1_0}; the
@@ -128,8 +128,8 @@ public final class IprofParser {
     public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
-    /** Immutable result of parsing the in-scope sections of an iprof file. */
-    public static final class ParsedProfile {
+    /** Immutable result of parsing the sections of an iprof file that {@code --pgo} reads. */
+    public static final class ParsedIprofProfile {
         private final String version;
         private final Map<Integer, String> typeNamesById;
         private final Map<Integer, MethodDescriptor> methodsById;
@@ -138,7 +138,7 @@ public final class IprofParser {
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         private final List<SamplingEntry> samplingEntries;
 
-        ParsedProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
+        ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
                         List<ConditionalEntry> conditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
             this.version = version;
@@ -180,7 +180,9 @@ public final class IprofParser {
     }
 
     /**
-     * Parses the in-scope sections of an iprof document.
+     * Parses the sections of an iprof document that {@code --pgo} reads: {@code version},
+     * {@code types}, {@code methods} and the profile sections the class comment lists. Other
+     * sections are skipped.
      *
      * @param reader a character stream positioned at the start of the JSON document; closed by the
      *            caller.
@@ -189,7 +191,7 @@ public final class IprofParser {
      * @throws IOException if reading from {@code reader} fails.
      */
     @SuppressWarnings({"unchecked", "static-method"})
-    public ParsedProfile parse(Reader reader) throws IOException {
+    public ParsedIprofProfile parse(Reader reader) throws IOException {
         Object root = new JsonParser(reader).parse();
         if (!(root instanceof EconomicMap)) {
             throw new IprofFormatException("Iprof root must be a JSON object");
@@ -216,7 +218,7 @@ public final class IprofParser {
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
         List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
 
-        return new ParsedProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
+        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
     }
 
     private static Map<Integer, String> parseTypes(List<Object> types) {

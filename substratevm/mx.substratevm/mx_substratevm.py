@@ -1208,9 +1208,9 @@ def pgo_e2e_test_task(extra_image_args=None):
                 merge_summary = summary(build_log, 'merging ' + str(checks['merged_profiles']) + ' profiles')
                 expect('sampling overlap' in merge_summary, name + ': directory profiles were not merged with overlap diagnostics: ' + merge_summary)
             if checks.get('samples') is False:
-                expect(any('stack samples not used: -H:-PGOUseStackSamples' in line for line in build_log), name + ': the build does not report the unused stack samples')
+                expect(any('not used, as options say:' in line and 'stack samples' in line for line in build_log), name + ': the build does not report the unused stack samples')
             if checks.get('profile_hits'):
-                application = [line for line in build_log if re.search(r'\[PGO\] \d+ queries, \d+ hits', line)]
+                application = [line for line in build_log if re.search(r'PGO: \d+ queries, \d+ hits', line)]
                 expect(len(application) == 1, name + ': missing profile application summary: ' + str(application))
                 expect(summary_int(application[0], r'\d+ queries, (\d+) hits') > 0,
                        name + ': no branch or switch profile matched a compiler query: ' + application[0])

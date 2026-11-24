@@ -40,7 +40,7 @@ import com.oracle.svm.hosted.pgo.IprofParser.CallCountEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
-import com.oracle.svm.hosted.pgo.IprofParser.ParsedProfile;
+import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
@@ -50,7 +50,7 @@ import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 import jdk.graal.compiler.graph.NodeSourcePosition;
 
 /**
- * Resolves a {@link ParsedProfile}'s conditional entries against a {@link HostedUniverse}, producing
+ * Resolves a {@link ParsedIprofProfile}'s conditional entries against a {@link HostedUniverse}, producing
  * the immutable table consumed by {@link IprofProfilesLookup}.
  *
  * <p>
@@ -170,10 +170,24 @@ public final class IprofProfileResolver {
     /**
      * Resolves the parsed profile against the universe and builds the lookup table.
      *
+     * @param collectDropped whether to keep a readable context of every entry that is dropped,
+     *            for {@code PGOPrintProfileQualityDetails}
      * @return a fully constructed, immutable lookup.
      */
-    public static IprofProfilesLookup resolve(ParsedProfile profile, HostedUniverse universe) {
-        return buildLookup(profile, indexUniverseMethods(universe), indexUniverseTypes(universe));
+    public static IprofProfilesLookup resolve(ParsedIprofProfile profile, HostedUniverse universe, boolean collectDropped) {
+        Set<String> ambiguousMethods = new HashSet<>();
+        Set<String> ambiguousTypes = new HashSet<>();
+        List<String> dropped = collectDropped ? new ArrayList<>() : null;
+        IprofProfilesLookup lookup = buildLookup(profile, indexUniverseMethods(universe, ambiguousMethods), indexUniverseTypes(universe, ambiguousTypes), dropped);
+        lookup.setAmbiguousImageDescriptors(ambiguousMethods.size(), ambiguousTypes.size());
+        if (dropped != null) {
+            lookup.setDroppedContexts(dropped);
+        }
+        return lookup;
+    }
+
+    static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
+        return buildLookup(profile, methodsByDescriptor, typesByDescriptor, null);
     }
 
     /**
@@ -185,8 +199,10 @@ public final class IprofProfileResolver {
      * @param methodsByDescriptor methods available in the image, keyed by their canonical
      *            descriptor (see {@link ProfilingUtilities#methodDescriptor}).
      * @param typesByDescriptor types available in the image, keyed by their descriptor.
+     * @param dropped if not {@code null}, receives a readable context of every dropped entry.
      */
-    static IprofProfilesLookup buildLookup(ParsedProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
+    static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor,
+                    List<String> dropped) {
         Set<String> presentDescriptors = methodsByDescriptor.keySet();
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
         Map<List<FrameKey>, long[]> conditionalTable = new HashMap<>();
@@ -199,11 +215,13 @@ public final class IprofProfileResolver {
             List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
             if (key == null) {
                 unresolved++;
+                addDropped(dropped, "branch or switch", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             /* The first entry for a context wins. */
             if (conditionalTable.putIfAbsent(key, entry.records()) != null) {
                 duplicates++;
+                addDropped(dropped, "branch or switch, duplicate context", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             resolved++;
@@ -218,12 +236,12 @@ public final class IprofProfileResolver {
                         profile.version(), profile.conditionalEntries().size(), resolved, unresolved, duplicates, singleFrame, inlined);
 
         Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeTable = new HashMap<>();
-        VirtualInvokeDiagnostics virtualDiagnostics = resolveVirtualInvokes(profile, descriptorByMethodId, presentDescriptors, typesByDescriptor, virtualInvokeTable);
+        VirtualInvokeDiagnostics virtualDiagnostics = resolveVirtualInvokes(profile, descriptorByMethodId, presentDescriptors, typesByDescriptor, virtualInvokeTable, dropped);
         Map<NodeSourcePosition, Long> sampleCounts = new HashMap<>();
-        SamplingDiagnostics samplingDiagnostics = resolveSamples(profile, descriptorByMethodId, methodsByDescriptor, sampleCounts);
+        SamplingDiagnostics samplingDiagnostics = resolveSamples(profile, descriptorByMethodId, methodsByDescriptor, sampleCounts, dropped);
         Map<List<FrameKey>, Long> callCountsByContext = new HashMap<>();
         Map<String, Long> callCountsByMethod = new HashMap<>();
-        CallCountDiagnostics callCountDiagnostics = resolveCallCounts(profile, descriptorByMethodId, presentDescriptors, callCountsByContext, callCountsByMethod);
+        CallCountDiagnostics callCountDiagnostics = resolveCallCounts(profile, descriptorByMethodId, presentDescriptors, callCountsByContext, callCountsByMethod, dropped);
         return new IprofProfilesLookup(conditionalTable, diagnostics, virtualInvokeTable, virtualDiagnostics, sampleCounts, samplingDiagnostics,
                         callCountsByMethod, callCountsByContext, callCountDiagnostics);
     }
@@ -241,8 +259,8 @@ public final class IprofProfileResolver {
      * as for conditional entries. It is added to the method's total whenever the method itself is
      * in the image, so a caller that the image lacks does not lower the method's count.
      */
-    private static CallCountDiagnostics resolveCallCounts(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
-                    Map<List<FrameKey>, Long> byContext, Map<String, Long> byMethod) {
+    private static CallCountDiagnostics resolveCallCounts(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
+                    Map<List<FrameKey>, Long> byContext, Map<String, Long> byMethod, List<String> dropped) {
         int resolved = 0;
         int unresolved = 0;
         long total = 0;
@@ -255,6 +273,7 @@ public final class IprofProfileResolver {
             List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
             if (key == null) {
                 unresolved++;
+                addDropped(dropped, "call count", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             byContext.merge(key, entry.count(), Long::sum);
@@ -281,8 +300,8 @@ public final class IprofProfileResolver {
      * Receiver types absent from the image are dropped record by record so that a site keeps its
      * remaining observed receivers.
      */
-    private static VirtualInvokeDiagnostics resolveVirtualInvokes(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
-                    Map<String, AnalysisType> typesByDescriptor, Map<List<FrameKey>, Map<AnalysisType, Long>> table) {
+    private static VirtualInvokeDiagnostics resolveVirtualInvokes(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
+                    Map<String, AnalysisType> typesByDescriptor, Map<List<FrameKey>, Map<AnalysisType, Long>> table, List<String> dropped) {
         int resolved = 0;
         int unresolvedContext = 0;
         int duplicates = 0;
@@ -295,6 +314,7 @@ public final class IprofProfileResolver {
             List<FrameKey> key = canonicalKey(entry.context(), descriptorByMethodId, presentDescriptors);
             if (key == null) {
                 unresolvedContext++;
+                addDropped(dropped, "receivers", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             Map<AnalysisType, Long> receivers = new HashMap<>();
@@ -314,10 +334,12 @@ public final class IprofProfileResolver {
             }
             if (receivers.isEmpty()) {
                 noReceiver++;
+                addDropped(dropped, "receivers, no recorded type in the image", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             if (table.putIfAbsent(key, Map.copyOf(receivers)) != null) {
                 duplicates++;
+                addDropped(dropped, "receivers, duplicate context", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
             resolved++;
@@ -354,8 +376,8 @@ public final class IprofProfileResolver {
      * below the mismatch, which is what a method-rooted view consumes. A stack whose leaf itself is
      * unresolvable is dropped.
      */
-    private static SamplingDiagnostics resolveSamples(ParsedProfile profile, Map<Integer, String> descriptorByMethodId, Map<String, HostedMethod> methodsByDescriptor,
-                    Map<NodeSourcePosition, Long> sampleCounts) {
+    private static SamplingDiagnostics resolveSamples(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Map<String, HostedMethod> methodsByDescriptor,
+                    Map<NodeSourcePosition, Long> sampleCounts, List<String> droppedContexts) {
         int resolved = 0;
         int truncated = 0;
         int unresolved = 0;
@@ -381,6 +403,7 @@ public final class IprofProfileResolver {
             if (chain == null) {
                 unresolved++;
                 dropped += entry.count();
+                addDropped(droppedContexts, "stack sample", entry.context(), descriptorByMethodId, methodsByDescriptor.keySet());
                 continue;
             }
             for (NodeSourcePosition position : chain) {
@@ -391,6 +414,7 @@ public final class IprofProfileResolver {
                 resolved++;
             } else {
                 truncated++;
+                addDropped(droppedContexts, "stack sample, cut at the first frame not in the image", entry.context(), descriptorByMethodId, methodsByDescriptor.keySet());
             }
         }
         return new SamplingDiagnostics(profile.samplingEntries().size(), resolved, truncated, unresolved, samples, dropped, methods.size(), missing);
@@ -398,11 +422,11 @@ public final class IprofProfileResolver {
 
     /**
      * Indexes image types by JVM descriptor so profile type names resolve to analysis types. As for
-     * methods, a name that two image types share names neither of them.
+     * methods, a name that two image types share names neither of them; such names are added to
+     * {@code ambiguous}.
      */
-    private static Map<String, AnalysisType> indexUniverseTypes(HostedUniverse universe) {
+    private static Map<String, AnalysisType> indexUniverseTypes(HostedUniverse universe, Set<String> ambiguous) {
         Map<String, AnalysisType> typesByDescriptor = new HashMap<>();
-        Set<String> ambiguous = new HashSet<>();
         for (HostedType type : universe.getTypes()) {
             if (typesByDescriptor.putIfAbsent(type.getName(), type.getWrapped()) != null) {
                 ambiguous.add(type.getName());
@@ -410,6 +434,27 @@ public final class IprofProfileResolver {
         }
         typesByDescriptor.keySet().removeAll(ambiguous);
         return typesByDescriptor;
+    }
+
+    /**
+     * Adds a readable form of a dropped entry's context to {@code dropped}, if the caller collects
+     * them: innermost frame first, as in the file, with every frame that is not in the image marked.
+     */
+    private static void addDropped(List<String> dropped, String kind, List<ContextFrame> context, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
+        if (dropped == null) {
+            return;
+        }
+        StringBuilder result = new StringBuilder(kind).append(": ");
+        String separator = "";
+        for (ContextFrame frame : context) {
+            String descriptor = descriptorByMethodId.get(frame.methodId());
+            result.append(separator).append(descriptor == null ? "method id " + frame.methodId() : descriptor).append(':').append(frame.bci());
+            if (descriptor == null || !presentDescriptors.contains(descriptor)) {
+                result.append(" (not in the image)");
+            }
+            separator = " < ";
+        }
+        dropped.add(result.toString());
     }
 
     /**
@@ -429,7 +474,7 @@ public final class IprofProfileResolver {
         return key;
     }
 
-    private static Map<Integer, String> buildProfileMethodDescriptors(ParsedProfile profile) {
+    private static Map<Integer, String> buildProfileMethodDescriptors(ParsedIprofProfile profile) {
         Map<Integer, String> descriptorByMethodId = new HashMap<>(profile.methodsById().size());
         for (MethodDescriptor method : profile.methodsById().values()) {
             String descriptor = descriptorForProfileMethod(method, profile.typeNamesById());
@@ -444,10 +489,10 @@ public final class IprofProfileResolver {
      * Indexes image methods by their canonical descriptor. A descriptor that two image methods
      * share (classes of the same name from different class loaders) names neither of them: their
      * profile entries stay unresolved rather than being applied to whichever method came first.
+     * Such descriptors are added to {@code ambiguous}.
      */
-    private static Map<String, HostedMethod> indexUniverseMethods(HostedUniverse universe) {
+    private static Map<String, HostedMethod> indexUniverseMethods(HostedUniverse universe, Set<String> ambiguous) {
         Map<String, HostedMethod> methodsByDescriptor = new HashMap<>();
-        Set<String> ambiguous = new HashSet<>();
         for (HostedMethod method : universe.getMethods()) {
             if (!method.isOriginalMethod()) {
                 continue;
