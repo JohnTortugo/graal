@@ -122,8 +122,8 @@ public class IprofParserTest {
 
     @Test
     public void parsesAbsentConditionalProfilesAsEmpty() throws IOException {
-        // conditionalProfiles is optional; when the section is absent the file is well-formed and
-        // parses with an empty conditional-entry list rather than being rejected as malformed.
+        // The profile sections are optional; an absent conditionalProfiles section parses as an
+        // empty conditional-entry list rather than being rejected as malformed.
         ParsedIprofProfile parsed = parse("{\"version\":\"1.0.0\"," + TYPES_AND_METHODS.substring(0, TYPES_AND_METHODS.length() - 1) + "}");
         Assert.assertEquals("1.0.0", parsed.version());
         Assert.assertTrue(parsed.conditionalEntries().isEmpty());
@@ -171,6 +171,11 @@ public class IprofParserTest {
     public void rejectsMissingMethodsSection() {
         String json = "{\"version\":\"1.0.0\",\"types\":[],\"conditionalProfiles\":[]}";
         assertRejected(() -> parse(json), "methods");
+    }
+
+    @Test
+    public void rejectsTruncatedJson() {
+        assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":["), "Not valid JSON");
     }
 
     @Test

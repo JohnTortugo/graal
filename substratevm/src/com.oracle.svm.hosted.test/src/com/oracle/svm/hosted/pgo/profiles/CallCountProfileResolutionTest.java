@@ -30,6 +30,7 @@ import java.util.Set;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
@@ -53,7 +54,7 @@ public class CallCountProfileResolutionTest {
         ParsedIprofProfile parsed = parse("[{\"ctx\":\"7:0\",\"records\":[3]},{\"ctx\":\"7:0\",\"records\":[4]}]");
         Assert.assertEquals(2, parsed.callCountEntries().size());
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
-        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
         Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).orElseThrow());
         Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 5)).isEmpty());
         /* The statistics count every call-edge lookup and the ones that found a count. */
@@ -63,7 +64,7 @@ public class CallCountProfileResolutionTest {
         Assert.assertEquals(7, lookup.callCountDiagnostics().totalCount());
 
         lookup.setUseCallCounts(false);
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
         Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).isEmpty());
     }
 
@@ -73,7 +74,7 @@ public class CallCountProfileResolutionTest {
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
         Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
         Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());
-        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
         Assert.assertEquals(Long.valueOf(9), lookup.methodCallCount(IprofProfileResolverTest.BAR_DESC).orElseThrow().value());
     }
 

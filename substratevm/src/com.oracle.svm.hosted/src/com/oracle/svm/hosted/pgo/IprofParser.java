@@ -34,53 +34,41 @@ import java.util.Map;
 
 import org.graalvm.collections.EconomicMap;
 
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 
 import jdk.graal.compiler.util.json.JsonParser;
+import jdk.graal.compiler.util.json.JsonParserException;
+import jdk.vm.ci.meta.JavaKind;
+import jdk.vm.ci.meta.MetaUtil;
 
 /**
- * Reader for the iprof files that {@code --pgo-instrument} images write and {@code --pgo} reads.
- * The parser is free of any Native Image singletons or universe state so it can be unit-tested in
- * isolation; method ids are resolved against the {@code HostedUniverse} later (see
- * {@code IprofProfileResolver}).
+ * Reader for the iprof files that {@code --pgo-instrument} images write and {@code --pgo} reads
+ * (see {@link IprofFormat}). The JSON itself is read by {@link JsonParser}; this class checks the
+ * iprof structure and turns it into records. The parser is free of any Native Image singletons or
+ * universe state so it can be unit-tested in isolation; method ids are resolved against the
+ * {@code HostedUniverse} later (see {@code IprofProfileResolver}).
  * <p>
  * It reads the {@code conditionalProfiles}, {@code callCountProfiles},
  * {@code virtualInvokeProfiles} and {@code samplingProfiles} sections. Other sections, such as
  * {@code monitorProfiles}, are skipped without being validated, because nothing reads them.
  * <p>
  * {@code version}, {@code types} and {@code methods} are required and strictly validated. The
- * {@code conditionalProfiles} section is <em>optional</em> per the iprof schema: when it is absent
- * the document is well-formed and parses with an empty conditional-entry list, and the profile
- * then sets no branch or switch probabilities. When it IS present it must be a JSON array whose
- * entries are structurally valid.
+ * profile sections are <em>optional</em> per the iprof schema: an absent section parses as an
+ * empty list, and the profile then has no data of that kind. A section that is present must be a
+ * JSON array whose entries are structurally valid.
  *
  * <p>
- * Supported schema versions are {@value #VERSION_1_0_0} and {@value #VERSION_1_1_0}; the
- * {@code conditionalProfiles} encoding is identical across both. Any other version, or any
- * structural violation (missing required section, malformed context string, record array whose
- * length is not a multiple of {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE}) is rejected
- * with an {@link IprofFormatException}.
+ * Supported schema versions are {@value IprofFormat#VERSION_1_0_0} and
+ * {@value IprofFormat#VERSION_1_1_0}; the sections read here are encoded the same way in both. Any
+ * other version, a document that is not valid JSON, or any structural violation (missing required
+ * section, malformed context string, record array whose length is not a multiple of the record
+ * size) is rejected with an {@link IprofFormatException}.
  */
 public final class IprofParser {
 
-    public static final String VERSION_1_0_0 = "1.0.0";
-    public static final String VERSION_1_1_0 = "1.1.0";
-
-    private static final String KEY_VERSION = "version";
-    private static final String KEY_TYPES = "types";
-    private static final String KEY_METHODS = "methods";
-    private static final String KEY_CONDITIONAL_PROFILES = "conditionalProfiles";
-    private static final String KEY_CALL_COUNT_PROFILES = "callCountProfiles";
-    private static final String KEY_VIRTUAL_INVOKE_PROFILES = "virtualInvokeProfiles";
-    private static final String KEY_SAMPLING_PROFILES = "samplingProfiles";
-    private static final String KEY_ID = "id";
-    private static final String KEY_NAME = "name";
-    private static final String KEY_SIGNATURE = "signature";
-    private static final String KEY_CTX = "ctx";
-    private static final String KEY_RECORDS = "records";
-
-    private static final char CONTEXT_FRAME_SEPARATOR = '<';
-    private static final char CONTEXT_METHOD_BCI_SEPARATOR = ':';
+    /** Longs per {@code virtualInvokeProfiles} record: a receiver type id and its count. */
+    public static final int VIRTUAL_INVOKE_RECORD_SIZE = 2;
 
     /** Signals that an iprof stream is not well-formed or is an unsupported version. */
     public static final class IprofFormatException extends RuntimeException {
@@ -91,14 +79,14 @@ public final class IprofParser {
         }
     }
 
-    /** A single {@code methodId:bci} frame of a conditional profile calling context. */
+    /** A single {@code methodId:bci} frame of the calling context of a profile entry. */
     public record ContextFrame(int methodId, int bci) {
     }
 
     /**
      * One parsed {@code conditionalProfiles} entry: the calling context (innermost frame first) and
-     * the raw {@code [branchBci, key, count]} triplet array exactly as required by
-     * {@link PGOApplyProfilesPhase}.
+     * the raw {@code [successorBci, successorIndex, count]} triplets, one per successor of the
+     * branch or switch, as {@link PGOApplyProfilesPhase} expects them.
      */
     public record ConditionalEntry(List<ContextFrame> context, long[] records) {
     }
@@ -187,31 +175,34 @@ public final class IprofParser {
      * @param reader a character stream positioned at the start of the JSON document; closed by the
      *            caller.
      * @return the parsed, immutable model.
-     * @throws IprofFormatException if the stream is malformed or an unsupported version.
+     * @throws IprofFormatException if the stream is not valid JSON, is malformed or is an
+     *             unsupported version.
      * @throws IOException if reading from {@code reader} fails.
      */
     @SuppressWarnings({"unchecked", "static-method"})
     public ParsedIprofProfile parse(Reader reader) throws IOException {
-        Object root = new JsonParser(reader).parse();
+        Object root;
+        try {
+            root = new JsonParser(reader).parse();
+        } catch (JsonParserException e) {
+            throw new IprofFormatException("Not valid JSON: " + e.getMessage());
+        }
         if (!(root instanceof EconomicMap)) {
             throw new IprofFormatException("Iprof root must be a JSON object");
         }
         EconomicMap<String, Object> top = (EconomicMap<String, Object>) root;
 
-        String version = requireString(top, KEY_VERSION);
-        if (!VERSION_1_0_0.equals(version) && !VERSION_1_1_0.equals(version)) {
-            throw new IprofFormatException("Unsupported iprof version '" + version + "'; supported: " + VERSION_1_0_0 + ", " + VERSION_1_1_0);
+        String version = requireString(top, IprofFormat.VERSION);
+        if (!IprofFormat.VERSION_1_0_0.equals(version) && !IprofFormat.VERSION_1_1_0.equals(version)) {
+            throw new IprofFormatException("Unsupported iprof version '" + version + "'; supported: " + IprofFormat.VERSION_1_0_0 + ", " + IprofFormat.VERSION_1_1_0);
         }
 
-        Map<Integer, String> typeNamesById = parseTypes(requireList(top, KEY_TYPES));
-        Map<Integer, MethodDescriptor> methodsById = parseMethods(requireList(top, KEY_METHODS));
+        Map<Integer, String> typeNamesById = parseTypes(requireList(top, IprofFormat.TYPES));
+        Map<Integer, MethodDescriptor> methodsById = parseMethods(requireList(top, IprofFormat.METHODS));
         /*
-         * conditionalProfiles is an optional category per the iprof schema. When the section is
-         * absent the file is well-formed; it simply carries no conditional data. We parse this as
-         * an empty list rather than rejecting the file as malformed. The consumer
-         * (PGOProfileUseFeature) is responsible for emitting a prominent
-         * no-applicable-profile warning in that case. When the key IS present it must still be a
-         * JSON array and every entry must be structurally valid.
+         * The profile sections are optional per the iprof schema: an absent section parses as an
+         * empty list. PGOProfileUseFeature warns when the profile has no entries at all, or when no
+         * entry of a kind matches the image.
          */
         List<ConditionalEntry> conditionalEntries = optionalConditionalProfiles(top);
         List<CallCountEntry> callCountEntries = optionalCallCountProfiles(top);
@@ -224,9 +215,9 @@ public final class IprofParser {
     private static Map<Integer, String> parseTypes(List<Object> types) {
         Map<Integer, String> result = new HashMap<>(types.size());
         for (Object element : types) {
-            EconomicMap<String, Object> type = asObject(element, KEY_TYPES);
-            int id = requireInt(type, KEY_ID);
-            String name = requireString(type, KEY_NAME);
+            EconomicMap<String, Object> type = asObject(element, IprofFormat.TYPES);
+            int id = requireInt(type, IprofFormat.ID);
+            String name = requireString(type, IprofFormat.NAME);
             if (name.isEmpty()) {
                 throw new IprofFormatException("Empty type name for type id " + id);
             }
@@ -240,18 +231,18 @@ public final class IprofParser {
     private static Map<Integer, MethodDescriptor> parseMethods(List<Object> methods) {
         Map<Integer, MethodDescriptor> result = new HashMap<>(methods.size());
         for (Object element : methods) {
-            EconomicMap<String, Object> method = asObject(element, KEY_METHODS);
-            int id = requireInt(method, KEY_ID);
-            String name = requireString(method, KEY_NAME);
-            List<Object> signature = requireList(method, KEY_SIGNATURE);
+            EconomicMap<String, Object> method = asObject(element, IprofFormat.METHODS);
+            int id = requireInt(method, IprofFormat.ID);
+            String name = requireString(method, IprofFormat.NAME);
+            List<Object> signature = requireList(method, IprofFormat.SIGNATURE);
             if (signature.size() < 2) {
                 throw new IprofFormatException("Method id " + id + " signature must contain at least a declaring type and a return type");
             }
-            int declaringTypeId = asInt(signature.get(0), KEY_SIGNATURE);
-            int returnTypeId = asInt(signature.get(1), KEY_SIGNATURE);
+            int declaringTypeId = asInt(signature.get(0), IprofFormat.SIGNATURE);
+            int returnTypeId = asInt(signature.get(1), IprofFormat.SIGNATURE);
             int[] parameterTypeIds = new int[signature.size() - 2];
             for (int i = 2; i < signature.size(); i++) {
-                parameterTypeIds[i - 2] = asInt(signature.get(i), KEY_SIGNATURE);
+                parameterTypeIds[i - 2] = asInt(signature.get(i), IprofFormat.SIGNATURE);
             }
             if (result.put(id, new MethodDescriptor(id, name, declaringTypeId, returnTypeId, parameterTypeIds)) != null) {
                 throw new IprofFormatException("Duplicate method id " + id);
@@ -266,12 +257,12 @@ public final class IprofParser {
      * non-array value, or any structurally invalid entry, is still rejected.
      */
     private static List<ConditionalEntry> optionalConditionalProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(KEY_CONDITIONAL_PROFILES);
+        Object value = top.get(IprofFormat.CONDITIONAL_PROFILES);
         if (value == null) {
             return Collections.emptyList();
         }
         if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + KEY_CONDITIONAL_PROFILES + "' must be a JSON array");
+            throw new IprofFormatException("Key '" + IprofFormat.CONDITIONAL_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
         List<Object> conditionalProfiles = (List<Object>) value;
@@ -279,25 +270,25 @@ public final class IprofParser {
     }
 
     private static List<CallCountEntry> optionalCallCountProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(KEY_CALL_COUNT_PROFILES);
+        Object value = top.get(IprofFormat.CALL_COUNT_PROFILES);
         if (value == null) {
             return Collections.emptyList();
         }
         if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + KEY_CALL_COUNT_PROFILES + "' must be a JSON array");
+            throw new IprofFormatException("Key '" + IprofFormat.CALL_COUNT_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
         List<Object> profiles = (List<Object>) value;
         List<CallCountEntry> result = new ArrayList<>(profiles.size());
         for (Object element : profiles) {
-            EconomicMap<String, Object> entry = asObject(element, KEY_CALL_COUNT_PROFILES);
-            String ctx = requireString(entry, KEY_CTX);
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.CALL_COUNT_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
             List<ContextFrame> context = parseContext(ctx);
-            List<Object> records = requireList(entry, KEY_RECORDS);
+            List<Object> records = requireList(entry, IprofFormat.RECORDS);
             if (records.size() != 1) {
                 throw new IprofFormatException("Call-count records for context '" + ctx + "' must contain exactly one count");
             }
-            long count = asLong(records.get(0), KEY_RECORDS);
+            long count = asLong(records.get(0), IprofFormat.RECORDS);
             if (count < 0 || context.getFirst().bci() != 0) {
                 throw new IprofFormatException("Call-count context '" + ctx + "' must start at method BCI 0 with a non-negative count");
             }
@@ -312,26 +303,26 @@ public final class IprofParser {
      * {@code types} section.
      */
     private static List<VirtualInvokeEntry> optionalVirtualInvokeProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
-        Object value = top.get(KEY_VIRTUAL_INVOKE_PROFILES);
+        Object value = top.get(IprofFormat.VIRTUAL_INVOKE_PROFILES);
         if (value == null) {
             return Collections.emptyList();
         }
         if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + KEY_VIRTUAL_INVOKE_PROFILES + "' must be a JSON array");
+            throw new IprofFormatException("Key '" + IprofFormat.VIRTUAL_INVOKE_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
         List<Object> profiles = (List<Object>) value;
         List<VirtualInvokeEntry> result = new ArrayList<>(profiles.size());
         for (Object element : profiles) {
-            EconomicMap<String, Object> entry = asObject(element, KEY_VIRTUAL_INVOKE_PROFILES);
-            String ctx = requireString(entry, KEY_CTX);
-            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.VIRTUAL_INVOKE_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
             if (rawRecords.isEmpty() || rawRecords.size() % VIRTUAL_INVOKE_RECORD_SIZE != 0) {
                 throw new IprofFormatException("Virtual invoke records length " + rawRecords.size() + " for context '" + ctx + "' is not a positive multiple of " + VIRTUAL_INVOKE_RECORD_SIZE);
             }
             long[] records = new long[rawRecords.size()];
             for (int i = 0; i < rawRecords.size(); i++) {
-                records[i] = asLong(rawRecords.get(i), KEY_RECORDS);
+                records[i] = asLong(rawRecords.get(i), IprofFormat.RECORDS);
             }
             for (int i = 0; i < records.length; i += VIRTUAL_INVOKE_RECORD_SIZE) {
                 if (records[i] < 0 || records[i] > Integer.MAX_VALUE || !typeNamesById.containsKey((int) records[i])) {
@@ -350,35 +341,31 @@ public final class IprofParser {
         return result;
     }
 
-    public static final int VIRTUAL_INVOKE_RECORD_SIZE = 2;
-
+    /** Whether an iprof type name, such as {@code int}, names a primitive type or {@code void}. */
     private static boolean isPrimitiveProfileType(String typeName) {
-        return switch (typeName) {
-            case "boolean", "byte", "short", "char", "int", "long", "float", "double", "void" -> true;
-            default -> false;
-        };
+        return JavaKind.fromTypeString(MetaUtil.toInternalName(typeName)) != JavaKind.Object;
     }
 
     /** Returns the parsed {@code samplingProfiles} entries; each has exactly one record, the sample count. */
     private static List<SamplingEntry> optionalSamplingProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(KEY_SAMPLING_PROFILES);
+        Object value = top.get(IprofFormat.SAMPLING_PROFILES);
         if (value == null) {
             return Collections.emptyList();
         }
         if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + KEY_SAMPLING_PROFILES + "' must be a JSON array");
+            throw new IprofFormatException("Key '" + IprofFormat.SAMPLING_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
         List<Object> profiles = (List<Object>) value;
         List<SamplingEntry> result = new ArrayList<>(profiles.size());
         for (Object element : profiles) {
-            EconomicMap<String, Object> entry = asObject(element, KEY_SAMPLING_PROFILES);
-            String ctx = requireString(entry, KEY_CTX);
-            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.SAMPLING_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
             if (rawRecords.size() != 1) {
                 throw new IprofFormatException("Sampling records for context '" + ctx + "' must contain exactly one count");
             }
-            long count = asLong(rawRecords.get(0), KEY_RECORDS);
+            long count = asLong(rawRecords.get(0), IprofFormat.RECORDS);
             if (count < 0) {
                 throw new IprofFormatException("Negative sample count for context '" + ctx + "'");
             }
@@ -390,9 +377,9 @@ public final class IprofParser {
     private static List<ConditionalEntry> parseConditionalProfiles(List<Object> conditionalProfiles) {
         List<ConditionalEntry> result = new ArrayList<>(conditionalProfiles.size());
         for (Object element : conditionalProfiles) {
-            EconomicMap<String, Object> entry = asObject(element, KEY_CONDITIONAL_PROFILES);
-            String ctx = requireString(entry, KEY_CTX);
-            List<Object> rawRecords = requireList(entry, KEY_RECORDS);
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.CONDITIONAL_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
             List<ContextFrame> context = parseContext(ctx);
             long[] records = parseRecords(rawRecords, ctx);
             result.add(new ConditionalEntry(context, records));
@@ -403,16 +390,17 @@ public final class IprofParser {
     /**
      * Splits a context string of the form {@code methodId:bci<methodId:bci<...} into frames,
      * preserving the innermost-first order used by the profile and by
-     * {@link PGOApplyProfilesPhase#createPointContext}.
+     * {@link PGOApplyProfilesPhase#createPointContext}: {@code 7:12<3:5} gives the frames
+     * {@code (7, 12)} and {@code (3, 5)}.
      */
     static List<ContextFrame> parseContext(String ctx) {
         if (ctx.isEmpty()) {
-            throw new IprofFormatException("Empty conditional context string");
+            throw new IprofFormatException("Empty context string");
         }
         List<ContextFrame> frames = new ArrayList<>();
         int start = 0;
         while (start <= ctx.length()) {
-            int separator = ctx.indexOf(CONTEXT_FRAME_SEPARATOR, start);
+            int separator = ctx.indexOf(IprofFormat.FRAME_SEPARATOR, start);
             int end = separator < 0 ? ctx.length() : separator;
             frames.add(parseFrame(ctx.substring(start, end), ctx));
             if (separator < 0) {
@@ -424,7 +412,7 @@ public final class IprofParser {
     }
 
     private static ContextFrame parseFrame(String frame, String ctx) {
-        int colon = frame.indexOf(CONTEXT_METHOD_BCI_SEPARATOR);
+        int colon = frame.indexOf(IprofFormat.METHOD_BCI_SEPARATOR);
         if (colon <= 0 || colon == frame.length() - 1) {
             throw new IprofFormatException("Malformed context frame '" + frame + "' in context '" + ctx + "'");
         }
@@ -442,7 +430,7 @@ public final class IprofParser {
         long[] records = new long[rawRecords.size()];
         long totalCount = 0;
         for (int i = 0; i < rawRecords.size(); i++) {
-            records[i] = asLong(rawRecords.get(i), KEY_RECORDS);
+            records[i] = asLong(rawRecords.get(i), IprofFormat.RECORDS);
         }
         for (int i = 0; i < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
             long successorBci = records[i];
@@ -457,6 +445,11 @@ public final class IprofParser {
             if (count < 0) {
                 throw new IprofFormatException("Conditional context '" + ctx + "' has negative count " + count);
             }
+            /*
+             * PGOApplyProfilesPhase adds up the counts of an entry in a long to turn them into
+             * probabilities. A sum that does not fit would wrap around to a negative number and give
+             * wrong probabilities, so such an entry is rejected here.
+             */
             try {
                 totalCount = Math.addExact(totalCount, count);
             } catch (ArithmeticException exception) {

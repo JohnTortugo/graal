@@ -55,7 +55,11 @@ public record ConditionalProfileDiagnostics(
         return totalEntries == 0 ? 0.0 : (double) resolvedEntries / totalEntries;
     }
 
-    /** A stable, single-line, human-readable summary suitable for build logs. */
+    /**
+     * A stable, single-line, human-readable summary suitable for build logs, for example
+     * {@code iprof conditionalProfiles v1.1.0: 7222 entries, 7208 resolved (99.8%), 14 unresolved, 0
+     * duplicate-context; 2801 single-frame, 4407 inlined-context}.
+     */
     public String summary() {
         return String.format("iprof conditionalProfiles v%s: %d entries, %d resolved (%.1f%%), %d unresolved, %d duplicate-context; %d single-frame, %d inlined-context",
                         profileVersion, totalEntries, resolvedEntries, resolutionRatio() * 100.0, unresolvedEntries, duplicateContextEntries, singleFrameEntries, inlinedContextEntries);

@@ -177,10 +177,11 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     /**
      * A record applies to a successor only through the successor's bytecode position. Successors
-     * without one (an inlined intrinsic or substitution, bci -1; an exception edge, -3 or -4; the
-     * producer's own marker, -5) are indistinguishable from each other: applying their record would
-     * give every such successor the same probability, replacing the static or injected prior with a
-     * value that need not even sum to one across the branch. Such successors keep their prior.
+     * without one (an inlined intrinsic or substitution, bci -1; an exception edge, -3 or -4; an
+     * unknown position, {@code BytecodeFrame.UNKNOWN_BCI}, -5) are indistinguishable from each
+     * other: applying their record would give every such successor the same probability, replacing
+     * the static or injected prior with a value that need not even sum to one across the branch.
+     * Such successors keep their prior.
      */
     public static boolean validConditionalBci(long bci) {
         return bci >= 0;

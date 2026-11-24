@@ -36,6 +36,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
@@ -95,6 +96,11 @@ public class VirtualInvokeProfileResolutionTest {
     }
 
     @Test(expected = IprofFormatException.class)
+    public void rejectsVoidReceiverType() throws IOException {
+        parse("{\"ctx\":\"1001:9\",\"records\":[8,7]}");
+    }
+
+    @Test(expected = IprofFormatException.class)
     public void rejectsUndeclaredReceiverType() throws IOException {
         parse("{\"ctx\":\"1001:9\",\"records\":[999,7]}");
     }
@@ -120,7 +126,7 @@ public class VirtualInvokeProfileResolutionTest {
         Assert.assertEquals(3, d.droppedReceiverRecords());
         Assert.assertEquals(15, d.receiverEvents());
         Assert.assertEquals(15, d.droppedReceiverEvents());
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.VIRTUAL_INVOKE_PROFILES_CATEGORY));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.VIRTUAL_INVOKE_PROFILES));
         Optional<Map<AnalysisType, Long>> result = lookup.getVirtualInvokeProfile(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 9));
         Assert.assertTrue(result.isEmpty());
     }

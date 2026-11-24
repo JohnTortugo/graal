@@ -39,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
@@ -54,11 +55,30 @@ import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.Signature;
 
 /**
- * Tests {@link IprofProfileResolver}'s signature canonicalization and the
- * universe-independent table build (context resolution, unresolved-context dropping, and
- * duplicate-context merge behavior).
+ * Tests {@link IprofProfileResolver}'s signature canonicalization and table build (context
+ * resolution, unresolved-context dropping, duplicate-context merge), and the
+ * {@link IprofProfilesLookup} queries on that table: exact and shortened-context matches, hit, miss
+ * and coverage counters, and the recorded profile categories.
  */
 public class IprofProfileResolverTest {
+
+    // Descriptors that match the TYPES_AND_METHODS table below.
+    private static final String FOO = "Lcom/example/Foo;";
+    // com.example.Foo.bar(int)void
+    static final String BAR_DESC = FOO + ".bar(I)V";
+    // com.example.Foo.baz(int)java.lang.String
+    private static final String BAZ_DESC = FOO + ".baz(I)Ljava/lang/String;";
+
+    private static final String TYPES_AND_METHODS = "\"types\":[" +
+                    "{\"id\":4,\"name\":\"int\"}," +
+                    "{\"id\":8,\"name\":\"void\"}," +
+                    "{\"id\":100,\"name\":\"com.example.Foo\"}," +
+                    "{\"id\":101,\"name\":\"java.lang.String\"}" +
+                    "]," +
+                    "\"methods\":[" +
+                    "{\"id\":1001,\"name\":\"bar\",\"signature\":[100,8,4]}," +
+                    "{\"id\":1002,\"name\":\"baz\",\"signature\":[100,101,4]}" +
+                    "],";
 
     /**
      * Builds a lookup for a profile whose methods with the given descriptors are in the image.
@@ -88,24 +108,6 @@ public class IprofProfileResolverTest {
         return new IprofProfilesLookup(Map.of(), null, Map.of(), null, samples, null, Map.of(), Map.of(), null);
     }
 
-    // Descriptors that match the TYPES_AND_METHODS table below.
-    private static final String FOO = "Lcom/example/Foo;";
-    // com.example.Foo.bar(int)void
-    static final String BAR_DESC = FOO + ".bar(I)V";
-    // com.example.Foo.baz(int)java.lang.String
-    private static final String BAZ_DESC = FOO + ".baz(I)Ljava/lang/String;";
-
-    private static final String TYPES_AND_METHODS = "\"types\":[" +
-                    "{\"id\":4,\"name\":\"int\"}," +
-                    "{\"id\":8,\"name\":\"void\"}," +
-                    "{\"id\":100,\"name\":\"com.example.Foo\"}," +
-                    "{\"id\":101,\"name\":\"java.lang.String\"}" +
-                    "]," +
-                    "\"methods\":[" +
-                    "{\"id\":1001,\"name\":\"bar\",\"signature\":[100,8,4]}," +
-                    "{\"id\":1002,\"name\":\"baz\",\"signature\":[100,101,4]}" +
-                    "],";
-
     private static ParsedIprofProfile parse(String conditionalProfiles) throws IOException {
         String json = "{\"version\":\"1.0.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
@@ -114,13 +116,11 @@ public class IprofProfileResolverTest {
     // --- signature canonicalization -------------------------------------------------------------
 
     @Test
-    public void convertsIprofTypeNamesToDescriptors() {
-        Assert.assertEquals("I", IprofProfileResolver.toDescriptor("int"));
-        Assert.assertEquals("Z", IprofProfileResolver.toDescriptor("boolean"));
-        Assert.assertEquals("V", IprofProfileResolver.toDescriptor("void"));
-        Assert.assertEquals("Ljava/lang/String;", IprofProfileResolver.toDescriptor("java.lang.String"));
-        Assert.assertEquals("[Z", IprofProfileResolver.toDescriptor("[Z"));
-        Assert.assertEquals("[Ljava/lang/String;", IprofProfileResolver.toDescriptor("[Ljava.lang.String;"));
+    public void convertsIprofTypeNamesInMethodDescriptors() {
+        Map<Integer, String> typeNames = Map.of(1, "com.example.Foo$$Lambda/0x1234", 2, "[Ljava.lang.String;", 3, "boolean", 4, "[Z", 5, "void", 6, "int");
+        Assert.assertEquals("Lcom/example/Foo$$Lambda.0x1234;.m([Ljava/lang/String;Z[ZI)V",
+                        IprofProfileResolver.descriptorForProfileMethod(new MethodDescriptor(7, "m", 1, 5, new int[]{2, 3, 4, 6}), typeNames));
+        Assert.assertNull("a type id that the types table lacks", IprofProfileResolver.descriptorForProfileMethod(new MethodDescriptor(8, "m", 1, 5, new int[]{9}), typeNames));
     }
 
     @Test
@@ -228,33 +228,10 @@ public class IprofProfileResolverTest {
     public void sectionsAbsentFromTheProfileAreNotRecorded() throws IOException {
         ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
-        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.CONDITIONAL_PROFILES_CATEGORY));
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY));
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.VIRTUAL_INVOKE_PROFILES_CATEGORY));
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
-    }
-
-    // --- toDescriptor rejects empty/invalid type names cleanly ----------------------------------
-
-    @Test
-    public void toDescriptorRejectsEmptyNameCleanly() {
-        // Must be a clean IllegalArgumentException, not a StringIndexOutOfBoundsException from charAt.
-        try {
-            IprofProfileResolver.toDescriptor("");
-            Assert.fail("expected IllegalArgumentException for empty type name");
-        } catch (IllegalArgumentException e) {
-            Assert.assertTrue("message should mention empty type name", e.getMessage().contains("empty"));
-        }
-    }
-
-    @Test
-    public void toDescriptorRejectsNullNameCleanly() {
-        try {
-            IprofProfileResolver.toDescriptor(null);
-            Assert.fail("expected IllegalArgumentException for null type name");
-        } catch (IllegalArgumentException e) {
-            // expected
-        }
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CONDITIONAL_PROFILES));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.VIRTUAL_INVOKE_PROFILES));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.SAMPLING_PROFILES));
     }
 
     // --- empty / no-applicable-profile behavior -------------------------------------------------

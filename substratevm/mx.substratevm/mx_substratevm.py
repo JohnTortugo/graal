@@ -588,7 +588,7 @@ def svm_gate_body(args, tasks):
         if t:
             runtime_assertions_test_task(args.extra_image_builder_arguments)
 
-    # Every pgo check but the unit tests builds --pgo-instrument images, which have not been tried on Windows yet.
+    # The tasks with the pgo tag below that build --pgo-instrument images skip Windows, where such images are not tested.
     with Task('pgo end-to-end', tasks, tags=[GraalTags.pgo]) as t:
         if t:
             if mx.is_windows():
@@ -1239,7 +1239,8 @@ def pgo_native_unittests_task(extra_image_args=None):
     Runs the native unit test corpus three times: as a plain image, as a --pgo-instrument image
     (which also trains), and as an image optimized with the profile of that training run. PGO must
     not change which tests pass: the instrumented and the optimized image may fail only tests the
-    plain image fails too.
+    plain image fails too. Then runs RecorderTableNativeTest the same three ways, with a safepoint
+    promptness limit; it must pass in all three images.
     """
     output_dir = join(svmbuild_dir(), 'pgo-native-unittests')
     if exists(output_dir):

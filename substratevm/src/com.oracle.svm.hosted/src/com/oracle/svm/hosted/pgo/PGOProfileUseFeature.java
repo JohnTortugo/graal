@@ -41,6 +41,7 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.meta.HostedMethod;
@@ -152,7 +153,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
         return pathSet(profilePath());
     }
 
-    /** Whether to print the detailed statistics; the PGO gate reads them through PGOTestDiagnostics. */
+    /** Whether to print the detailed statistics; the 'pgo end-to-end' gate task reads them with PGOTestDiagnostics. */
     public static boolean printStatistics() {
         return Options.PGOPrintStatistics.getValue() || Options.PGOTestDiagnostics.getValue();
     }
@@ -356,7 +357,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
                     info("sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)",
                                     samplingHotness.totalSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
                 }
-            } else if (profilesLookup.profileCategoryRecorded(IprofProfilesLookup.CALL_COUNT_PROFILES_CATEGORY)) {
+            } else if (profilesLookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
                 samplingHotness = new SamplingHotness(Map.of());
             }
@@ -443,7 +444,8 @@ public final class PGOProfileUseFeature implements InternalFeature {
 
     /**
      * Warns about every kind of data none of whose entries matches this image, and about a profile
-     * without entries. Both usually mean that the profile was recorded for another program.
+     * without entries. Both usually mean that the profile was recorded for another program. Then
+     * warns once about entries and receiver types that match only in part.
      */
     private static void warnAboutUnmatchedKinds(IprofProfilesLookup lookup) {
         ConditionalProfileDiagnostics conditionals = lookup.conditionalDiagnostics();
@@ -461,6 +463,39 @@ public final class PGOProfileUseFeature implements InternalFeature {
         if (totalEntries(lookup) == 0) {
             LogUtils.warning("The profile in %s has no entries, so it changes nothing in the image.", profileOption());
         }
+        warnAboutMissingElements(lookup);
+    }
+
+    /**
+     * Warns once when the image lacks some of the methods and types that the branch and switch,
+     * receiver and call-count entries name, for every kind of which other entries match. The
+     * instrumented build compiled code that this build does not have, for example because the
+     * program changed. A kind that matches nowhere has its own warning. Stack samples are left out:
+     * the sampler names a frame as stack traces do, which for some substituted JDK methods is not
+     * the method's name in the image, so even a profile of this build can miss a few of them.
+     */
+    private static void warnAboutMissingElements(IprofProfilesLookup lookup) {
+        ConditionalProfileDiagnostics conditionals = lookup.conditionalDiagnostics();
+        long entries = missingIfOthersMatch(conditionals.resolvedEntries(), conditionals.unresolvedEntries());
+        long receiverTypes = 0;
+        IprofProfileResolver.VirtualInvokeDiagnostics receivers = lookup.virtualInvokeDiagnostics();
+        if (receivers != null) {
+            entries += missingIfOthersMatch(receivers.resolvedEntries(), receivers.unresolvedContextEntries() + receivers.noKnownReceiverEntries());
+            receiverTypes = receivers.resolvedEntries() > 0 ? receivers.droppedReceiverRecords() : 0;
+        }
+        IprofProfileResolver.CallCountDiagnostics callCounts = lookup.callCountDiagnostics();
+        if (callCounts != null) {
+            entries += missingIfOthersMatch(callCounts.resolvedEntries(), callCounts.unresolvedEntries());
+        }
+        if (entries > 0 || receiverTypes > 0) {
+            LogUtils.warning("%d entries and %d receiver types of the profile in %s name methods or types that this image does not have, or has twice under one name, " +
+                            "so they are not used. The profile was probably recorded for another version of the program. %s lists them.",
+                            entries, receiverTypes, profileOption(), SubstrateOptionsParser.commandArgument(PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails, "+"));
+        }
+    }
+
+    private static int missingIfOthersMatch(int matched, int missing) {
+        return matched > 0 ? missing : 0;
     }
 
     private static void warnIfNoneMatches(String kind, int entries, int matched) {
@@ -628,7 +663,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
         }
     }
 
-    /** A context on one line, innermost frame first. */
+    /** A context on one line, innermost frame first, such as {@code java.lang.String.charAt(int):12 < com.example.Foo.bar():5}. */
     private static String describe(NodeSourcePosition context) {
         StringBuilder result = new StringBuilder();
         for (NodeSourcePosition position = context; position != null; position = position.getCaller()) {

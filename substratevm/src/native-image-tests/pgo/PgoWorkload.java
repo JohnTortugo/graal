@@ -54,6 +54,42 @@ import java.util.concurrent.CountDownLatch;
  */
 public final class PgoWorkload {
 
+    /** How many shapes of each kind were built; printed so that recorded profiles can be checked against them. */
+    static long circles;
+    static long squares;
+    static long triangles;
+    /** Circles built by {@link #mixed}; {@link #circlesOnly} builds the others. */
+    static long mixedCircles;
+    /** How often {@link #unitAreas} called {@link #areaOf}, and the simple class name of its receiver. */
+    static long unitAreaCalls;
+    static String unitReceiver;
+
+    /** Type tags in the high four bits of an encoded value; see {@link #encode}. */
+    static final int T_INT = 1;
+    static final int T_STR = 2;
+    static final int T_STRUCT = 3;
+    static final int T_BAD = 4;
+    static final int T_MARK = 0xf;
+
+    static final String[] FIELDS = {"Count", "ms", "Bytes", "count", "Percent", "Seconds", "mS"};
+    static final Map<String, Integer> UNITS = new HashMap<>();
+    static {
+        UNITS.put("count", 1);
+        UNITS.put("ms", 2);
+        UNITS.put("bytes", 3);
+        UNITS.put("percent", 4);
+        UNITS.put("seconds", 5);
+    }
+
+    static long unitChecksum;
+    static long stringChecksum;
+    static long boxedChecksum;
+    static long switchZero;
+    static long switchOne;
+    static long switchTwo;
+    static int malformed;
+    static int markers;
+
     // ---------------------------------------------------------------- receivers by context
 
     interface Shape {
@@ -165,16 +201,6 @@ public final class PgoWorkload {
         }
         return n;
     }
-
-    /** How many shapes of each kind were built; printed so that recorded profiles can be checked against them. */
-    static long circles;
-    static long squares;
-    static long triangles;
-    /** Circles built by {@link #mixed}; {@link #circlesOnly} builds the others. */
-    static long mixedCircles;
-    /** How often {@link #unitAreas} called {@link #areaOf}, and the simple class name of its receiver. */
-    static long unitAreaCalls;
-    static String unitReceiver;
 
     /** Context A: all circles. */
     static double circlesOnly(int n, long seed) {
@@ -352,22 +378,6 @@ public final class PgoWorkload {
         }
     }
 
-    static final int T_INT = 1;
-    static final int T_STR = 2;
-    static final int T_STRUCT = 3;
-    static final int T_BAD = 4;
-    static final int T_MARK = 0xf;
-
-    static final String[] FIELDS = {"Count", "ms", "Bytes", "count", "Percent", "Seconds", "mS"};
-    static final Map<String, Integer> UNITS = new HashMap<>();
-    static {
-        UNITS.put("count", 1);
-        UNITS.put("ms", 2);
-        UNITS.put("bytes", 3);
-        UNITS.put("percent", 4);
-        UNITS.put("seconds", 5);
-    }
-
     /** Builds a byte stream of nested records; every 97th record is malformed. */
     static byte[] encode(int records, long seed) {
         List<Byte> out = new ArrayList<>();
@@ -433,15 +443,6 @@ public final class PgoWorkload {
             super(message, null, false, false);
         }
     }
-
-    static long unitChecksum;
-    static long stringChecksum;
-    static long boxedChecksum;
-    static long switchZero;
-    static long switchOne;
-    static long switchTwo;
-    static int malformed;
-    static int markers;
 
     record ThreadLifecycleResult(long checksum, long trueCount, long falseCount) {
     }

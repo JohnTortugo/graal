@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
 import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
@@ -51,11 +52,13 @@ import jdk.vm.ci.code.BytecodePosition;
 /**
  * The {@link PGOProfilesLookup} that serves a parsed iprof profile to the compiler.
  * <p>
- * It answers four recorded categories: {@code conditionalProfiles} (branch and switch successor
- * counts), {@code callCountProfiles}, {@code virtualInvokeProfiles} (receiver types) and
- * {@code samplingProfiles} (stack samples). Each is looked up by a canonical calling context. All
- * other queries, such as instanceof, image-heap and monitor profiles, answer as for an absent
- * profile.
+ * It answers four recorded categories, which are named as the iprof sections
+ * ({@link IprofFormat}): {@code conditionalProfiles} (branch and switch successor counts),
+ * {@code callCountProfiles}, {@code virtualInvokeProfiles} (receiver types) and
+ * {@code samplingProfiles} (stack samples). Conditional and receiver profiles, and call counts per
+ * call edge, are looked up by canonical calling context; call counts per method by method
+ * descriptor; the stack samples are handed out as one map. All other queries, such as instanceof,
+ * image-heap and monitor profiles, answer as for an absent profile.
  * <p>
  * The tables are built by {@code PGOProfileUseFeature} once the {@code HostedUniverse} is
  * available; see {@link IprofProfileResolver} for the resolution algorithm. The tables do not
@@ -63,12 +66,6 @@ import jdk.vm.ci.code.BytecodePosition;
  */
 @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = DisallowLayered.class)
 public final class IprofProfilesLookup implements PGOProfilesLookup {
-
-    /** Section names of the iprof file, as written by {@code IprofWriter}. */
-    public static final String CONDITIONAL_PROFILES_CATEGORY = "conditionalProfiles";
-    public static final String CALL_COUNT_PROFILES_CATEGORY = "callCountProfiles";
-    public static final String VIRTUAL_INVOKE_PROFILES_CATEGORY = "virtualInvokeProfiles";
-    public static final String SAMPLING_PROFILES_CATEGORY = "samplingProfiles";
 
     /**
      * A single canonical frame of a calling context: a JVM-descriptor method identity and a
@@ -84,7 +81,8 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     /**
      * Sum of the conditional records of every context that starts with the key, innermost frame
      * first: {@code [foo:12]} is all executions of that branch, {@code [foo:12, a:5]} all
-     * executions inlined into {@code a} at bci 5, whatever the outer callers.
+     * executions inlined into {@code a} at bci 5, whatever the outer callers (see
+     * {@link #prefixSums}).
      */
     private final Map<List<FrameKey>, long[]> prefixSums;
     private final Map<NodeSourcePosition, Long> sampleCounts;
@@ -120,11 +118,12 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     private volatile boolean cleared;
 
     /**
-     * Number of {@link #getConditionalProfile(BytecodePosition)} calls that matched an installed
-     * context ({@code hits}) and that did not ({@code misses}). These count how the profile is
-     * actually applied while compiling image graphs, independent of the phase-level
-     * {@code PGOApplyProfilesPhase.ProfileQuality} counters (which are only updated when the
-     * PGOPrintProfileQuality option is set). They are always maintained so a deterministic
+     * Number of {@link #getConditionalProfile(BytecodePosition)} calls that found a record
+     * ({@code hits}), for the full context or, with context fallback, as a prefix sum, and that
+     * found none ({@code misses}). These count how the profile is actually applied while compiling
+     * image graphs, independent of the phase-level {@code PGOApplyProfilesPhase.ProfileQuality}
+     * counters (which are only updated when PGOPrintProfileQuality or
+     * PGOPrintProfileQualityDetails is set). They are always maintained so a deterministic
      * afterCompilation summary can be produced without enabling any option.
      */
     private final AtomicLong hitCount = new AtomicLong();
@@ -170,7 +169,9 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * Adds every entry's records to each prefix of its context, including the full context. A
      * record is {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE} longs: successor bci,
      * successor index and count. The counts of one arm are summed; arms keep the order of their
-     * first record.
+     * first record. For example, the entries {@code [foo:12, a:5] -> [14, 0, 9, 17, 1, 1]} and
+     * {@code [foo:12, b:7] -> [14, 0, 2, 17, 1, 8]} give {@code [foo:12] -> [14, 0, 11, 17, 1, 9]}
+     * and keep both full contexts.
      */
     static Map<List<FrameKey>, long[]> prefixSums(Map<List<FrameKey>, long[]> conditionalData) {
         Map<List<FrameKey>, Map<Arm, Long>> sums = new HashMap<>();
@@ -214,7 +215,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         this.receiverContextFallback = enabled;
     }
 
-    /** Records how many image methods and types share their descriptor with another one. */
+    /** Records how many distinct method and type descriptors name more than one image method or type. */
     public void setAmbiguousImageDescriptors(int methods, int types) {
         this.ambiguousImageMethods = methods;
         this.ambiguousImageTypes = types;
@@ -264,7 +265,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
     }
 
-    /** Number of applied-lookup queries that matched an installed conditional context. */
+    /** Number of {@link #getConditionalProfile} calls that found a record, for the full context or as a prefix sum. */
     public long hitCount() {
         return hitCount.get();
     }
@@ -294,12 +295,12 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return matchedContexts.size() - fullyAppliedContextCount() - partiallyAppliedContextCount();
     }
 
-    /** Number of resolved contexts never requested by this stage's compiler queries. */
+    /** Number of resolved conditional contexts that no {@link #getConditionalProfile} call has matched exactly so far. */
     public long unusedResolvedContextCount() {
         return availableContextCount() - matchedContexts.size();
     }
 
-    /** Number of applied-lookup queries that did not match any installed conditional context. */
+    /** Number of {@link #getConditionalProfile} calls that found no record. */
     public long missCount() {
         return missCount.get();
     }
@@ -309,16 +310,16 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared) {
             return false;
         }
-        if (CALL_COUNT_PROFILES_CATEGORY.equals(category)) {
+        if (IprofFormat.CALL_COUNT_PROFILES.equals(category)) {
             return useCallCounts && !callCountsByMethod.isEmpty();
         }
-        if (VIRTUAL_INVOKE_PROFILES_CATEGORY.equals(category)) {
+        if (IprofFormat.VIRTUAL_INVOKE_PROFILES.equals(category)) {
             return !virtualInvokeData.isEmpty();
         }
-        if (SAMPLING_PROFILES_CATEGORY.equals(category)) {
+        if (IprofFormat.SAMPLING_PROFILES.equals(category)) {
             return useStackSamples && !sampleCounts.isEmpty();
         }
-        return CONDITIONAL_PROFILES_CATEGORY.equals(category) && !conditionalData.isEmpty();
+        return IprofFormat.CONDITIONAL_PROFILES.equals(category) && !conditionalData.isEmpty();
     }
 
     @Override
@@ -407,7 +408,8 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * Builds the canonical, innermost-first {@link FrameKey} chain for a query context. This mirrors
      * how the profile stores {@code methodId:bci} frames and how
      * {@code PGOApplyProfilesPhase.createPointContext} assembles the query (leaf frame first,
-     * followed by its callers).
+     * followed by its callers). For {@code String.charAt} at bci 12 inlined into {@code Foo.bar} at
+     * bci 5 it gives {@code [(Ljava/lang/String;.charAt(I)C, 12), (Lcom/example/Foo;.bar()V, 5)]}.
      */
     static List<FrameKey> canonicalize(BytecodePosition position) {
         List<FrameKey> frames = new ArrayList<>();

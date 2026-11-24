@@ -64,12 +64,17 @@ public class PrefixTree {
 
     @SuppressWarnings("this-escape")
     public PrefixTree(PGOProfilesLookup pgoProfiles) {
-        populatePrefixTree(pgoProfiles);
+        this(pgoProfiles.getSampleCounts().orElseGet(HashMap::new));
+    }
+
+    /** Builds the tree from sampled stacks, each mapped to the number of times it was seen. */
+    @SuppressWarnings("this-escape")
+    public PrefixTree(Map<NodeSourcePosition, Long> samples) {
+        populatePrefixTree(samples);
         this.totalTreeCount = updateSubtreeCounts();
     }
 
-    private void populatePrefixTree(PGOProfilesLookup pgoProfiles) {
-        Map<NodeSourcePosition, Long> samples = pgoProfiles.getSampleCounts().orElseGet(HashMap::new);
+    private void populatePrefixTree(Map<NodeSourcePosition, Long> samples) {
         Map<ResolvedJavaMethod, String> methodNameCache = new HashMap<>();
         for (Map.Entry<NodeSourcePosition, Long> entry : samples.entrySet()) {
             if (ignored(entry.getKey(), methodNameCache)) {

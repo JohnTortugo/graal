@@ -28,22 +28,18 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
 import com.oracle.graal.pointsto.meta.AnalysisMethod;
-import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.hosted.cai.PrefixTree;
 import com.oracle.svm.hosted.meta.HostedMethod;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
-import jdk.vm.ci.code.BytecodePosition;
-import jdk.vm.ci.meta.JavaType;
 
 /**
  * Method-rooted view of sampled call stacks.
@@ -57,8 +53,8 @@ import jdk.vm.ci.meta.JavaType;
  * unit needs (callee hotness relative to the compilation root, and which callees were observed at an
  * indirect call) while remaining context-sensitive below the root.
  *
- * Self time is the share of samples whose innermost frame is in the method; a method is a hot caller
- * if it appears anywhere in a sampled stack.
+ * Self time is the share of non-idle samples whose innermost frame is in the method; a method is a
+ * hot caller if it appears anywhere in a sampled stack that does not end in an idle leaf.
  */
 public final class SamplingHotness {
 
@@ -119,7 +115,7 @@ public final class SamplingHotness {
                 suffixes.merge(suffix, entry.getValue(), Long::sum);
             }
         }
-        methodRootedTree = new PrefixTree(new SampleSource(suffixes));
+        methodRootedTree = new PrefixTree(suffixes);
     }
 
     record SampleAccounting<M>(Map<M, Long> selfSamples, long totalSamples, long idleSamples) {
@@ -171,7 +167,7 @@ public final class SamplingHotness {
         return methodRootedTree.hasMethod(method);
     }
 
-    /** Fraction in [0, 1] of all samples whose innermost frame lies in {@code method}. */
+    /** Fraction in [0, 1] of all non-idle samples whose innermost frame lies in {@code method}. */
     public double selfTimeShare(HostedMethod method) {
         if (totalSamples == 0) {
             return 0.0;
@@ -225,74 +221,5 @@ public final class SamplingHotness {
                 return hot;
             }
         };
-    }
-
-    /** Minimal lookup that only carries the expanded sample map into {@link PrefixTree}. */
-    private static final class SampleSource implements PGOProfilesLookup {
-        private final Map<NodeSourcePosition, Long> samples;
-
-        SampleSource(Map<NodeSourcePosition, Long> samples) {
-            this.samples = samples;
-        }
-
-        @Override
-        public Optional<Map<NodeSourcePosition, Long>> getSampleCounts() {
-            return Optional.of(samples);
-        }
-
-        @Override
-        public boolean profileCategoryRecorded(String category) {
-            return IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY.equals(category);
-        }
-
-        @Override
-        public Optional<ProfiledValue<Long>> getCallCountProfile(HostedMethod method) {
-            return Optional.empty();
-        }
-
-        @Override
-        public long getCallCountOrZero(HostedMethod method) {
-            return 0;
-        }
-
-        @Override
-        public boolean isExecuted(HostedMethod method) {
-            return false;
-        }
-
-        @Override
-        public Optional<Map<AnalysisType, Long>> getVirtualInvokeProfile(BytecodePosition callingContext) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<Map<AnalysisMethod, Long>> getVirtualInvokeMethodProfile(BytecodePosition callingContext) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<ProfiledValue<Long>> getTotalConditionalProfileValue(HostedMethod method) {
-            return Optional.empty();
-        }
-
-        @Override
-        public long getTotalConditionalProfileValueOrZero(HostedMethod method) {
-            return 0;
-        }
-
-        @Override
-        public Optional<Map<AnalysisType, Long>> getMonitorProfiles() {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<Map<JavaType, Long>> getInstanceofProfile(BytecodePosition callingContext) {
-            return Optional.empty();
-        }
     }
 }

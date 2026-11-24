@@ -57,7 +57,7 @@ import jdk.vm.ci.code.BytecodeFrame;
 
 /**
  * Checks what PGO did to the compiled graphs of {@link PgoWorkload}, from the graph dumps a build
- * wrote with {@code -H:Dump=:1 -H:MethodFilter=PgoWorkload.*}. Three modes:
+ * wrote with {@code -H:Dump=:1} and a method filter that covers the workload. Modes:
  *
  * <ul>
  * <li>{@code profiled <dumpDir> <iprof> <name>=<count>...}: every branch
@@ -66,8 +66,12 @@ import jdk.vm.ci.code.BytecodeFrame;
  * exactly the branch, switch, receiver, and call-edge counts the program reports; the monomorphic
  * interface call is guarded and direct; and both workload switches carry their recorded
  * distributions.</li>
- * <li>{@code unprofiled <dumpDir>}: no branch carries a profiled probability and the interface call
- * stays an interface call.</li>
+ * <li>{@code profiled-receivers-disabled}, {@code profiled-switches-disabled} and
+ * {@code profiled-branches-disabled}, with the same arguments: the consumer of one kind is off, so
+ * that kind shows no effect while the others still show theirs.</li>
+ * <li>{@code unprofiled <dumpDir>}: no branch or switch carries a profiled probability, and the
+ * interface call is not devirtualized to one implementation: it stays an interface call, or the
+ * inliner dispatches over every implementation.</li>
  * <li>{@code instrumented <dumpDir>}: right after the last instrumentation phase that runs before
  * the inliner, the graphs carry the counter nodes.</li>
  * </ul>
@@ -781,9 +785,8 @@ public final class PgoEffectsCheck {
                 }
                 /*
                  * The record counts per successor; the switch distributes a successor's share over
-                 * the keys that lead to it. The dump lists the successor probabilities when the
-                 * compiler computed them; otherwise some grouping of the keys must reproduce the
-                 * record.
+                 * the keys that lead to it. The dump must list the successor probabilities, and they
+                 * must equal the record's shares.
                  */
                 Map<Integer, Double> successors = successorProbabilities(graphEntry.getValue(), node, graphNodes);
                 if (successors == null) {
@@ -959,8 +962,8 @@ public final class PgoEffectsCheck {
     /**
      * Right after the instrumentation phases, before the inliner: every branch the producer selects
      * owns a counter at the start of each successor and no other branch has one, every indirect
-     * call has one receiver counter, and every graph with a direct call at least one call-count
-     * counter. The producer selects a branch as {@code ProfilingUtilities.relevantConditionalSitesFromGraph}
+     * call has one receiver counter, and every graph has at least as many call-count counters as
+     * direct calls. The producer selects a branch as {@code ProfilingUtilities.relevantConditionalSitesFromGraph}
      * does: not an implicit-exception check, and every frame of its position has a bytecode index.
      */
     private void checkInstrumentation(Map<String, InputGraph> graphs) {

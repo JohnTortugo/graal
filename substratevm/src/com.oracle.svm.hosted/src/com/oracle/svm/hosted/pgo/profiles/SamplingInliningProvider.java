@@ -42,9 +42,10 @@ import jdk.vm.ci.meta.JavaMethodProfile;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
- * Inlining provider that gives the priority inliner sampling-derived hotness: a calling-context
- * cursor per compilation root (so cutoff hotness and sampled callee profiles become available) and
- * the hotness bonuses that are otherwise zero.
+ * Inlining provider that gives the priority inliner profile-derived hotness: a calling-context
+ * cursor per compilation root (so cutoff hotness and sampled callee profiles become available), the
+ * larger of the sampled and the call-count hotness of a call edge, and the hot bonus while
+ * inlining, which is otherwise zero.
  */
 public final class SamplingInliningProvider extends SubstrateInliningProvider {
 

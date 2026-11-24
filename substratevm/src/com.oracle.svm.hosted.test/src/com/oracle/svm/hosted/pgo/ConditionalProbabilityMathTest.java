@@ -41,7 +41,7 @@ public class ConditionalProbabilityMathTest {
 
     private static final double EPS = 1e-9;
 
-    /** The documented worked example: BCI 20 taken 10x, BCI 53 taken 1x. */
+    /** Records {20, 0, 10, 53, 1, 1}: the successor at BCI 20 taken 10 times, the one at BCI 53 once. */
     @Test
     public void distributesDocumentedVectorTenToOne() {
         Optional<double[]> probabilities = PGOApplyProfilesPhase.distributeConditionalProbabilities(new long[]{20, 0, 10, 53, 1, 1});

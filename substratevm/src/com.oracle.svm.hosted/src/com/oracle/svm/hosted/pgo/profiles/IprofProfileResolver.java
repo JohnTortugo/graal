@@ -48,14 +48,16 @@ import com.oracle.svm.hosted.pgo.ProfilingUtilities;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
+import jdk.vm.ci.meta.MetaUtil;
 
 /**
- * Resolves a {@link ParsedIprofProfile}'s conditional entries against a {@link HostedUniverse}, producing
- * the immutable table consumed by {@link IprofProfilesLookup}.
+ * Resolves the entries of a {@link ParsedIprofProfile} against a {@link HostedUniverse}: its
+ * branch and switch, receiver, call-count and stack-sample entries. It produces the immutable
+ * tables that {@link IprofProfilesLookup} serves to the compiler.
  *
  * <p>
- * The core idea is a single canonical method-identity string in JVM-descriptor form, computed the
- * same way from two sources:
+ * The core idea is a single canonical method-identity string in JVM-descriptor form, such as
+ * {@code Ljava/lang/String;.charAt(I)C}, computed the same way from two sources:
  * <ul>
  * <li>from the iprof {@code methods}/{@code types} tables ({@link #descriptorForProfileMethod}), and
  * <li>from a resolved method at query time and during universe indexing
@@ -73,8 +75,10 @@ public final class IprofProfileResolver {
 
     /**
      * Builds the canonical descriptor for an iprof method entry, converting the profile's type
-     * names (dotted FQNs, primitive keywords, or {@code [L...;} array names) into JVM descriptors so
-     * the result matches {@link ProfilingUtilities#methodDescriptor}.
+     * names ({@link Class#getName()} form) into JVM descriptors so the result matches
+     * {@link ProfilingUtilities#methodDescriptor}. For example, method {@code charAt} with the
+     * signature type ids of {@code java.lang.String}, {@code char} and {@code int} gives
+     * {@code Ljava/lang/String;.charAt(I)C}.
      *
      * @return the descriptor, or {@code null} if a referenced type id is missing.
      */
@@ -97,74 +101,14 @@ public final class IprofProfileResolver {
         return sb.toString();
     }
 
+    /**
+     * The descriptor of a profile type, as JVMCI writes it: {@code I}, {@code [I},
+     * {@code Ljava/lang/String;} and {@code LFoo$$Lambda.0x1234;} for {@code int}, {@code [I},
+     * {@code java.lang.String} and the hidden class {@code Foo$$Lambda/0x1234}.
+     */
     private static String descriptorForTypeId(int typeId, Map<Integer, String> typeNamesById) {
         String name = typeNamesById.get(typeId);
-        return name == null ? null : toDescriptor(name);
-    }
-
-    /**
-     * Converts an iprof type name into a JVM type descriptor.
-     * <ul>
-     * <li>primitive keyword ({@code int}, {@code boolean}, {@code void}, ...) -&gt; single-letter
-     * descriptor;
-     * <li>array name ({@code [Z}, {@code [Ljava.lang.String;}) -&gt; descriptor with dots replaced
-     * by slashes inside the class part;
-     * <li>class FQN ({@code java.lang.String}) -&gt; {@code Ljava/lang/String;}.
-     * </ul>
-     *
-     * @param iprofTypeName a non-empty iprof type name.
-     * @throws IllegalArgumentException if {@code iprofTypeName} is {@code null} or empty. The parser
-     *             already rejects empty type names strictly (see {@code IprofParser}),
-     *             so this guard converts any remaining empty input into a clear failure rather than
-     *             an opaque {@link String#charAt(int)} {@link StringIndexOutOfBoundsException}.
-     */
-    static String toDescriptor(String iprofTypeName) {
-        if (iprofTypeName == null || iprofTypeName.isEmpty()) {
-            throw new IllegalArgumentException("Cannot convert an empty iprof type name to a JVM descriptor");
-        }
-        switch (iprofTypeName) {
-            case "boolean":
-                return "Z";
-            case "byte":
-                return "B";
-            case "short":
-                return "S";
-            case "char":
-                return "C";
-            case "int":
-                return "I";
-            case "long":
-                return "J";
-            case "float":
-                return "F";
-            case "double":
-                return "D";
-            case "void":
-                return "V";
-            default:
-                break;
-        }
-        if (iprofTypeName.charAt(0) == '[') {
-            // Array: JVM descriptor already, but object element FQNs use dots -> convert to slashes.
-            return binaryToInternalName(iprofTypeName);
-        }
-        // Object type: dotted FQN -> Lbinary/name;
-        return 'L' + binaryToInternalName(iprofTypeName) + ';';
-    }
-
-    /**
-     * Converts a binary class name to the internal form used by JVMCI type descriptors. Package
-     * separators become slashes. A hidden class name such as {@code Foo$$Lambda/0x1234} contains a
-     * slash that JVMCI renders as a dot in the descriptor ({@code LFoo$$Lambda.0x1234;}), so the two
-     * characters are swapped rather than dots merely replaced.
-     */
-    private static String binaryToInternalName(String binaryName) {
-        StringBuilder result = new StringBuilder(binaryName.length());
-        for (int i = 0; i < binaryName.length(); i++) {
-            char c = binaryName.charAt(i);
-            result.append(c == '.' ? '/' : c == '/' ? '.' : c);
-        }
-        return result.toString();
+        return name == null ? null : MetaUtil.toInternalName(name);
     }
 
     /**
@@ -248,6 +192,7 @@ public final class IprofProfileResolver {
 
     /** Resolution statistics for the {@code callCountProfiles} section. */
     public record CallCountDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, long totalCount) {
+        /** For example {@code iprof callCountProfiles: 4424 entries, 4411 resolved, 13 unresolved; total count 918273}. */
         public String summary() {
             return String.format("iprof callCountProfiles: %d entries, %d resolved, %d unresolved; total count %d", totalEntries, resolvedEntries, unresolvedEntries, totalCount);
         }
@@ -256,8 +201,8 @@ public final class IprofProfileResolver {
     /**
      * Resolves {@code callCountProfiles}. A context counts calls of its innermost method made from
      * that chain of callers. The count is added to the context only if every frame is in the image,
-     * as for conditional entries. It is added to the method's total whenever the method itself is
-     * in the image, so a caller that the image lacks does not lower the method's count.
+     * as for the other kinds. It is added to the method's total whenever the method itself is in the
+     * image, so a caller that the image lacks does not lower the method's count.
      */
     private static CallCountDiagnostics resolveCallCounts(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<List<FrameKey>, Long> byContext, Map<String, Long> byMethod, List<String> dropped) {
@@ -286,6 +231,11 @@ public final class IprofProfileResolver {
     /** Resolution statistics for the {@code virtualInvokeProfiles} section. */
     public record VirtualInvokeDiagnostics(int totalEntries, int resolvedEntries, int unresolvedContextEntries, int duplicateContextEntries,
                     int noKnownReceiverEntries, long receiverRecords, long droppedReceiverRecords, long receiverEvents, long droppedReceiverEvents) {
+        /**
+         * For example {@code iprof virtualInvokeProfiles: 1736 entries, 1726 resolved, 8
+         * unresolved-context, 0 duplicate-context, 2 without image-present receiver; receiver records
+         * 2950 (12 dropped), receiver events 81234 (40 dropped)}.
+         */
         public String summary() {
             return String.format("iprof virtualInvokeProfiles: %d entries, %d resolved, %d unresolved-context, %d duplicate-context, %d without image-present receiver; " +
                             "receiver records %d (%d dropped), receiver events %d (%d dropped)",
@@ -295,10 +245,11 @@ public final class IprofProfileResolver {
     }
 
     /**
-     * Resolves {@code virtualInvokeProfiles}: the context must be fully present (as for conditional
-     * entries) and each receiver type is mapped through its JVM descriptor to the image type.
-     * Receiver types absent from the image are dropped record by record so that a site keeps its
-     * remaining observed receivers.
+     * Resolves {@code virtualInvokeProfiles}: the context must be fully present (as for the other
+     * kinds) and each receiver type is mapped through its JVM descriptor to the image type. A
+     * receiver type that the image does not have is dropped from its site, which keeps the other
+     * observed receivers and its whole context. {@code PGOProfileUseFeature} warns about such
+     * types: they mean that the instrumented build saw code that this build does not have.
      */
     private static VirtualInvokeDiagnostics resolveVirtualInvokes(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<String, AnalysisType> typesByDescriptor, Map<List<FrameKey>, Map<AnalysisType, Long>> table, List<String> dropped) {
@@ -328,6 +279,7 @@ public final class IprofProfileResolver {
                 if (type == null) {
                     droppedRecords++;
                     droppedEvents += count;
+                    addDropped(dropped, "receiver type " + profile.typeNamesById().get((int) raw[i]) + " not found in the image", entry.context(), descriptorByMethodId, presentDescriptors);
                     continue;
                 }
                 receivers.merge(type, count, Long::sum);
@@ -354,6 +306,11 @@ public final class IprofProfileResolver {
         /** How many of the unresolvable frames with the most samples the summary names. */
         private static final int REPORTED_MISSING_FRAMES = 8;
 
+        /**
+         * For example {@code iprof samplingProfiles: 42 stacks, 41 fully resolved, 0 truncated at an
+         * unresolvable outer frame, 1 unresolved; samples 392 (4 dropped); 59 distinct methods; top
+         * unresolvable frames by samples: Ljava/lang/Object;.waitSubst(J)V=4}.
+         */
         public String summary() {
             StringBuilder missing = new StringBuilder();
             missingFrameSamples.entrySet().stream().sorted((a, b) -> Long.compare(b.getValue(), a.getValue())).limit(REPORTED_MISSING_FRAMES)
@@ -374,7 +331,9 @@ public final class IprofProfileResolver {
      * contain frames that do not exist in this image (for example hidden lambda classes or generated
      * factory methods); keeping the innermost resolvable segment preserves leaf hotness and the contexts
      * below the mismatch, which is what a method-rooted view consumes. A stack whose leaf itself is
-     * unresolvable is dropped.
+     * unresolvable is dropped. Even a profile of this same build can miss a frame: the sampler names
+     * a frame as stack traces do, which for some substituted JDK methods is not the method's name in
+     * the image ({@code Object.waitSubst} for {@code Object.wait}).
      */
     private static SamplingDiagnostics resolveSamples(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Map<String, HostedMethod> methodsByDescriptor,
                     Map<NodeSourcePosition, Long> sampleCounts, List<String> droppedContexts) {
@@ -439,6 +398,8 @@ public final class IprofProfileResolver {
     /**
      * Adds a readable form of a dropped entry's context to {@code dropped}, if the caller collects
      * them: innermost frame first, as in the file, with every frame that is not in the image marked.
+     * For example {@code call count: Lcom/example/Foo;.bar()V:0 < Lcom/example/Old;.run()V:7 (not in
+     * the image)}.
      */
     private static void addDropped(List<String> dropped, String kind, List<ContextFrame> context, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
         if (dropped == null) {
@@ -458,9 +419,11 @@ public final class IprofProfileResolver {
     }
 
     /**
-     * Builds a canonical {@link FrameKey} chain (innermost frame first) for a conditional entry, or
-     * {@code null} if any frame's method is absent from the image. Each frame's method identity is
-     * confirmed present so that only contexts fully present in this image are stored.
+     * Builds a canonical {@link FrameKey} chain (innermost frame first) for the context of a
+     * branch or switch, call-count or receiver entry, or {@code null} if any frame's method is
+     * absent from the image. For example, the context {@code 7:12<3:5} gives the keys
+     * {@code (Ljava/lang/String;.charAt(I)C, 12)} and {@code (Lcom/example/Foo;.bar()V, 5)} when
+     * the methods table names those methods with ids 7 and 3.
      */
     private static List<FrameKey> canonicalKey(List<ContextFrame> entryContext, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
         List<FrameKey> key = new ArrayList<>(entryContext.size());
@@ -474,6 +437,7 @@ public final class IprofProfileResolver {
         return key;
     }
 
+    /** The descriptor of every method of the profile's methods table by id, such as {@code 7 -> Ljava/lang/String;.charAt(I)C}. */
     private static Map<Integer, String> buildProfileMethodDescriptors(ParsedIprofProfile profile) {
         Map<Integer, String> descriptorByMethodId = new HashMap<>(profile.methodsById().size());
         for (MethodDescriptor method : profile.methodsById().values()) {

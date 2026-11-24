@@ -32,6 +32,7 @@ import java.util.Map;
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
@@ -102,7 +103,7 @@ public class SamplingProfileResolutionTest {
         Assert.assertEquals(12, d.samples());
         Assert.assertEquals(12, d.droppedSamples());
         Assert.assertTrue(lookup.getSampleCounts().isEmpty());
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.SAMPLING_PROFILES));
         Assert.assertTrue(d.summary().contains(IprofProfileResolverTest.BAR_DESC));
     }
 
@@ -114,11 +115,11 @@ public class SamplingProfileResolutionTest {
     public void stackSamplesCanBeHidden() {
         Map<NodeSourcePosition, Long> samples = Map.of(new NodeSourcePosition(null, IprofProfileResolverTest.mockBarMethod(), 9), 42L);
         IprofProfilesLookup lookup = IprofProfileResolverTest.samplingLookup(samples);
-        Assert.assertTrue(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.SAMPLING_PROFILES));
         Assert.assertEquals(List.of(42L), List.copyOf(lookup.getSampleCounts().orElseThrow().values()));
 
         lookup.setUseStackSamples(false);
-        Assert.assertFalse(lookup.profileCategoryRecorded(IprofProfilesLookup.SAMPLING_PROFILES_CATEGORY));
+        Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.SAMPLING_PROFILES));
         Assert.assertTrue(lookup.getSampleCounts().isEmpty());
     }
 }
