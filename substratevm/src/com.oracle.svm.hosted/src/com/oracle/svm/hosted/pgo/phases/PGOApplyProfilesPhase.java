@@ -295,14 +295,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         if (!pgoProfiles.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
             return;
         }
-        List<ConditionalSite> sites = ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext);
-        for (ConditionalSite site : sites) {
+        for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext)) {
             if (shouldApplyConditional(site.node())) {
                 updateConditionalProbabilitiesBasedOnSamples(site.node());
-            }
-        }
-        for (ConditionalSite site : sites) {
-            if (shouldApplyConditional(site.node())) {
                 updateConditionalProbabilities(site);
             }
         }

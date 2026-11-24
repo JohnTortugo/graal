@@ -128,7 +128,12 @@ public interface PGOProfilesLookup {
                     @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
     }
 
-    /** Telemetry: an observed receiver type that closed-world analysis proved impossible at the site. */
+    /**
+     * Telemetry: a recorded receiver type that the closed-world analysis of this image rules out at
+     * the site. The analysis is right for this image; the record is not: it was made by another
+     * build, for example of an older version of the application, or comes from a merge with such a
+     * profile. The receiver is dropped.
+     */
     default void recordImpossibleReceiver(@SuppressWarnings("unused") long events) {
     }
 

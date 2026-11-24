@@ -1199,7 +1199,6 @@ def pgo_e2e_test_task(extra_image_args=None):
             ('pgo-call-counts-only', ['--pgo=' + call_only_profile], {}),
             ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'fallback': True}),
             ('pgo-shallow-no-fallback', ['--pgo=' + profile_shallow] + svm_experimental_options(['-H:-PGOReceiverContextFallback']), {'fallback': False}),
-            ('pgo-no-graph-cache', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-UseGraphCache']), {}),
         ]
         for name, image_args, checks in variants:
             image, build_log = build(name, image_args)

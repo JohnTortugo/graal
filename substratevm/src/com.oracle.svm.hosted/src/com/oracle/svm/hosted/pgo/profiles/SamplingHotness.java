@@ -71,11 +71,11 @@ public final class SamplingHotness {
 
     /**
      * Leaf frames that consume no processor time. A sampler that walks every thread also samples
-     * threads parked in these, and on the reference workload a single idle monitoring thread
-     * accounted for half of all samples. Leaving them in the denominator halves every method's
-     * reported self time, which is the signal the compiler uses to decide what counts as globally
-     * hot code, so they are excluded. The blocking primitives are matched by declaring class as well
-     * as name, so an application method that happens to be called {@code sleep} still counts.
+     * threads parked in these, and a thread that waits for the whole run is sampled as often as one
+     * that works. Leaving those samples in the denominator lowers every method's reported self
+     * time, which is the signal the compiler uses to decide what counts as globally hot code, so
+     * they are excluded. The blocking primitives are matched by declaring class as well as name, so
+     * an application method that happens to be called {@code sleep} still counts.
      */
     private static final Set<String> IDLE_LEAF_CLASSES = Set.of(
                     "com.oracle.svm.core.thread.PlatformThreads",
