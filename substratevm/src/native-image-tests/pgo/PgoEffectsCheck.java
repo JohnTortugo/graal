@@ -82,8 +82,8 @@ import jdk.vm.ci.code.BytecodeFrame;
 public final class PgoEffectsCheck {
     private static final double TOLERANCE = 1e-6;
 
-    private static final Pattern PROBABILITY = Pattern.compile("^(\\w+) designatedSuccessorProbability: (\\S+)$");
-    private static final Pattern KEY_PROBABILITIES = Pattern.compile("^(\\w+) keyProbabilities: \\[(.*)\\]$");
+    private static final Pattern BRANCH_PROBABILITY = Pattern.compile("^(\\w+) designatedSuccessorProbability: (\\S+)$");
+    private static final Pattern SWITCH_KEY_PROBABILITIES = Pattern.compile("^(\\w+) keyProbabilities: \\[(.*)\\]$");
     /** {@code pkg.Class.method(File.java:12) [bci:34]}; a frame of a node source position. */
     private static final Pattern FRAME = Pattern.compile("^(\\S+)\\(.*\\) \\[bci:(-?\\d+)\\]$");
     /** A frame of an inlined {@code area()} implementation; group 1 is the shape type. */
@@ -108,7 +108,7 @@ public final class PgoEffectsCheck {
             case "profiled-switches-disabled" -> check.checkProfiled(args, graphs, true, false, true);
             case "profiled-branches-disabled" -> check.checkBranchesDisabled(args, graphs);
             case "unprofiled" -> {
-                check.checkNoProfiledBranches(graphs);
+                check.checkNoProfiledControlSplits(graphs);
                 check.checkDevirtualized(graphs, false);
             }
             case "instrumented" -> check.checkInstrumentation(graphs);
@@ -277,11 +277,11 @@ public final class PgoEffectsCheck {
     /** The parts of an iprof file the checks need, with contexts as {@code Class.method:bci} chains. */
     private static final class Profile {
         /** Conditional entries: context chain to successor records [bci, index, count]*. */
-        final Map<List<String>, List<long[]>> conditionals = new HashMap<>();
+        final Map<List<String>, List<long[]>> conditionalProfiles = new HashMap<>();
         /** Receiver profiles: context chain to type name to count. */
-        final Map<List<String>, Map<String, Long>> receivers = new HashMap<>();
+        final Map<List<String>, Map<String, Long>> virtualInvokeProfiles = new HashMap<>();
         /** Exact target-first call contexts to their execution counts. */
-        final Map<List<String>, Long> calls = new HashMap<>();
+        final Map<List<String>, Long> callCountProfiles = new HashMap<>();
 
         @SuppressWarnings("unchecked")
         static Profile read(Path file) throws IOException {
@@ -301,7 +301,7 @@ public final class PgoEffectsCheck {
             Profile profile = new Profile();
             for (Object record : (List<Object>) root.get("conditionalProfiles")) {
                 EconomicMap<String, Object> entry = (EconomicMap<String, Object>) record;
-                profile.conditionals.computeIfAbsent(context(methods, (String) entry.get("ctx")), _ -> new ArrayList<>()).add(longs(entry.get("records")));
+                profile.conditionalProfiles.computeIfAbsent(context(methods, (String) entry.get("ctx")), _ -> new ArrayList<>()).add(longs(entry.get("records")));
             }
             for (Object record : (List<Object>) section(root, "virtualInvokeProfiles")) {
                 EconomicMap<String, Object> entry = (EconomicMap<String, Object>) record;
@@ -310,7 +310,7 @@ public final class PgoEffectsCheck {
                 for (int i = 0; i < pairs.length; i += 2) {
                     byType.merge(types.get(pairs[i]), pairs[i + 1], Long::sum);
                 }
-                profile.receivers.put(context(methods, (String) entry.get("ctx")), byType);
+                profile.virtualInvokeProfiles.put(context(methods, (String) entry.get("ctx")), byType);
             }
             for (Object record : (List<Object>) section(root, "callCountProfiles")) {
                 EconomicMap<String, Object> entry = (EconomicMap<String, Object>) record;
@@ -318,7 +318,7 @@ public final class PgoEffectsCheck {
                 if (counts.length != 1) {
                     throw new IllegalArgumentException("callCountProfiles entry must contain exactly one count");
                 }
-                profile.calls.merge(context(methods, (String) entry.get("ctx")), counts[0], Math::addExact);
+                profile.callCountProfiles.merge(context(methods, (String) entry.get("ctx")), counts[0], Math::addExact);
             }
             return profile;
         }
@@ -353,7 +353,7 @@ public final class PgoEffectsCheck {
          * first (the shortened-context fallback, {@code IprofProfilesLookup}).
          */
         List<long[]> conditionalFor(List<String> context) {
-            List<long[]> exact = conditionals.get(context);
+            List<long[]> exact = conditionalProfiles.get(context);
             if (exact != null) {
                 return exact;
             }
@@ -361,7 +361,7 @@ public final class PgoEffectsCheck {
                 List<String> prefix = context.subList(0, depth);
                 /* A record is (successor bci, successor index, count); the first two identify the arm. */
                 Map<List<Long>, Long> counts = new LinkedHashMap<>();
-                for (Map.Entry<List<String>, List<long[]>> entry : conditionals.entrySet()) {
+                for (Map.Entry<List<String>, List<long[]>> entry : conditionalProfiles.entrySet()) {
                     if (entry.getKey().size() < depth || !entry.getKey().subList(0, depth).equals(prefix)) {
                         continue;
                     }
@@ -486,7 +486,7 @@ public final class PgoEffectsCheck {
                 if (!nodeClass(node).equals("IfNode")) {
                     continue;
                 }
-                Matcher matcher = PROBABILITY.matcher(String.valueOf(property(node, "profileData")));
+                Matcher matcher = BRANCH_PROBABILITY.matcher(String.valueOf(property(node, "profileData")));
                 if (!matcher.matches() || !matcher.group(1).equals("PROFILED")) {
                     continue;
                 }
@@ -559,7 +559,7 @@ public final class PgoEffectsCheck {
         count("recorded call-edge counts equal to the program's own counts");
         long recorded = 0;
         int entries = 0;
-        for (Map.Entry<List<String>, Long> entry : profile.calls.entrySet()) {
+        for (Map.Entry<List<String>, Long> entry : profile.callCountProfiles.entrySet()) {
             if (entry.getKey().getFirst().startsWith("pgoworkload." + method + ":0")) {
                 recorded = Math.addExact(recorded, entry.getValue());
                 entries++;
@@ -576,7 +576,7 @@ public final class PgoEffectsCheck {
         count("recorded switch counts equal to the program's own counts");
         long[] expected = expectedCounts.clone();
         List<String> seen = new ArrayList<>();
-        for (Map.Entry<List<String>, List<long[]>> entry : profile.conditionals.entrySet()) {
+        for (Map.Entry<List<String>, List<long[]>> entry : profile.conditionalProfiles.entrySet()) {
             if (!entry.getKey().getFirst().contains(method + ":")) {
                 continue;
             }
@@ -599,7 +599,7 @@ public final class PgoEffectsCheck {
 
     private void expectBranchCounts(Profile profile, String method, long first, long second, String description) {
         count("recorded counts equal to the program's own counts");
-        for (Map.Entry<List<String>, List<long[]>> entry : profile.conditionals.entrySet()) {
+        for (Map.Entry<List<String>, List<long[]>> entry : profile.conditionalProfiles.entrySet()) {
             if (!entry.getKey().getFirst().contains(method + ":")) {
                 continue;
             }
@@ -621,7 +621,7 @@ public final class PgoEffectsCheck {
          */
         List<String> site = null;
         Map<String, Long> recorded = new TreeMap<>();
-        for (Map.Entry<List<String>, Map<String, Long>> entry : profile.receivers.entrySet()) {
+        for (Map.Entry<List<String>, Map<String, Long>> entry : profile.virtualInvokeProfiles.entrySet()) {
             List<String> context = entry.getKey();
             if (context.size() < frames.size()) {
                 continue;
@@ -677,7 +677,7 @@ public final class PgoEffectsCheck {
                 if (!nodeClass(node).equals("IfNode") || context(node).isEmpty()) {
                     continue;
                 }
-                Matcher matcher = PROBABILITY.matcher(String.valueOf(property(node, "profileData")));
+                Matcher matcher = BRANCH_PROBABILITY.matcher(String.valueOf(property(node, "profileData")));
                 String innermost = context(node).getFirst();
                 if (!matcher.matches() || !matcher.group(1).equals("PROFILED") || methods.stream().noneMatch(method -> innermost.startsWith("pgoworkload." + method + ":"))) {
                     continue;
@@ -773,7 +773,7 @@ public final class PgoEffectsCheck {
                 if (context.isEmpty() || !context.getFirst().startsWith("pgoworkload.PgoWorkload." + method + ":")) {
                     continue;
                 }
-                Matcher matcher = KEY_PROBABILITIES.matcher(String.valueOf(property(node, "profileData")));
+                Matcher matcher = SWITCH_KEY_PROBABILITIES.matcher(String.valueOf(property(node, "profileData")));
                 if (!matcher.matches() || !matcher.group(1).equals("PROFILED")) {
                     continue;
                 }
@@ -923,7 +923,7 @@ public final class PgoEffectsCheck {
         checkSwitch(graphs, profile);
     }
 
-    private void checkNoProfiledBranches(Map<String, InputGraph> graphs) {
+    private void checkNoProfiledControlSplits(Map<String, InputGraph> graphs) {
         count("unprofiled graphs without profiled branches");
         int controlSplits = 0;
         for (Map.Entry<String, InputGraph> entry : graphs.entrySet()) {

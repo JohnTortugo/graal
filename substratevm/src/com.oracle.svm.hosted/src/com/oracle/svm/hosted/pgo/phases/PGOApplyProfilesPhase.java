@@ -107,7 +107,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private static final int CONDITIONAL_RECORD_BCI_POSITION = 0;
     public static final int CONDITIONAL_RECORD_KEY_POSITION = 1;
     public static final int CONDITIONAL_RECORD_COUNTER_POSITION = 2;
-    private final PGOProfilesLookup pgoProfiles;
+    private final PGOProfilesLookup profilesLookup;
     private final NodeSourcePosition inliningContext;
     private final HostedUniverse hUniverse;
     private final PrefixTree.Cursor compilationRootContext;
@@ -131,19 +131,19 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private final ProfileQuality.Level profileQualityLevel;
 
     public static PGOApplyProfilesPhase createForExpandingHotCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
-                    PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(inliningContext, hUniverse, compilationRootContext, pgoProfiles, true, ProfileQuality.Level.NOT_TRACKING);
+                    PGOProfilesLookup profilesLookup) {
+        return new PGOApplyProfilesPhase(inliningContext, hUniverse, compilationRootContext, profilesLookup, true, ProfileQuality.Level.NOT_TRACKING);
     }
 
-    public static PGOApplyProfilesPhase createForExpandingCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(inliningContext, hUniverse, null, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
+    public static PGOApplyProfilesPhase createForExpandingCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PGOProfilesLookup profilesLookup) {
+        return new PGOApplyProfilesPhase(inliningContext, hUniverse, null, profilesLookup, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
-    public static PGOApplyProfilesPhase createForBeforeHotCompilationPhase(HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext, PGOProfilesLookup pgoProfiles) {
-        return new PGOApplyProfilesPhase(null, hUniverse, compilationRootContext, pgoProfiles, false, ProfileQuality.Level.NOT_TRACKING);
+    public static PGOApplyProfilesPhase createForBeforeHotCompilationPhase(HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext, PGOProfilesLookup profilesLookup) {
+        return new PGOApplyProfilesPhase(null, hUniverse, compilationRootContext, profilesLookup, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
-    public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup pgoProfiles) {
+    public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup profilesLookup) {
         ProfileQuality.Level level = ProfileQuality.Level.NOT_TRACKING;
         /* The details are a superset of the metrics, so asking for them alone also tracks the metrics. */
         if (PGOPrintProfileQuality.getValue() || PGOPrintProfileQualityDetails.getValue()) {
@@ -152,12 +152,12 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
                 level = ProfileQuality.Level.TRACKING_DETAILS;
             }
         }
-        return new PGOApplyProfilesPhase(null, hUniverse, null, pgoProfiles, false, level);
+        return new PGOApplyProfilesPhase(null, hUniverse, null, profilesLookup, false, level);
     }
 
     private PGOApplyProfilesPhase(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
-                    PGOProfilesLookup pgoProfiles, boolean forceHot, ProfileQuality.Level level) {
-        this.pgoProfiles = pgoProfiles;
+                    PGOProfilesLookup profilesLookup, boolean forceHot, ProfileQuality.Level level) {
+        this.profilesLookup = profilesLookup;
         this.inliningContext = inliningContext;
         this.hUniverse = hUniverse;
         this.compilationRootContext = compilationRootContext;
@@ -294,7 +294,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * the context it was recorded under.
      */
     private void updateProfilesForConditionals(StructuredGraph graph) {
-        if (!pgoProfiles.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
+        if (!profilesLookup.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
             return;
         }
         for (ConditionalSite site : ProfilingUtilities.relevantConditionalSitesFromGraph(graph, inliningContext)) {
@@ -312,7 +312,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     private void updateProfilesForInvokes(StructuredGraph graph) {
         if (!Options.PGOUseReceiverProfiles.getValue() ||
-                        (!pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_PROFILES) && !pgoProfiles.profileCategoryRecorded(VIRTUAL_INVOKE_METHOD_PROFILES))) {
+                        (!profilesLookup.profileCategoryRecorded(VIRTUAL_INVOKE_PROFILES) && !profilesLookup.profileCategoryRecorded(VIRTUAL_INVOKE_METHOD_PROFILES))) {
             return;
         }
         Consumer<MethodCallTargetNode> updateInvokeProfile = forceHot || graph.globalProfileProvider().hotCaller() ?  //
@@ -326,12 +326,12 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * during profiling.
      */
     private void updateProfilesForInstanceofs(StructuredGraph graph) {
-        if (!pgoProfiles.profileCategoryRecorded(INSTANCE_OF_PROFILES)) {
+        if (!profilesLookup.profileCategoryRecorded(INSTANCE_OF_PROFILES)) {
             return;
         }
         for (InstanceOfNode iof : graph.getNodes().filter(InstanceOfNode.class)) {
             NodeSourcePosition context = createPointContext(iof.getNodeSourcePosition(), inliningContext);
-            Optional<Map<JavaType, Long>> typeOccurrences = pgoProfiles.getInstanceofProfile(context);
+            Optional<Map<JavaType, Long>> typeOccurrences = profilesLookup.getInstanceofProfile(context);
 
             if (typeOccurrences.isPresent()) {
                 // collect type occurrence information
@@ -464,8 +464,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
 
     private void updateInvokeWithNewProfiles(MethodCallTargetNode callTarget) {
         NodeSourcePosition context = createPointContext(callTarget.getNodeSourcePosition(), inliningContext);
-        Optional<Map<AnalysisType, Long>> typeOccurrences = pgoProfiles.getVirtualInvokeProfile(context);
-        Optional<Map<AnalysisMethod, Long>> methodOccurrences = pgoProfiles.getVirtualInvokeMethodProfile(context);
+        Optional<Map<AnalysisType, Long>> typeOccurrences = profilesLookup.getVirtualInvokeProfile(context);
+        Optional<Map<AnalysisMethod, Long>> methodOccurrences = profilesLookup.getVirtualInvokeMethodProfile(context);
         boolean appliedProfile = false;
         if (methodOccurrences.isPresent()) {
             /*
@@ -568,7 +568,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             if (admitted.contains(hUniverse.lookup(entry.getKey()))) {
                 result.put(entry.getKey(), entry.getValue());
             } else {
-                pgoProfiles.recordImpossibleReceiver(entry.getValue());
+                profilesLookup.recordImpossibleReceiver(entry.getValue());
             }
         }
         return result.isEmpty() ? Optional.empty() : Optional.of(result);
@@ -597,14 +597,14 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private void updateConditionalProbabilities(ConditionalSite site) {
         NodeSourcePosition context = site.context();
         ControlSplitNode conditionalNode = site.node();
-        Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = pgoProfiles.getConditionalProfile(context);
+        Optional<PGOProfilesLookup.ProfiledValue<long[]>> conditionalSuccessors = profilesLookup.getConditionalProfile(context);
         if (conditionalSuccessors.isEmpty()) {
             countFailure(context);
             return;
         }
-        PGOProfilesLookup.ProfiledValue<long[]> s = conditionalSuccessors.get();
-        ConditionalApplication application = setSuccessorsProbabilities(s.source(), s.value(), conditionalNode);
-        pgoProfiles.recordConditionalProfileApplication(context, application.profiledSuccessors(), application.appliedSuccessors());
+        PGOProfilesLookup.ProfiledValue<long[]> profile = conditionalSuccessors.get();
+        ConditionalApplication application = setSuccessorsProbabilities(profile.source(), profile.value(), conditionalNode);
+        profilesLookup.recordConditionalProfileApplication(context, application.profiledSuccessors(), application.appliedSuccessors());
         countSuccess();
     }
 
@@ -627,7 +627,8 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         }
         List<Node> matchingProfiles = successorsMatchingProfiles(aliveSuccessors, aggregatedProbabilities.get());
         matchingProfiles.forEach(
-                        s -> conditionalNode.setProbability((AbstractBeginNode) s, BranchProbabilityData.create(aggregatedProbabilities.get().get(s.getNodeSourcePosition().getBCI()), source)));
+                        successor -> conditionalNode.setProbability((AbstractBeginNode) successor,
+                                        BranchProbabilityData.create(aggregatedProbabilities.get().get(successor.getNodeSourcePosition().getBCI()), source)));
         return new ConditionalApplication(aggregatedProbabilities.get().size(), matchingProfiles.size());
     }
 

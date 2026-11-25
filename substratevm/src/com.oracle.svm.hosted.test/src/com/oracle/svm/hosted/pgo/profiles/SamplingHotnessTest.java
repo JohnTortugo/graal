@@ -45,7 +45,7 @@ public class SamplingHotnessTest {
                         List.of("outer", "idle"), 10L),
                         frame -> frame, "idle"::equals);
 
-        Assert.assertEquals(10, accounting.totalSamples());
+        Assert.assertEquals(10, accounting.nonIdleSamples());
         Assert.assertEquals(10, accounting.idleSamples());
         Assert.assertEquals(Map.of("leaf", 6L, "otherLeaf", 4L), accounting.selfSamples());
     }
@@ -73,20 +73,20 @@ public class SamplingHotnessTest {
      */
     @Test
     public void countsObjectWaitAsIdle() {
-        ResolvedJavaType object = mock(ResolvedJavaType.class, Map.of("getName", "Ljava/lang/Object;"));
+        ResolvedJavaType object = jvmciProxy(ResolvedJavaType.class, Map.of("getName", "Ljava/lang/Object;"));
         /* BytecodePosition accepts any bci for a code size of 0. */
-        ResolvedJavaMethod wait = mock(ResolvedJavaMethod.class, Map.of("getName", "wait", "getDeclaringClass", object, "getCodeSize", 0));
+        ResolvedJavaMethod wait = jvmciProxy(ResolvedJavaMethod.class, Map.of("getName", "wait", "getDeclaringClass", object, "getCodeSize", 0));
         SamplingHotness hotness = new SamplingHotness(Map.of(new NodeSourcePosition(null, wait, 2), 4L));
 
         Assert.assertEquals(4, hotness.idleSamples());
-        Assert.assertEquals(0, hotness.totalSamples());
+        Assert.assertEquals(0, hotness.nonIdleSamples());
     }
 
     /**
      * A JVMCI interface whose methods named in {@code answers} return the given values. Default
      * methods, such as {@code toJavaName()}, run their JVMCI code.
      */
-    private static <T> T mock(Class<T> type, Map<String, Object> answers) {
+    private static <T> T jvmciProxy(Class<T> type, Map<String, Object> answers) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (instance, method, arguments) -> {
             if (answers.containsKey(method.getName())) {
                 return answers.get(method.getName());

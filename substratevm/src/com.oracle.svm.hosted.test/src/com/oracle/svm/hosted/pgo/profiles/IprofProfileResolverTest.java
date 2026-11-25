@@ -42,7 +42,7 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.IprofParser;
-import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofParser.ProfileMethod;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup.ProfiledValue;
 
@@ -107,7 +107,7 @@ public class IprofProfileResolverTest {
         return new IprofProfilesLookup(Map.of(), Map.of(), Map.of(), samples, Map.of(), Map.of(), null);
     }
 
-    private static ParsedIprofProfile parse(String conditionalProfiles) throws IOException {
+    private static ParsedIprofProfile parseConditionalProfiles(String conditionalProfiles) throws IOException {
         String json = "{\"version\":\"1.0.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
     }
@@ -118,15 +118,15 @@ public class IprofProfileResolverTest {
     public void convertsIprofTypeNamesInMethodDescriptors() {
         Map<Integer, String> typeNames = Map.of(1, "com.example.Foo$$Lambda/0x1234", 2, "[Ljava.lang.String;", 3, "boolean", 4, "[Z", 5, "void", 6, "int");
         Assert.assertEquals("Lcom/example/Foo$$Lambda.0x1234;.m([Ljava/lang/String;Z[ZI)V",
-                        IprofProfileResolver.descriptorForProfileMethod(new MethodDescriptor(7, "m", 1, 5, new int[]{2, 3, 4, 6}), typeNames));
-        Assert.assertNull("a type id that the types table lacks", IprofProfileResolver.descriptorForProfileMethod(new MethodDescriptor(8, "m", 1, 5, new int[]{9}), typeNames));
+                        IprofProfileResolver.descriptorForProfileMethod(new ProfileMethod(7, "m", 1, 5, new int[]{2, 3, 4, 6}), typeNames));
+        Assert.assertNull("a type id that the types table lacks", IprofProfileResolver.descriptorForProfileMethod(new ProfileMethod(8, "m", 1, 5, new int[]{9}), typeNames));
     }
 
     @Test
     public void buildsCanonicalMethodDescriptor() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
-        MethodDescriptor bar = parsed.methodsById().get(1001);
-        MethodDescriptor baz = parsed.methodsById().get(1002);
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ProfileMethod bar = parsed.methodsById().get(1001);
+        ProfileMethod baz = parsed.methodsById().get(1002);
         Assert.assertEquals(BAR_DESC, IprofProfileResolver.descriptorForProfileMethod(bar, parsed.typeNamesById()));
         Assert.assertEquals(BAZ_DESC, IprofProfileResolver.descriptorForProfileMethod(baz, parsed.typeNamesById()));
     }
@@ -143,45 +143,45 @@ public class IprofProfileResolverTest {
     // --- table build: context resolution --------------------------------------------------------
 
     @Test
-    public void resolvesSingleFrameContextWhenMethodPresent() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+    public void resolvesSingleFrameConditionalContextWhenMethodPresent() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
         Assert.assertTrue(lookup.profileCategoryRecorded("conditionalProfiles"));
-        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
-        Assert.assertEquals(1, d.totalEntries());
-        Assert.assertEquals(1, d.resolvedEntries());
-        Assert.assertEquals(1, d.singleFrameEntries());
-        Assert.assertEquals(0, d.inlinedContextEntries());
-        Assert.assertEquals(0, d.unresolvedEntries());
+        PGODiagnostics.ConditionalDiagnostics conditionalDiagnostics = lookup.diagnostics().conditional();
+        Assert.assertEquals(1, conditionalDiagnostics.totalEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.resolvedEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.singleFrameEntries());
+        Assert.assertEquals(0, conditionalDiagnostics.inlinedContextEntries());
+        Assert.assertEquals(0, conditionalDiagnostics.unresolvedEntries());
     }
 
     @Test
-    public void resolvesInlinedContextWhenAllFramesPresent() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
+    public void resolvesInlinedConditionalContextWhenAllFramesPresent() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC, BAZ_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
-        Assert.assertEquals(1, d.resolvedEntries());
-        Assert.assertEquals(1, d.inlinedContextEntries());
-        Assert.assertEquals(0, d.singleFrameEntries());
+        PGODiagnostics.ConditionalDiagnostics conditionalDiagnostics = lookup.diagnostics().conditional();
+        Assert.assertEquals(1, conditionalDiagnostics.resolvedEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.inlinedContextEntries());
+        Assert.assertEquals(0, conditionalDiagnostics.singleFrameEntries());
     }
 
     @Test
-    public void dropsEntryWhenAnyContextFrameMethodAbsent() throws IOException {
+    public void dropsConditionalEntryWhenAnyContextFrameMethodAbsent() throws IOException {
         // Inlined context needs both bar and baz; only bar is present -> entry dropped.
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
-        Assert.assertEquals(0, d.resolvedEntries());
-        Assert.assertEquals(1, d.unresolvedEntries());
+        PGODiagnostics.ConditionalDiagnostics conditionalDiagnostics = lookup.diagnostics().conditional();
+        Assert.assertEquals(0, conditionalDiagnostics.resolvedEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.unresolvedEntries());
         Assert.assertFalse(lookup.profileCategoryRecorded("conditionalProfiles"));
     }
 
     @Test
     public void listsDroppedEntriesWithTheFramesTheImageLacks() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]},{\"ctx\":\"1001:12\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]},{\"ctx\":\"1001:12\",\"records\":[20,0,10,53,1,1]}");
         Map<String, HostedMethod> methods = new HashMap<>();
         methods.put(BAR_DESC, null);
         List<String> dropped = new ArrayList<>();
@@ -194,16 +194,16 @@ public class IprofProfileResolverTest {
     // --- table build: duplicate-context merge (first-wins) --------------------------------------
 
     @Test
-    public void mergesDuplicateContextFirstWins() throws IOException {
-        ParsedIprofProfile parsed = parse(
+    public void keepsFirstOfDuplicateConditionalContexts() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:9\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
-        Assert.assertEquals(2, d.totalEntries());
-        Assert.assertEquals(1, d.resolvedEntries());
-        Assert.assertEquals(1, d.duplicateContextEntries());
+        PGODiagnostics.ConditionalDiagnostics conditionalDiagnostics = lookup.diagnostics().conditional();
+        Assert.assertEquals(2, conditionalDiagnostics.totalEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.resolvedEntries());
+        Assert.assertEquals(1, conditionalDiagnostics.duplicateContextEntries());
     }
 
     // --- opposite-branch profiles remain distinct across distinct contexts ----------------------
@@ -211,30 +211,36 @@ public class IprofProfileResolverTest {
     @Test
     public void oppositeBranchProfilesForDistinctContextsBothResolve() throws IOException {
         // Same method, different bci in the leaf frame -> distinct contexts, both retained.
-        ParsedIprofProfile parsed = parse(
+        ParsedIprofProfile parsed = parseConditionalProfiles(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:42\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
-        Assert.assertEquals(2, d.resolvedEntries());
-        Assert.assertEquals(0, d.duplicateContextEntries());
+        PGODiagnostics.ConditionalDiagnostics conditionalDiagnostics = lookup.diagnostics().conditional();
+        Assert.assertEquals(2, conditionalDiagnostics.resolvedEntries());
+        Assert.assertEquals(0, conditionalDiagnostics.duplicateContextEntries());
     }
 
+    /* clear() drops the tables: the lookup then answers as for an absent profile, and the diagnostics stay. */
     @Test
-    public void clearDisablesLookup() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+    public void clearDropsTheTables() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
+        BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
         Assert.assertTrue(lookup.profileCategoryRecorded("conditionalProfiles"));
+        Assert.assertTrue(lookup.getConditionalProfile(context).isPresent());
         lookup.clear();
         Assert.assertFalse(lookup.profileCategoryRecorded("conditionalProfiles"));
-        Assert.assertTrue(lookup.getConditionalProfile(null).isEmpty());
+        Assert.assertTrue(lookup.getConditionalProfile(context).isEmpty());
+        Assert.assertEquals(0, lookup.availableConditionalContextCount());
+        Assert.assertEquals(0, lookup.unusedConditionalContextCount());
+        Assert.assertEquals(1, lookup.diagnostics().conditional().resolvedEntries());
     }
 
     /** The fixture has only a conditionalProfiles section, so no other category is recorded. */
     @Test
     public void sectionsAbsentFromTheProfileAreNotRecorded() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CONDITIONAL_PROFILES));
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
@@ -247,7 +253,7 @@ public class IprofProfileResolverTest {
     @Test
     public void emptyProfileYieldsNoRecordedCategory() throws IOException {
         // conditionalProfiles present but empty -> nothing resolves -> category not recorded.
-        ParsedIprofProfile parsed = parse("");
+        ParsedIprofProfile parsed = parseConditionalProfiles("");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         Assert.assertEquals(0, lookup.diagnostics().conditional().totalEntries());
         Assert.assertEquals(0, lookup.diagnostics().conditional().resolvedEntries());
@@ -258,21 +264,21 @@ public class IprofProfileResolverTest {
 
     /* A query for a context the profile has returns that entry as is, without any fallback. */
     @Test
-    public void exactContextReturnsItsEntry() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,11,53,1,11]}");
+    public void exactConditionalContextReturnsItsEntry() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,11,53,1,11]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         BytecodePosition context = new BytecodePosition(null, mockBarMethod(), 9);
 
         Optional<ProfiledValue<long[]>> result = lookup.getConditionalProfile(context);
         Assert.assertTrue(result.isPresent());
         Assert.assertArrayEquals(new long[]{20, 0, 11, 53, 1, 11}, result.get().value());
-        Assert.assertEquals(1, lookup.hitCount());
-        Assert.assertEquals(0, lookup.contextFallbackCount());
+        Assert.assertEquals(1, lookup.conditionalHits());
+        Assert.assertEquals(0, lookup.conditionalContextFallbackHits());
     }
 
     /* A branch queried under an inlining chain the profile never saw falls back to the branch's shorter-context entry. */
     @Test
-    public void unseenInliningContextFallsBackToShorterContext() throws IOException {
+    public void unseenConditionalContextFallsBackToShorterContext() throws IOException {
         String entry = "{\"ctx\":\"1001:9\",\"records\":[20,0,7,53,1,3]}";
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + entry + "]}";
         IprofProfilesLookup lookup = buildLookup(
@@ -283,16 +289,16 @@ public class IprofProfileResolverTest {
         Optional<ProfiledValue<long[]>> result = lookup.getConditionalProfile(inlined);
         Assert.assertTrue(result.isPresent());
         Assert.assertArrayEquals(new long[]{20, 0, 7, 53, 1, 3}, result.get().value());
-        Assert.assertEquals(1, lookup.contextFallbackCount());
-        Assert.assertEquals(1, lookup.contextFallbackDroppedFrames());
+        Assert.assertEquals(1, lookup.conditionalContextFallbackHits());
+        Assert.assertEquals(1, lookup.conditionalContextFallbackDroppedFrames());
 
-        lookup.setContextFallback(false);
+        lookup.setConditionalContextFallback(false);
         Assert.assertTrue(lookup.getConditionalProfile(inlined).isEmpty());
     }
 
     /* A missing chain falls back to the sum over every profiled chain that shares its longest prefix. */
     @Test
-    public void unseenInliningContextUsesSumOfLongestMatchingPrefix() throws IOException {
+    public void unseenConditionalContextUsesSumOfLongestMatchingPrefix() throws IOException {
         String viaA = "{\"ctx\":\"1001:9<1001:40\",\"records\":[20,0,7,53,1,3]}";
         String viaB = "{\"ctx\":\"1001:9<1001:50\",\"records\":[20,0,1,53,1,9]}";
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + viaA + "," + viaB + "]}";
@@ -306,8 +312,8 @@ public class IprofProfileResolverTest {
         BytecodePosition deeperViaA = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 70), mockBarMethod(), 40), mockBarMethod(), 9);
         long[] viaAOnly = lookup.getConditionalProfile(deeperViaA).orElseThrow().value();
         Assert.assertArrayEquals(new long[]{20, 0, 7, 53, 1, 3}, viaAOnly);
-        Assert.assertEquals(2, lookup.contextFallbackCount());
-        Assert.assertEquals(2, lookup.contextFallbackDroppedFrames());
+        Assert.assertEquals(2, lookup.conditionalContextFallbackHits());
+        Assert.assertEquals(2, lookup.conditionalContextFallbackDroppedFrames());
     }
 
     /*
@@ -315,42 +321,42 @@ public class IprofProfileResolverTest {
      * for it rather than one with wrapped-around counts. The full contexts are still found.
      */
     @Test
-    public void prefixWhoseSumOverflowsIsLeftOut() throws IOException {
+    public void conditionalPrefixWhoseSumOverflowsIsLeftOut() throws IOException {
         String viaA = "{\"ctx\":\"1001:9<1001:40\",\"records\":[20,0,5000000000000000000,53,1,0]}";
         String viaB = "{\"ctx\":\"1001:9<1001:50\",\"records\":[20,0,5000000000000000000,53,1,0]}";
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + viaA + "," + viaB + "]}";
         IprofProfilesLookup lookup = buildLookup(new IprofParser().parse(new StringReader(json)), Set.of(BAR_DESC));
-        Assert.assertEquals(1, lookup.diagnostics().overflowedPrefixSums());
+        Assert.assertEquals(1, lookup.diagnostics().conditional().overflowedPrefixSums());
 
         BytecodePosition newCaller = new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 60), mockBarMethod(), 9);
         Assert.assertTrue(lookup.getConditionalProfile(newCaller).isEmpty());
-        Assert.assertEquals(1, lookup.missCount());
+        Assert.assertEquals(1, lookup.conditionalMisses());
 
         BytecodePosition deeperViaA = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 70), mockBarMethod(), 40), mockBarMethod(), 9);
         Assert.assertArrayEquals(new long[]{20, 0, 5000000000000000000L, 53, 1, 0}, lookup.getConditionalProfile(deeperViaA).orElseThrow().value());
-        Assert.assertEquals(1, lookup.contextFallbackCount());
+        Assert.assertEquals(1, lookup.conditionalContextFallbackHits());
     }
 
     @Test
-    public void tracksDistinctSuccessorApplicationCoverage() throws IOException {
-        ParsedIprofProfile parsed = parse(
+    public void tracksConditionalSuccessorCoverage() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles(
                         "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}," +
                                         "{\"ctx\":\"1001:42\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
         BytecodePosition queried = new BytecodePosition(null, mockBarMethod(), 9);
 
         Assert.assertTrue(lookup.getConditionalProfile(queried).isPresent());
-        Assert.assertEquals(1, lookup.matchedContextCount());
-        Assert.assertEquals(1, lookup.unusedResolvedContextCount());
+        Assert.assertEquals(1, lookup.matchedConditionalContextCount());
+        Assert.assertEquals(1, lookup.unusedConditionalContextCount());
 
         lookup.recordConditionalProfileApplication(queried, 2, 0);
-        Assert.assertEquals(1, lookup.unappliedMatchedContextCount());
+        Assert.assertEquals(1, lookup.unappliedMatchedConditionalContextCount());
         lookup.recordConditionalProfileApplication(queried, 2, 1);
-        Assert.assertEquals(1, lookup.partiallyAppliedContextCount());
+        Assert.assertEquals(1, lookup.partiallyAppliedConditionalContextCount());
         lookup.recordConditionalProfileApplication(queried, 2, 2);
-        Assert.assertEquals(1, lookup.fullyAppliedContextCount());
-        Assert.assertEquals(0, lookup.partiallyAppliedContextCount());
-        Assert.assertEquals(0, lookup.unappliedMatchedContextCount());
+        Assert.assertEquals(1, lookup.fullyAppliedConditionalContextCount());
+        Assert.assertEquals(0, lookup.partiallyAppliedConditionalContextCount());
+        Assert.assertEquals(0, lookup.unappliedMatchedConditionalContextCount());
     }
 
     static ResolvedJavaMethod mockBarMethod() {
@@ -416,16 +422,16 @@ public class IprofProfileResolverTest {
     }
 
     @Test
-    public void nullContextFindsNoProfileAndIsNotCounted() throws IOException {
-        ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
+    public void nullContextFindsNoConditionalProfileAndIsNotCounted() throws IOException {
+        ParsedIprofProfile parsed = parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        Assert.assertEquals(0, lookup.hitCount());
-        Assert.assertEquals(0, lookup.missCount());
+        Assert.assertEquals(0, lookup.conditionalHits());
+        Assert.assertEquals(0, lookup.conditionalMisses());
 
         /* A node without a source position has no context: no profile, no exception, no count. */
         Assert.assertTrue(lookup.getConditionalProfile(null).isEmpty());
-        Assert.assertEquals(0, lookup.hitCount());
-        Assert.assertEquals(0, lookup.missCount());
+        Assert.assertEquals(0, lookup.conditionalHits());
+        Assert.assertEquals(0, lookup.conditionalMisses());
     }
 }

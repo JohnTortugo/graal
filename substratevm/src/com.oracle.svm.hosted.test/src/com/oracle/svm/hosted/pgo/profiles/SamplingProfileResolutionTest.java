@@ -96,15 +96,15 @@ public class SamplingProfileResolutionTest {
     public void accountsForUnresolvableStacks() throws IOException {
         ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
-        IprofProfileResolver.SamplingDiagnostics d = lookup.diagnostics().sampling();
-        Assert.assertEquals(2, d.totalEntries());
-        Assert.assertEquals(0, d.resolvedEntries());
-        Assert.assertEquals(2, d.unresolvedEntries());
-        Assert.assertEquals(12, d.samples());
-        Assert.assertEquals(12, d.droppedSamples());
+        PGODiagnostics.SamplingDiagnostics samplingDiagnostics = lookup.diagnostics().sampling();
+        Assert.assertEquals(2, samplingDiagnostics.totalEntries());
+        Assert.assertEquals(0, samplingDiagnostics.resolvedEntries());
+        Assert.assertEquals(2, samplingDiagnostics.unresolvedEntries());
+        Assert.assertEquals(12, samplingDiagnostics.samples());
+        Assert.assertEquals(12, samplingDiagnostics.droppedSamples());
         Assert.assertTrue(lookup.getSampleCounts().isEmpty());
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.SAMPLING_PROFILES));
-        Assert.assertTrue(d.summary().contains(IprofProfileResolverTest.BAR_DESC));
+        Assert.assertTrue(samplingDiagnostics.summary().contains(IprofProfileResolverTest.BAR_DESC));
     }
 
     /*

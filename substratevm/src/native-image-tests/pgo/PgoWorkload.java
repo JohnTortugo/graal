@@ -116,15 +116,15 @@ public final class PgoWorkload {
     }
 
     static final class Circle implements Shape {
-        final double r;
+        final double radius;
 
-        Circle(double r) {
-            this.r = r;
+        Circle(double radius) {
+            this.radius = radius;
         }
 
         @Override
         public double area() {
-            return weigh(3.0 * r * r);
+            return weigh(3.0 * radius * radius);
         }
 
         @Override
@@ -134,15 +134,15 @@ public final class PgoWorkload {
     }
 
     static final class Square implements Shape {
-        final double s;
+        final double side;
 
-        Square(double s) {
-            this.s = s;
+        Square(double side) {
+            this.side = side;
         }
 
         @Override
         public double area() {
-            return weigh(s * s);
+            return weigh(side * side);
         }
 
         @Override
@@ -152,15 +152,15 @@ public final class PgoWorkload {
     }
 
     static final class Triangle implements Shape {
-        final double b;
+        final double base;
 
-        Triangle(double b) {
-            this.b = b;
+        Triangle(double base) {
+            this.base = base;
         }
 
         @Override
         public double area() {
-            return b * b / 2;
+            return base * base / 2;
         }
 
         @Override
@@ -216,15 +216,15 @@ public final class PgoWorkload {
     static double mixed(int n, long seed) {
         Shape[] shapes = new Shape[n];
         for (int i = 0; i < n; i++) {
-            long v = Math.floorMod(seed * 31 + i, 10);
-            if (v < 7) {
-                shapes[i] = new Square(v);
+            long residue = Math.floorMod(seed * 31 + i, 10);
+            if (residue < 7) {
+                shapes[i] = new Square(residue);
                 squares++;
-            } else if (v < 9) {
-                shapes[i] = new Triangle(v);
+            } else if (residue < 9) {
+                shapes[i] = new Triangle(residue);
                 triangles++;
             } else {
-                shapes[i] = new Circle(v);
+                shapes[i] = new Circle(residue);
                 circles++;
                 mixedCircles++;
             }
@@ -354,15 +354,15 @@ public final class PgoWorkload {
         }
 
         long readInt(int length) {
-            long v = 0;
+            long value = 0;
             for (int i = 0; i < length; i++) {
                 int b = readByte();
                 if (b < 0) {
                     throw new IllegalStateException("truncated int");
                 }
-                v = (v << 8) | b;
+                value = (value << 8) | b;
             }
-            return v;
+            return value;
         }
 
         String readString(int length) {
@@ -403,26 +403,26 @@ public final class PgoWorkload {
         out.add((byte) ((T_STRUCT << 4) | 0xe));
         writeVarUInt(out, fields);
         for (int f = 0; f < fields; f++) {
-            long v = (state >>> (f * 5)) & Long.MAX_VALUE;
-            int kind = (int) (v % 3);
+            long bits = (state >>> (f * 5)) & Long.MAX_VALUE;
+            int kind = (int) (bits % 3);
             if (bad && f == fields - 1) {
                 out.add((byte) (T_BAD << 4));
                 continue;
             }
             if (kind == 0 || level > 1) {
-                int len = 1 + (int) (v % 4);
+                int len = 1 + (int) (bits % 4);
                 out.add((byte) ((T_INT << 4) | len));
                 for (int i = len - 1; i >= 0; i--) {
-                    out.add((byte) (v >>> (i * 8)));
+                    out.add((byte) (bits >>> (i * 8)));
                 }
             } else if (kind == 1) {
-                String s = FIELDS[(int) ((v >>> 3) % FIELDS.length)];
-                out.add((byte) ((T_STR << 4) | s.length()));
-                for (byte b : s.getBytes(StandardCharsets.ISO_8859_1)) {
+                String fieldName = FIELDS[(int) ((bits >>> 3) % FIELDS.length)];
+                out.add((byte) ((T_STR << 4) | fieldName.length()));
+                for (byte b : fieldName.getBytes(StandardCharsets.ISO_8859_1)) {
                     out.add(b);
                 }
             } else {
-                writeStruct(out, v * 31 + 7, level + 1, false);
+                writeStruct(out, bits * 31 + 7, level + 1, false);
             }
         }
     }
@@ -582,23 +582,23 @@ public final class PgoWorkload {
             int length = header & 0xffffff;
             switch (type) {
                 case T_INT -> {
-                    long v = reader.readInt(length);
-                    Number boxed = (v & 1) == 0 ? Long.valueOf(v) : Double.valueOf(v);
+                    long value = reader.readInt(length);
+                    Number boxed = (value & 1) == 0 ? Long.valueOf(value) : Double.valueOf(value);
                     boxedChecksum += (long) boxed.doubleValue();
-                    sum += v;
+                    sum += value;
                 }
                 case T_STR -> {
-                    String s = reader.readString(length);
-                    stringChecksum = stringChecksum * 31 + s.hashCode();
-                    Integer unit = UNITS.get(s);
+                    String text = reader.readString(length);
+                    stringChecksum = stringChecksum * 31 + text.hashCode();
+                    Integer unit = UNITS.get(text);
                     if (unit == null) {
-                        unit = UNITS.get(s.toLowerCase());
+                        unit = UNITS.get(text.toLowerCase());
                     }
                     unitChecksum += unit == null ? -1 : unit;
-                    switch (s) {
+                    switch (text) {
                         case "Count", "count" -> sum += 1;
                         case "ms", "mS" -> sum += 2;
-                        default -> sum += s.length();
+                        default -> sum += text.length();
                     }
                 }
                 case T_STRUCT -> {
@@ -626,9 +626,9 @@ public final class PgoWorkload {
                 throw new Malformed("record is not a struct");
             }
             reader.stepIn();
-            long v = parseStruct(reader, header & 0xffffff);
+            long value = parseStruct(reader, header & 0xffffff);
             reader.stepOut();
-            return v;
+            return value;
         } catch (Malformed e) {
             while (reader.depth() > 0) {
                 reader.stepOut();
@@ -647,12 +647,12 @@ public final class PgoWorkload {
         int count = 0;
         long parseCalls = 0;
         while (true) {
-            long v = parseRecord(reader);
+            long recordValue = parseRecord(reader);
             parseCalls++;
-            if (v == Long.MIN_VALUE) {
+            if (recordValue == Long.MIN_VALUE) {
                 break;
             }
-            recordSum += v;
+            recordSum += recordValue;
             count++;
         }
         double shapes = 0;

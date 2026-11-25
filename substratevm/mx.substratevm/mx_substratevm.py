@@ -1056,7 +1056,7 @@ def pgo_e2e_test_task(extra_image_args=None):
             build_log = []
             build_args = ['-cp', output_dir, '-o', join(output_dir, name)] + image_args + [main_class]
             if any(arg.startswith('--pgo=') for arg in image_args):
-                build_args += svm_experimental_options(['-H:+PGOTestDiagnostics'])
+                build_args += svm_experimental_options(['-H:+PGOPrintStatistics'])
             if extra_image_args is not None:
                 build_args += extra_image_args
             native_image(build_args, out=lambda line: build_log.append(line.rstrip()), nonZeroIsFatal=False)
@@ -1100,11 +1100,11 @@ def pgo_e2e_test_task(extra_image_args=None):
         mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_a] + train_a,
                out=lambda line: training_output.append(line.rstrip()), err=lambda line: training_log.append(line.rstrip()))
         mx.run([instrumented, '-XX:ProfilesDumpFile=' + profile_b] + train_b, out=lambda _: None)
-        for category in ('stack samples=', 'dynamic type profiles:', 'call counts:'):
-            line = next((entry for entry in training_log if category in entry), None)
-            expect(line is not None, 'training run lacks ' + category + ' telemetry: ' + str(training_log))
+        for telemetry_prefix in ('stack samples=', 'dynamic type profiles:', 'call counts:'):
+            line = next((entry for entry in training_log if telemetry_prefix in entry), None)
+            expect(line is not None, 'training run lacks ' + telemetry_prefix + ' telemetry: ' + str(training_log))
             expect(summary_int(line, r'dropped=(\d+)') == 0, 'training run dropped recorder events: ' + line)
-            if category == 'stack samples=':
+            if telemetry_prefix == 'stack samples=':
                 expect(summary_int(line, r'threads=(\d+)') >= 10, 'sampler did not sample the joined and live lifecycle threads: ' + line)
                 expect(summary_int(line, r'stack samples=(\d+)') > 0, 'sampler recorded no runtime stacks: ' + line)
         pattern_dir = join(output_dir, 'pattern-profiles')
@@ -1172,11 +1172,11 @@ def pgo_e2e_test_task(extra_image_args=None):
                           for entry in default_profile_data['samplingProfiles'] for frame in entry['ctx'].split('<')}
         expect('sampleJoinedThread' in sampled_frames, 'stack profile contains no sample from a joined lifecycle worker: ' + str(sorted(str(name) for name in sampled_frames)))
         expect('sampleLiveThread' in sampled_frames, 'stack profile contains no sample from the live daemon worker: ' + str(sorted(str(name) for name in sampled_frames)))
-        call_only_profile = join(output_dir, 'train-call-count-only.iprof')
-        call_only_data = dict(default_profile_data)
-        call_only_data.pop('samplingProfiles', None)
-        with open(call_only_profile, 'w', encoding='utf-8') as fp:
-            json.dump(call_only_data, fp, separators=(',', ':'))
+        call_count_only_profile = join(output_dir, 'train-call-count-only.iprof')
+        call_count_only_data = dict(default_profile_data)
+        call_count_only_data.pop('samplingProfiles', None)
+        with open(call_count_only_profile, 'w', encoding='utf-8') as fp:
+            json.dump(call_count_only_data, fp, separators=(',', ':'))
 
         # 2. Reference without a profile.
         plain, _ = build('pgo-none', dump_options('none'))
@@ -1185,7 +1185,7 @@ def pgo_e2e_test_task(extra_image_args=None):
 
         # 3. Optimized variants. Each must resolve the whole profile and reproduce the JDK output.
         variants = [
-            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': 'profiled', 'profile_hits': True}),
+            ('pgo-default', ['--pgo=' + profile_a] + dump_options('default'), {'effects': 'profiled', 'conditional_hits': True}),
             ('pgo-receivers-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseReceiverProfiles', '-H:-PGOSamplingMethodProfiles']) +
              dump_options('receivers-disabled'), {'effects': 'profiled-receivers-disabled', 'receivers': False}),
             ('pgo-switches-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseSwitchProfiles']) + dump_options('switches-disabled'),
@@ -1195,39 +1195,39 @@ def pgo_e2e_test_task(extra_image_args=None):
             # Without the stack samples the build behaves as for a profile without them.
             ('pgo-samples-disabled', ['--pgo=' + profile_a] + svm_experimental_options(['-H:-PGOUseStackSamples']), {'samples': False}),
             ('pgo-merged', ['--pgo=' + profile_a + ',' + profile_b + ':2'], {}),
-            ('pgo-directory', ['--pgo=' + profile_dir], {'merged_profiles': 2}),
-            ('pgo-call-counts-only', ['--pgo=' + call_only_profile], {}),
-            ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'fallback': True}),
-            ('pgo-shallow-no-fallback', ['--pgo=' + profile_shallow] + svm_experimental_options(['-H:-PGOReceiverContextFallback']), {'fallback': False}),
+            ('pgo-directory', ['--pgo=' + profile_dir], {'merged_profile_count': 2}),
+            ('pgo-call-counts-only', ['--pgo=' + call_count_only_profile], {}),
+            ('pgo-shallow-fallback', ['--pgo=' + profile_shallow], {'receiver_fallback': True}),
+            ('pgo-shallow-no-fallback', ['--pgo=' + profile_shallow] + svm_experimental_options(['-H:-PGOReceiverContextFallback']), {'receiver_fallback': False}),
         ]
         for name, image_args, checks in variants:
             image, build_log = build(name, image_args)
-            resolution = summary(build_log, 'iprof conditionalProfiles')
-            expect(summary_int(resolution, r'(\d+) unresolved') == 0, name + ': unresolved conditional contexts: ' + resolution)
-            if checks.get('merged_profiles'):
-                merge_summary = summary(build_log, 'merging ' + str(checks['merged_profiles']) + ' profiles')
+            conditional_resolution = summary(build_log, 'iprof conditionalProfiles')
+            expect(summary_int(conditional_resolution, r'(\d+) unresolved') == 0, name + ': unresolved conditional contexts: ' + conditional_resolution)
+            if checks.get('merged_profile_count'):
+                merge_summary = summary(build_log, 'merging ' + str(checks['merged_profile_count']) + ' profiles')
                 expect('sampling overlap' in merge_summary, name + ': directory profiles were not merged with overlap diagnostics: ' + merge_summary)
             if checks.get('samples') is False:
                 expect(any('not used, as options say:' in line and 'stack samples' in line for line in build_log), name + ': the build does not report the unused stack samples')
-            if checks.get('profile_hits'):
-                application = [line for line in build_log if re.search(r'PGO: \d+ queries, \d+ hits', line)]
-                expect(len(application) == 1, name + ': missing profile application summary: ' + str(application))
-                expect(summary_int(application[0], r'\d+ queries, (\d+) hits') > 0,
-                       name + ': no branch or switch profile matched a compiler query: ' + application[0])
-            receiver_lines = [line for line in build_log if 'virtual invokes:' in line]
-            expect(receiver_lines, name + ': build emitted no receiver-profile summary')
-            hits = max(summary_int(line, r'(\d+) hits') for line in receiver_lines)
-            shortened = max(summary_int(line, r'\((\d+) via shortened context') for line in receiver_lines)
-            receivers = '; '.join(receiver_lines)
+            if checks.get('conditional_hits'):
+                conditional_application = [line for line in build_log if re.search(r'PGO: branches and switches: \d+ queries, \d+ hits', line)]
+                expect(len(conditional_application) == 1, name + ': missing branch and switch application summary: ' + str(conditional_application))
+                expect(summary_int(conditional_application[0], r'\d+ queries, (\d+) hits') > 0,
+                       name + ': no branch or switch profile matched a compiler query: ' + conditional_application[0])
+            virtual_invoke_lines = [line for line in build_log if 'virtual invokes:' in line]
+            expect(virtual_invoke_lines, name + ': build emitted no receiver-profile summary')
+            virtual_invoke_hits = max(summary_int(line, r'(\d+) hits') for line in virtual_invoke_lines)
+            virtual_invoke_shortened_hits = max(summary_int(line, r'\((\d+) via shortened context') for line in virtual_invoke_lines)
+            virtual_invoke_summary = '; '.join(virtual_invoke_lines)
             if checks.get('receivers', True):
-                expect(hits > 0, name + ': no receiver profile was applied: ' + receivers)
+                expect(virtual_invoke_hits > 0, name + ': no receiver profile was applied: ' + virtual_invoke_summary)
             else:
-                expect(hits == 0, name + ': receiver profile applied although consumption is disabled: ' + receivers)
-            fallback = checks.get('fallback')
-            if fallback is True:
-                expect(shortened > 0, name + ': the receiver context fallback never engaged: ' + receivers)
-            elif fallback is False:
-                expect(shortened == 0, name + ': fallback disabled but shortened-context hits reported: ' + receivers)
+                expect(virtual_invoke_hits == 0, name + ': receiver profile applied although consumption is disabled: ' + virtual_invoke_summary)
+            receiver_fallback = checks.get('receiver_fallback')
+            if receiver_fallback is True:
+                expect(virtual_invoke_shortened_hits > 0, name + ': the receiver context fallback never engaged: ' + virtual_invoke_summary)
+            elif receiver_fallback is False:
+                expect(virtual_invoke_shortened_hits == 0, name + ': fallback disabled but shortened-context hits reported: ' + virtual_invoke_summary)
             check_output(name, [image])
             effects_mode = checks.get('effects')
             if effects_mode:
@@ -1265,15 +1265,15 @@ def pgo_native_unittests_task(extra_image_args=None):
         if not summaries:
             mx.abort(name + ': the native unit tests did not run:\n' + '\n'.join(lines[-60:]))
         failure_identities = [m.group(1) for m in (re.match(r'\d+\) ([\w.$]+#[\w$]+)', line) for line in lines) if m]
-        expected_failures = sum(failures for _, failures in summaries)
-        if len(failure_identities) != expected_failures:
-            mx.abort(name + ': parsed ' + str(len(failure_identities)) + ' Class#method identities for ' + str(expected_failures) +
+        reported_failures = sum(failures for _, failures in summaries)
+        if len(failure_identities) != reported_failures:
+            mx.abort(name + ': parsed ' + str(len(failure_identities)) + ' Class#method identities for ' + str(reported_failures) +
                      ' reported failures; refusing a partial failure set:\n' + '\n'.join(lines[-80:]))
         failed = set(failure_identities)
-        if exit_code != 0 and expected_failures == 0:
+        if exit_code != 0 and reported_failures == 0:
             mx.abort(name + ': native unit tests exited nonzero without reporting test failures:\n' + '\n'.join(lines[-60:]))
         tests_run = sum(tests for tests, _ in summaries)
-        mx.log(name + ': ' + str(tests_run) + ' tests run, ' + str(expected_failures) + ' failing tests' + (': ' + ', '.join(sorted(failed)) if failed else ''))
+        mx.log(name + ': ' + str(tests_run) + ' tests run, ' + str(reported_failures) + ' failing tests' + (': ' + ', '.join(sorted(failed)) if failed else ''))
         return failed
 
     plain = run_corpus('plain image', [], [])

@@ -29,7 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -60,10 +60,11 @@ public final class SamplingHotness {
 
     private final PrefixTree methodRootedTree;
     private final Map<AnalysisMethod, Long> selfSamples = new HashMap<>();
-    private final long totalSamples;
+    private final long nonIdleSamples;
     private final long idleSamples;
-    private final AtomicLong hotCompilationUnits = new AtomicLong();
-    private final AtomicLong coldCompilationUnits = new AtomicLong();
+    /** The compilation roots that {@link #cursorFor} was asked about, with and without samples. */
+    private final Set<AnalysisMethod> sampledRoots = ConcurrentHashMap.newKeySet();
+    private final Set<AnalysisMethod> unsampledRoots = ConcurrentHashMap.newKeySet();
 
     /**
      * Leaf frames that consume no processor time. A sampler that walks every thread also samples
@@ -97,7 +98,7 @@ public final class SamplingHotness {
 
         SampleAccounting<AnalysisMethod> accounting = accountSamples(stacks, frame -> (AnalysisMethod) frame.getMethod(), SamplingHotness::isIdle);
         selfSamples.putAll(accounting.selfSamples());
-        totalSamples = accounting.totalSamples();
+        nonIdleSamples = accounting.nonIdleSamples();
         idleSamples = accounting.idleSamples();
 
         Map<NodeSourcePosition, Long> suffixes = new HashMap<>();
@@ -119,13 +120,13 @@ public final class SamplingHotness {
         methodRootedTree = new PrefixTree(suffixes);
     }
 
-    record SampleAccounting<M>(Map<M, Long> selfSamples, long totalSamples, long idleSamples) {
+    record SampleAccounting<M>(Map<M, Long> selfSamples, long nonIdleSamples, long idleSamples) {
     }
 
     /** Pure accounting core shared with tests; input stacks are ordered outermost to leaf. */
     static <F, M> SampleAccounting<M> accountSamples(Map<List<F>, Long> stackSamples, Function<F, M> method, Predicate<F> idleLeaf) {
         Map<M, Long> self = new HashMap<>();
-        long total = 0;
+        long nonIdle = 0;
         long idle = 0;
         for (Map.Entry<List<F>, Long> entry : stackSamples.entrySet()) {
             List<F> stack = entry.getKey();
@@ -138,10 +139,10 @@ public final class SamplingHotness {
                 idle += count;
                 continue;
             }
-            total += count;
+            nonIdle += count;
             self.merge(method.apply(leaf), count, Long::sum);
         }
-        return new SampleAccounting<>(Map.copyOf(self), total, idle);
+        return new SampleAccounting<>(Map.copyOf(self), nonIdle, idle);
     }
 
     /** Every suffix rooted at a sampled frame, preserving recursive frame occurrences. */
@@ -153,14 +154,13 @@ public final class SamplingHotness {
         return List.copyOf(suffixes);
     }
 
-    /** Cursor for a compilation unit rooted at {@code method}, or null if the method was never sampled. */
+    /**
+     * Cursor for a compilation unit rooted at {@code method}, or null if the method was never
+     * sampled. The inlining provider asks once per decision, so the root is recorded in a set.
+     */
     public PrefixTree.Cursor cursorFor(HostedMethod method) {
         PrefixTree.Node node = methodRootedTree.entryPoints().get(method.getWrapped());
-        if (node == null) {
-            coldCompilationUnits.incrementAndGet();
-        } else {
-            hotCompilationUnits.incrementAndGet();
-        }
+        (node == null ? unsampledRoots : sampledRoots).add(method.getWrapped());
         return node;
     }
 
@@ -170,10 +170,10 @@ public final class SamplingHotness {
 
     /** Fraction in [0, 1] of all non-idle samples whose innermost frame lies in {@code method}. */
     public double selfTimeShare(HostedMethod method) {
-        if (totalSamples == 0) {
+        if (nonIdleSamples == 0) {
             return 0.0;
         }
-        return (double) selfSamples.getOrDefault(method.getWrapped(), 0L) / totalSamples;
+        return (double) selfSamples.getOrDefault(method.getWrapped(), 0L) / nonIdleSamples;
     }
 
     private static boolean isIdle(NodeSourcePosition leaf) {
@@ -187,20 +187,22 @@ public final class SamplingHotness {
         return idleSamples;
     }
 
-    public long totalSamples() {
-        return totalSamples;
+    public long nonIdleSamples() {
+        return nonIdleSamples;
     }
 
     public int sampledMethodCount() {
         return methodRootedTree.entryPoints().size();
     }
 
-    public long hotCompilationUnits() {
-        return hotCompilationUnits.get();
+    /** Number of distinct compilation roots the inliner asked about that have stack samples. */
+    public int sampledRootCount() {
+        return sampledRoots.size();
     }
 
-    public long coldCompilationUnits() {
-        return coldCompilationUnits.get();
+    /** Number of distinct compilation roots the inliner asked about that have no stack samples. */
+    public int unsampledRootCount() {
+        return unsampledRoots.size();
     }
 
     /**
@@ -209,8 +211,8 @@ public final class SamplingHotness {
      * ask {@code GlobalProfilesOptimizationUtility}, such as duplication and loop unrolling.
      */
     public StructuredGraph.GlobalProfileProvider providerFor(HostedMethod method) {
-        double selfTime = SamplingInliningProvider.Options.PGOSamplingSelfTime.getValue() ? selfTimeShare(method) : StructuredGraph.GlobalProfileProvider.GLOBAL_PROFILE_PROVIDER_DISABLED;
-        boolean hot = SamplingInliningProvider.Options.PGOSamplingHotCaller.getValue() && isSampled(method);
+        double selfTime = ProfiledInliningProvider.Options.PGOSamplingSelfTime.getValue() ? selfTimeShare(method) : StructuredGraph.GlobalProfileProvider.GLOBAL_PROFILE_PROVIDER_DISABLED;
+        boolean hot = ProfiledInliningProvider.Options.PGOSamplingHotCaller.getValue() && isSampled(method);
         return new StructuredGraph.GlobalProfileProvider() {
             @Override
             public double getGlobalSelfTimePercent() {

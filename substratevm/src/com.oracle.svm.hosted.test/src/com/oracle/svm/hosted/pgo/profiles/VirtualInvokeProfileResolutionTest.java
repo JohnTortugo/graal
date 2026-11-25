@@ -41,7 +41,7 @@ import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
-import com.oracle.svm.hosted.pgo.profiles.IprofProfileResolver.VirtualInvokeDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.VirtualInvokeDiagnostics;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
@@ -116,15 +116,15 @@ public class VirtualInvokeProfileResolutionTest {
         Map<String, AnalysisType> noTypes = Map.of();
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC), noTypes);
 
-        VirtualInvokeDiagnostics d = lookup.diagnostics().virtualInvoke();
-        Assert.assertEquals(3, d.totalEntries());
-        Assert.assertEquals(0, d.resolvedEntries());
-        Assert.assertEquals(1, d.unresolvedContextEntries());
-        Assert.assertEquals(2, d.noKnownReceiverEntries());
-        Assert.assertEquals(3, d.receiverRecords());
-        Assert.assertEquals(3, d.droppedReceiverRecords());
-        Assert.assertEquals(15, d.receiverEvents());
-        Assert.assertEquals(15, d.droppedReceiverEvents());
+        VirtualInvokeDiagnostics virtualInvokeDiagnostics = lookup.diagnostics().virtualInvoke();
+        Assert.assertEquals(3, virtualInvokeDiagnostics.totalEntries());
+        Assert.assertEquals(0, virtualInvokeDiagnostics.resolvedEntries());
+        Assert.assertEquals(1, virtualInvokeDiagnostics.unresolvedEntries());
+        Assert.assertEquals(2, virtualInvokeDiagnostics.noReceiverInImageEntries());
+        Assert.assertEquals(3, virtualInvokeDiagnostics.receiverRecords());
+        Assert.assertEquals(3, virtualInvokeDiagnostics.droppedReceiverRecords());
+        Assert.assertEquals(15, virtualInvokeDiagnostics.receiverEvents());
+        Assert.assertEquals(15, virtualInvokeDiagnostics.droppedReceiverEvents());
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.VIRTUAL_INVOKE_PROFILES));
         Optional<Map<AnalysisType, Long>> result = lookup.getVirtualInvokeProfile(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 9));
         Assert.assertTrue(result.isEmpty());
@@ -143,21 +143,21 @@ public class VirtualInvokeProfileResolutionTest {
         BytecodePosition inlinedTwice = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 14), bar, 9);
 
         IprofProfilesLookup exactOnly = IprofProfileResolverTest.receiverLookup(data);
-        exactOnly.setReceiverContextFallback(false);
+        exactOnly.setVirtualInvokeContextFallback(false);
         Assert.assertTrue(exactOnly.getVirtualInvokeProfile(inlinedTwice).isEmpty());
-        Assert.assertEquals(1, exactOnly.virtualInvokeMissCount());
-        Assert.assertEquals(0, exactOnly.virtualInvokeFallbackCount());
+        Assert.assertEquals(1, exactOnly.virtualInvokeMisses());
+        Assert.assertEquals(0, exactOnly.virtualInvokeContextFallbackHits());
 
         IprofProfilesLookup withFallback = IprofProfileResolverTest.receiverLookup(data);
-        withFallback.setReceiverContextFallback(true);
+        withFallback.setVirtualInvokeContextFallback(true);
         Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(inlinedTwice).orElseThrow());
-        Assert.assertEquals(1, withFallback.virtualInvokeHitCount());
-        Assert.assertEquals(1, withFallback.virtualInvokeFallbackCount());
-        Assert.assertEquals(2, withFallback.virtualInvokeFallbackDroppedFrames());
+        Assert.assertEquals(1, withFallback.virtualInvokeHits());
+        Assert.assertEquals(1, withFallback.virtualInvokeContextFallbackHits());
+        Assert.assertEquals(2, withFallback.virtualInvokeContextFallbackDroppedFrames());
         Assert.assertEquals(1, withFallback.matchedVirtualInvokeContextCount());
         /* An exact match does not count as a fallback. */
         Assert.assertSame(receivers, withFallback.getVirtualInvokeProfile(new BytecodePosition(null, bar, 9)).orElseThrow());
-        Assert.assertEquals(1, withFallback.virtualInvokeFallbackCount());
+        Assert.assertEquals(1, withFallback.virtualInvokeContextFallbackHits());
         /* A different call site in the same method is never served by the fallback. */
         Assert.assertTrue(withFallback.getVirtualInvokeProfile(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 10)).isEmpty());
     }

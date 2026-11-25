@@ -164,7 +164,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
         }
     }
 
-    private final PGOProfilesLookup pgoProfiles;
+    private final PGOProfilesLookup profilesLookup;
     private final RuntimeConfiguration runtimeConfig;
     private final HostedUniverse universe;
     private final boolean layeredBuild;
@@ -173,21 +173,21 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
     static final InterProceduralPartialEscapeAnalysisStatistics IPEAStatistics = new InterProceduralPartialEscapeAnalysisStatistics();
 
     private SubstratePriorityInliningPhase(CanonicalizerPhase canonicalizer, OptionValues options, RuntimeConfiguration runtimeConfig,
-                    HostedUniverse universe, SubstrateInliningProvider inliningProvider, PGOProfilesLookup pgoProfiles) {
+                    HostedUniverse universe, SubstrateInliningProvider inliningProvider, PGOProfilesLookup profilesLookup) {
         super(canonicalizer, options, inliningProvider);
         this.runtimeConfig = runtimeConfig;
         this.universe = universe;
-        this.pgoProfiles = pgoProfiles;
+        this.profilesLookup = profilesLookup;
         this.layeredBuild = ImageLayerBuildingSupport.buildingExtensionLayer();
     }
 
-    public SubstratePriorityInliningPhase(SubstratePriorityInliningPhase oldPhase, SubstrateInliningProvider substrateInliningProvider, PGOProfilesLookup pgoProfiles) {
-        this(oldPhase.canonicalizer, HostedOptionValues.singleton().get(), oldPhase.runtimeConfig, oldPhase.universe, substrateInliningProvider, pgoProfiles);
+    public SubstratePriorityInliningPhase(SubstratePriorityInliningPhase oldPhase, SubstrateInliningProvider substrateInliningProvider, PGOProfilesLookup profilesLookup) {
+        this(oldPhase.canonicalizer, HostedOptionValues.singleton().get(), oldPhase.runtimeConfig, oldPhase.universe, substrateInliningProvider, profilesLookup);
     }
 
     public SubstratePriorityInliningPhase(CanonicalizerPhase canonicalizer, OptionValues options, RuntimeConfiguration runtimeConfig,
-                    HostedUniverse universe, PGOProfilesLookup pgoProfiles) {
-        this(canonicalizer, options, runtimeConfig, universe, new SubstrateInliningProvider(universe, _ -> null), pgoProfiles);
+                    HostedUniverse universe, PGOProfilesLookup profilesLookup) {
+        this(canonicalizer, options, runtimeConfig, universe, new SubstrateInliningProvider(universe, _ -> null), profilesLookup);
     }
 
     private static void registerIPEAStatisticsShutdownHook(TrackIPEAMode trackIPEAMode) {
@@ -321,7 +321,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
              * with --pgo-instrument or --pgo. A cache per caller context would rarely hit: the same
              * callee is seldom expanded twice under the same context.
              */
-            boolean useCache = UseGraphCache.getValue(getOptions()) && !PGOInstrumentationFeature.enabled() && pgoProfiles == null;
+            boolean useCache = UseGraphCache.getValue(getOptions()) && !PGOInstrumentationFeature.enabled() && profilesLookup == null;
             GraphCache.Ref<ResolvedJavaMethod, StructuredGraph> ref = useCache ? selectedGraphCache.getRef(inlinee) : null;
             if (ref == null) {
                 DecodeContext decodeContext = inOOMEProtectedInlineContext ? DecodeContext.OOME_EXCEPTION_EDGES : DecodeContext.DEFAULT;
@@ -447,7 +447,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
         }
 
         private void applyPGOProfiles(StructuredGraph graphCopy, HighTierContext highTierContext, NodeSourcePosition replaceePosition) {
-            if (pgoProfiles == null) {
+            if (profilesLookup == null) {
                 return;
             }
             assert root.getOptions() != null;
@@ -466,7 +466,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
              * a profile is applied (see createGraph), so no other expansion shares this graph.
              */
             assert inliningProvider != null : "Provider must not be null";
-            PGOApplyProfilesPhase.createForExpandingCutoffs(replaceePosition, universe, pgoProfiles).apply(graphCopy, highTierContext);
+            PGOApplyProfilesPhase.createForExpandingCutoffs(replaceePosition, universe, profilesLookup).apply(graphCopy, highTierContext);
         }
 
         @Override

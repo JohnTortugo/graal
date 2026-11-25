@@ -37,7 +37,7 @@ import com.oracle.svm.hosted.pgo.IprofParser.CallCountEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
-import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
+import com.oracle.svm.hosted.pgo.IprofParser.ProfileMethod;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
@@ -75,11 +75,11 @@ public final class IprofProfileMerger {
 
     private final Map<String, Integer> typeIds = new LinkedHashMap<>();
     private final Map<MethodIdentity, Integer> methodIds = new LinkedHashMap<>();
-    private final Map<Integer, MethodDescriptor> methodsById = new LinkedHashMap<>();
-    private final Map<List<ContextFrame>, Map<Arm, Long>> conditionals = new LinkedHashMap<>();
+    private final Map<Integer, ProfileMethod> methodsById = new LinkedHashMap<>();
+    private final Map<List<ContextFrame>, Map<Arm, Long>> conditionalCounts = new LinkedHashMap<>();
     private final Map<List<ContextFrame>, Long> callCounts = new LinkedHashMap<>();
-    private final Map<List<ContextFrame>, Map<Integer, Long>> receivers = new LinkedHashMap<>();
-    private final Map<List<ContextFrame>, Long> samples = new LinkedHashMap<>();
+    private final Map<List<ContextFrame>, Map<Integer, Long>> receiverCounts = new LinkedHashMap<>();
+    private final Map<List<ContextFrame>, Long> sampleCounts = new LinkedHashMap<>();
     private String version;
 
     private IprofProfileMerger() {
@@ -95,8 +95,8 @@ public final class IprofProfileMerger {
      * @return the overlap, or {@link Double#NaN} if either profile has no stack samples, because
      *         the overlap is not defined then
      */
-    public static double samplingOverlap(ParsedIprofProfile a, ParsedIprofProfile b) {
-        return overlap(inclusiveSamplesByMethod(a), inclusiveSamplesByMethod(b));
+    public static double samplingOverlap(ParsedIprofProfile first, ParsedIprofProfile second) {
+        return overlap(inclusiveSamplesByMethod(first), inclusiveSamplesByMethod(second));
     }
 
     /**
@@ -105,50 +105,50 @@ public final class IprofProfileMerger {
      * {@link Double#NaN} for a profile without stack samples.
      */
     public static double[][] samplingOverlaps(List<ParsedIprofProfile> profiles) {
-        List<Map<MethodIdentity, Long>> counts = profiles.stream().map(IprofProfileMerger::inclusiveSamplesByMethod).toList();
+        List<Map<MethodIdentity, Long>> samplesByMethod = profiles.stream().map(IprofProfileMerger::inclusiveSamplesByMethod).toList();
         double[][] result = new double[profiles.size()][profiles.size()];
         for (int i = 0; i < profiles.size(); i++) {
             for (int j = i; j < profiles.size(); j++) {
-                result[i][j] = overlap(counts.get(i), counts.get(j));
+                result[i][j] = overlap(samplesByMethod.get(i), samplesByMethod.get(j));
                 result[j][i] = result[i][j];
             }
         }
         return result;
     }
 
-    private static double overlap(Map<MethodIdentity, Long> countsA, Map<MethodIdentity, Long> countsB) {
-        double totalA = countsA.values().stream().mapToLong(Long::longValue).sum();
-        double totalB = countsB.values().stream().mapToLong(Long::longValue).sum();
-        if (totalA == 0 || totalB == 0) {
+    private static double overlap(Map<MethodIdentity, Long> firstSamples, Map<MethodIdentity, Long> secondSamples) {
+        double firstTotal = firstSamples.values().stream().mapToLong(Long::longValue).sum();
+        double secondTotal = secondSamples.values().stream().mapToLong(Long::longValue).sum();
+        if (firstTotal == 0 || secondTotal == 0) {
             return Double.NaN;
         }
-        double overlap = 0.0;
-        for (Map.Entry<MethodIdentity, Long> entry : countsA.entrySet()) {
-            Long other = countsB.get(entry.getKey());
+        double result = 0.0;
+        for (Map.Entry<MethodIdentity, Long> entry : firstSamples.entrySet()) {
+            Long other = secondSamples.get(entry.getKey());
             if (other != null) {
-                overlap += Math.min(entry.getValue() / totalA, other / totalB);
+                result += Math.min(entry.getValue() / firstTotal, other / secondTotal);
             }
         }
-        return overlap;
+        return result;
     }
 
     private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedIprofProfile profile) {
-        Map<MethodIdentity, Long> counts = new HashMap<>();
+        Map<MethodIdentity, Long> samplesByMethod = new HashMap<>();
         for (SamplingEntry entry : profile.samplingEntries()) {
             Set<Integer> seen = new HashSet<>();
             for (ContextFrame frame : entry.context()) {
                 if (seen.add(frame.methodId())) {
-                    MethodDescriptor method = profile.methodsById().get(frame.methodId());
+                    ProfileMethod method = profile.methodsById().get(frame.methodId());
                     if (method != null) {
-                        counts.merge(identity(profile, method), entry.count(), IprofProfileMerger::addCounts);
+                        samplesByMethod.merge(methodIdentity(profile, method), entry.count(), IprofProfileMerger::addCounts);
                     }
                 }
             }
         }
-        return counts;
+        return samplesByMethod;
     }
 
-    private static MethodIdentity identity(ParsedIprofProfile profile, MethodDescriptor method) {
+    private static MethodIdentity methodIdentity(ParsedIprofProfile profile, ProfileMethod method) {
         return new MethodIdentity(typeName(profile, method.declaringTypeId()), method.name(), typeName(profile, method.returnTypeId()),
                         Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
     }
@@ -162,48 +162,48 @@ public final class IprofProfileMerger {
         }
         IprofProfileMerger merger = new IprofProfileMerger();
         for (WeightedProfile input : inputs) {
-            merger.add(input.profile(), input.weight());
+            merger.addProfile(input.profile(), input.weight());
         }
-        return merger.result();
+        return merger.mergedProfile();
     }
 
-    private void add(ParsedIprofProfile profile, double weight) {
+    private void addProfile(ParsedIprofProfile profile, double weight) {
         if (version == null) {
             version = profile.version();
         } else if (!version.equals(profile.version())) {
             throw new IprofFormatException("Cannot merge iprof versions " + version + " and " + profile.version());
         }
-        Map<Integer, Integer> typeMap = new HashMap<>();
+        Map<Integer, Integer> inputToMergedTypeId = new HashMap<>();
         for (Map.Entry<Integer, String> type : profile.typeNamesById().entrySet()) {
-            typeMap.put(type.getKey(), typeIds.computeIfAbsent(type.getValue(), _ -> typeIds.size()));
+            inputToMergedTypeId.put(type.getKey(), typeIds.computeIfAbsent(type.getValue(), _ -> typeIds.size()));
         }
-        Map<Integer, Integer> methodMap = new HashMap<>();
-        for (MethodDescriptor method : profile.methodsById().values()) {
-            MethodIdentity identity = identity(profile, method);
+        Map<Integer, Integer> inputToMergedMethodId = new HashMap<>();
+        for (ProfileMethod method : profile.methodsById().values()) {
+            MethodIdentity identity = methodIdentity(profile, method);
             Integer id = methodIds.get(identity);
             if (id == null) {
                 id = methodIds.size();
                 methodIds.put(identity, id);
-                methodsById.put(id, new MethodDescriptor(id, method.name(), typeMap.get(method.declaringTypeId()), typeMap.get(method.returnTypeId()),
-                                Arrays.stream(method.parameterTypeIds()).map(typeMap::get).toArray()));
+                methodsById.put(id, new ProfileMethod(id, method.name(), inputToMergedTypeId.get(method.declaringTypeId()), inputToMergedTypeId.get(method.returnTypeId()),
+                                Arrays.stream(method.parameterTypeIds()).map(inputToMergedTypeId::get).toArray()));
             }
-            methodMap.put(method.methodId(), id);
+            inputToMergedMethodId.put(method.methodId(), id);
         }
         for (ConditionalEntry entry : profile.conditionalEntries()) {
-            addRecords(conditionals.computeIfAbsent(remap(entry.context(), methodMap), _ -> new LinkedHashMap<>()), entry.records(), weight);
+            addConditionalRecords(conditionalCounts.computeIfAbsent(remap(entry.context(), inputToMergedMethodId), _ -> new LinkedHashMap<>()), entry.records(), weight);
         }
         for (CallCountEntry entry : profile.callCountEntries()) {
-            callCounts.merge(remap(entry.context(), methodMap), scale(entry.count(), weight), IprofProfileMerger::addCounts);
+            callCounts.merge(remap(entry.context(), inputToMergedMethodId), scale(entry.count(), weight), IprofProfileMerger::addCounts);
         }
         for (VirtualInvokeEntry entry : profile.virtualInvokeEntries()) {
-            Map<Integer, Long> counts = receivers.computeIfAbsent(remap(entry.context(), methodMap), _ -> new LinkedHashMap<>());
+            Map<Integer, Long> typeCounts = receiverCounts.computeIfAbsent(remap(entry.context(), inputToMergedMethodId), _ -> new LinkedHashMap<>());
             long[] records = entry.records();
             for (int i = 0; i + 1 < records.length; i += IprofParser.VIRTUAL_INVOKE_RECORD_SIZE) {
-                counts.merge(typeMap.get((int) records[i]), scale(records[i + 1], weight), IprofProfileMerger::addCounts);
+                typeCounts.merge(inputToMergedTypeId.get((int) records[i]), scale(records[i + 1], weight), IprofProfileMerger::addCounts);
             }
         }
         for (SamplingEntry entry : profile.samplingEntries()) {
-            samples.merge(remap(entry.context(), methodMap), scale(entry.count(), weight), IprofProfileMerger::addCounts);
+            sampleCounts.merge(remap(entry.context(), inputToMergedMethodId), scale(entry.count(), weight), IprofProfileMerger::addCounts);
         }
     }
 
@@ -215,10 +215,10 @@ public final class IprofProfileMerger {
         return name;
     }
 
-    private static List<ContextFrame> remap(List<ContextFrame> context, Map<Integer, Integer> methodMap) {
+    private static List<ContextFrame> remap(List<ContextFrame> context, Map<Integer, Integer> inputToMergedMethodId) {
         List<ContextFrame> result = new ArrayList<>(context.size());
         for (ContextFrame frame : context) {
-            Integer methodId = methodMap.get(frame.methodId());
+            Integer methodId = inputToMergedMethodId.get(frame.methodId());
             if (methodId == null) {
                 throw new IprofFormatException("Context refers to undeclared method id " + frame.methodId());
             }
@@ -232,20 +232,21 @@ public final class IprofProfileMerger {
     }
 
     /** Adds conditional records, {@code [successorBci, successorIndex, count]} triples, by arm. */
-    private static void addRecords(Map<Arm, Long> target, long[] records, double weight) {
+    private static void addConditionalRecords(Map<Arm, Long> target, long[] records, double weight) {
         for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
             target.merge(new Arm(records[i], records[i + 1]), scale(records[i + 2], weight), IprofProfileMerger::addCounts);
         }
     }
 
-    private static long[] toRecords(Map<Arm, Long> counts) {
-        long total = 0;
-        for (long count : counts.values()) {
-            total = addCounts(total, count);
+    private static long[] toConditionalRecords(Map<Arm, Long> armCounts) {
+        /* Rejects merged arm counts whose sum does not fit in a long, as the parser does for one file. */
+        long entryTotal = 0;
+        for (long count : armCounts.values()) {
+            entryTotal = addCounts(entryTotal, count);
         }
-        long[] result = new long[counts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
+        long[] result = new long[armCounts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
         int i = 0;
-        for (Map.Entry<Arm, Long> entry : counts.entrySet()) {
+        for (Map.Entry<Arm, Long> entry : armCounts.entrySet()) {
             result[i++] = entry.getKey().successorBci();
             result[i++] = entry.getKey().successorIndex();
             result[i++] = entry.getValue();
@@ -275,25 +276,25 @@ public final class IprofProfileMerger {
         }
     }
 
-    private ParsedIprofProfile result() {
+    private ParsedIprofProfile mergedProfile() {
         Map<Integer, String> typeNamesById = new LinkedHashMap<>();
         typeIds.forEach((name, id) -> typeNamesById.put(id, name));
         List<ConditionalEntry> conditionalEntries = new ArrayList<>();
-        conditionals.forEach((context, counts) -> conditionalEntries.add(new ConditionalEntry(context, toRecords(counts))));
+        conditionalCounts.forEach((context, armCounts) -> conditionalEntries.add(new ConditionalEntry(context, toConditionalRecords(armCounts))));
         List<CallCountEntry> callCountEntries = new ArrayList<>();
         callCounts.forEach((context, count) -> callCountEntries.add(new CallCountEntry(context, count)));
-        List<VirtualInvokeEntry> receiverEntries = new ArrayList<>();
-        receivers.forEach((context, counts) -> {
-            long[] records = new long[counts.size() * IprofParser.VIRTUAL_INVOKE_RECORD_SIZE];
+        List<VirtualInvokeEntry> virtualInvokeEntries = new ArrayList<>();
+        receiverCounts.forEach((context, typeCounts) -> {
+            long[] records = new long[typeCounts.size() * IprofParser.VIRTUAL_INVOKE_RECORD_SIZE];
             int i = 0;
-            for (Map.Entry<Integer, Long> entry : counts.entrySet()) {
+            for (Map.Entry<Integer, Long> entry : typeCounts.entrySet()) {
                 records[i++] = entry.getKey();
                 records[i++] = entry.getValue();
             }
-            receiverEntries.add(new VirtualInvokeEntry(context, records));
+            virtualInvokeEntries.add(new VirtualInvokeEntry(context, records));
         });
         List<SamplingEntry> samplingEntries = new ArrayList<>();
-        samples.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
-        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, receiverEntries, samplingEntries);
+        sampleCounts.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
+        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
     }
 }

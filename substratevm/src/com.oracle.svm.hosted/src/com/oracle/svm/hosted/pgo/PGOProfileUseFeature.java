@@ -49,12 +49,15 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
-import com.oracle.svm.hosted.pgo.profiles.ConditionalProfileDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.CallCountDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.ConditionalDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.SamplingDiagnostics;
+import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.VirtualInvokeDiagnostics;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfileResolver;
 import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
-import com.oracle.svm.hosted.pgo.profiles.SamplingInliningProvider;
+import com.oracle.svm.hosted.pgo.profiles.ProfiledInliningProvider;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup;
 import com.oracle.svm.hosted.phases.priorityinline.SubstratePriorityInliningPhase;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
@@ -96,7 +99,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
         @Option(help = "When a branch or switch has no profile under its exact inlining context, add up the profiles recorded for the same site " +
                        "under longer contexts that contain it as their inner part. If there are none, drop the outermost caller and repeat, " +
                        "down to the site's own method.")//
-        public static final HostedOptionKey<Boolean> PGOContextFallback = new HostedOptionKey<>(true);
+        public static final HostedOptionKey<Boolean> PGOConditionalContextFallback = new HostedOptionKey<>(true);
 
         @Option(help = "When an indirect call has no receiver profile under its exact inlining context, drop the outermost caller and repeat " +
                        "until a context recorded for the same call matches.")//
@@ -107,9 +110,6 @@ public final class PGOProfileUseFeature implements InternalFeature {
 
         @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles and self time.")//
         public static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
-
-        @Option(help = "Print the detailed statistics that the PGO tests read, as PGOPrintStatistics does.")//
-        public static final HostedOptionKey<Boolean> PGOTestDiagnostics = new HostedOptionKey<>(false);
 
         @Option(help = "Print detailed statistics on how the profile was resolved and applied. By default one summary line is printed.")//
         public static final HostedOptionKey<Boolean> PGOPrintStatistics = new HostedOptionKey<>(false);
@@ -154,9 +154,9 @@ public final class PGOProfileUseFeature implements InternalFeature {
         return pathSet(profilePath());
     }
 
-    /** Whether to print the detailed statistics; the 'pgo end-to-end' gate task reads them with PGOTestDiagnostics. */
+    /** Whether to print the detailed statistics; the 'pgo end-to-end' gate task reads them. */
     public static boolean printStatistics() {
-        return Options.PGOPrintStatistics.getValue() || Options.PGOTestDiagnostics.getValue();
+        return Options.PGOPrintStatistics.getValue();
     }
 
     @Override
@@ -346,8 +346,8 @@ public final class PGOProfileUseFeature implements InternalFeature {
 
         if (parsedProfile != null && !ImageSingletons.contains(PGOProfilesLookup.class)) {
             profilesLookup = IprofProfileResolver.resolve(parsedProfile, hostedUniverse, PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue());
-            profilesLookup.setContextFallback(Options.PGOContextFallback.getValue());
-            profilesLookup.setReceiverContextFallback(Options.PGOReceiverContextFallback.getValue());
+            profilesLookup.setConditionalContextFallback(Options.PGOConditionalContextFallback.getValue());
+            profilesLookup.setVirtualInvokeContextFallback(Options.PGOReceiverContextFallback.getValue());
             profilesLookup.setUseCallCounts(Options.PGOUseCallCounts.getValue());
             profilesLookup.setUseStackSamples(Options.PGOUseStackSamples.getValue());
             ImageSingletons.add(PGOProfilesLookup.class, profilesLookup);
@@ -356,7 +356,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
                 samplingHotness = new SamplingHotness(profilesLookup.getSampleCounts().get());
                 if (printStatistics()) {
                     info("sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)",
-                                    samplingHotness.totalSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
+                                    samplingHotness.nonIdleSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
                 }
             } else if (profilesLookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
@@ -368,14 +368,15 @@ public final class PGOProfileUseFeature implements InternalFeature {
 
     private static void reportResolution(PGODiagnostics diagnostics) {
         if (printStatistics()) {
+            info("iprof version %s", diagnostics.version());
             info("%s", diagnostics.conditional().summary());
-            if (entries(diagnostics.virtualInvoke()) > 0) {
+            if (totalEntries(diagnostics.virtualInvoke()) > 0) {
                 info("%s", diagnostics.virtualInvoke().summary());
             }
-            if (entries(diagnostics.sampling()) > 0) {
+            if (totalEntries(diagnostics.sampling()) > 0) {
                 info("%s", diagnostics.sampling().summary());
             }
-            if (entries(diagnostics.callCount()) > 0) {
+            if (totalEntries(diagnostics.callCount()) > 0) {
                 info("%s", diagnostics.callCount().summary());
             }
             /* Their entries count as unresolved; this line says why. */
@@ -386,32 +387,33 @@ public final class PGOProfileUseFeature implements InternalFeature {
             info("profile resolved: %s; details with %s", resolutionSummary(diagnostics), SubstrateOptionsParser.commandArgument(Options.PGOPrintStatistics, "+"));
         }
         PGOApplyProfilesPhase.ProfileQuality.updateProfileRelevance(matchedEntries(diagnostics), totalEntries(diagnostics));
-        reportUnusedKinds(diagnostics);
-        warnAboutUnmatchedKinds(diagnostics);
-        if (diagnostics.overflowedPrefixSums() > 0 && Options.PGOContextFallback.getValue()) {
+        reportUnusedCategories(diagnostics);
+        warnAboutUnmatchedCategories(diagnostics);
+        int overflowedPrefixSums = diagnostics.conditional().overflowedPrefixSums();
+        if (overflowedPrefixSums > 0 && Options.PGOConditionalContextFallback.getValue()) {
             LogUtils.warning("%s adds up the branch and switch counts of the profile in %s under longer contexts, but for %d contexts the sum does not fit in a long, " +
-                            "so it does not use those sums.", SubstrateOptionsParser.commandArgument(Options.PGOContextFallback, "+"), profileOption(), diagnostics.overflowedPrefixSums());
+                            "so it does not use those sums.", SubstrateOptionsParser.commandArgument(Options.PGOConditionalContextFallback, "+"), profileOption(), overflowedPrefixSums);
         }
     }
 
-    private static int entries(IprofProfileResolver.VirtualInvokeDiagnostics diagnostics) {
-        return diagnostics == null ? 0 : diagnostics.totalEntries();
+    private static int totalEntries(VirtualInvokeDiagnostics virtualInvokeDiagnostics) {
+        return virtualInvokeDiagnostics == null ? 0 : virtualInvokeDiagnostics.totalEntries();
     }
 
-    private static int entries(IprofProfileResolver.SamplingDiagnostics diagnostics) {
-        return diagnostics == null ? 0 : diagnostics.totalEntries();
+    private static int totalEntries(SamplingDiagnostics samplingDiagnostics) {
+        return samplingDiagnostics == null ? 0 : samplingDiagnostics.totalEntries();
     }
 
-    private static int entries(IprofProfileResolver.CallCountDiagnostics diagnostics) {
-        return diagnostics == null ? 0 : diagnostics.totalEntries();
+    private static int totalEntries(CallCountDiagnostics callCountDiagnostics) {
+        return callCountDiagnostics == null ? 0 : callCountDiagnostics.totalEntries();
     }
 
-    /** Entries of all kinds in the profile. */
+    /** Entries of all categories in the profile. */
     private static int totalEntries(PGODiagnostics diagnostics) {
-        return diagnostics.conditional().totalEntries() + entries(diagnostics.virtualInvoke()) + entries(diagnostics.sampling()) + entries(diagnostics.callCount());
+        return diagnostics.conditional().totalEntries() + totalEntries(diagnostics.virtualInvoke()) + totalEntries(diagnostics.sampling()) + totalEntries(diagnostics.callCount());
     }
 
-    /** Entries of all kinds that match the image; a sampled stack cut at a missing frame still matches in part. */
+    /** Entries of all categories that match the image; a sampled stack cut at a missing frame still matches in part. */
     private static int matchedEntries(PGODiagnostics diagnostics) {
         int matched = diagnostics.conditional().resolvedEntries();
         if (diagnostics.virtualInvoke() != null) {
@@ -426,34 +428,34 @@ public final class PGOProfileUseFeature implements InternalFeature {
         return matched;
     }
 
-    /** Names every kind of data that the profile has but options keep the build from using. */
-    private static void reportUnusedKinds(PGODiagnostics diagnostics) {
+    /** Names every category of data that the profile has but options keep the build from using. */
+    private static void reportUnusedCategories(PGODiagnostics diagnostics) {
         List<String> unused = new ArrayList<>();
-        boolean conditionals = diagnostics.conditional().totalEntries() > 0;
-        addIfUnused(unused, conditionals, PGOApplyProfilesPhase.Options.PGOUseBranchProfiles, "branch profiles");
-        addIfUnused(unused, conditionals, PGOApplyProfilesPhase.Options.PGOUseSwitchProfiles, "switch profiles");
-        addIfUnused(unused, entries(diagnostics.virtualInvoke()) > 0, PGOApplyProfilesPhase.Options.PGOUseReceiverProfiles, "receiver profiles");
-        addIfUnused(unused, entries(diagnostics.callCount()) > 0, Options.PGOUseCallCounts, "call counts");
-        addIfUnused(unused, entries(diagnostics.sampling()) > 0, Options.PGOUseStackSamples, "stack samples");
+        boolean hasConditionalEntries = diagnostics.conditional().totalEntries() > 0;
+        addIfUnused(unused, hasConditionalEntries, PGOApplyProfilesPhase.Options.PGOUseBranchProfiles, "branch profiles");
+        addIfUnused(unused, hasConditionalEntries, PGOApplyProfilesPhase.Options.PGOUseSwitchProfiles, "switch profiles");
+        addIfUnused(unused, totalEntries(diagnostics.virtualInvoke()) > 0, PGOApplyProfilesPhase.Options.PGOUseReceiverProfiles, "receiver profiles");
+        addIfUnused(unused, totalEntries(diagnostics.callCount()) > 0, Options.PGOUseCallCounts, "call counts");
+        addIfUnused(unused, totalEntries(diagnostics.sampling()) > 0, Options.PGOUseStackSamples, "stack samples");
         if (!unused.isEmpty()) {
             info("not used, as options say: %s", String.join(", ", unused));
         }
     }
 
-    private static void addIfUnused(List<String> unused, boolean inProfile, HostedOptionKey<Boolean> option, String kind) {
+    private static void addIfUnused(List<String> unused, boolean inProfile, HostedOptionKey<Boolean> option, String category) {
         if (inProfile && !option.getValue()) {
-            unused.add(kind + " (" + SubstrateOptionsParser.commandArgument(option, "-") + ")");
+            unused.add(category + " (" + SubstrateOptionsParser.commandArgument(option, "-") + ")");
         }
     }
 
     /**
-     * Warns about every kind of data none of whose entries matches this image, and about a profile
-     * without entries. Both usually mean that the profile was recorded for another program. Then
-     * warns once about entries and receiver types that match only in part.
+     * Warns about every category of data none of whose entries matches this image, and about a
+     * profile without entries. Both usually mean that the profile was recorded for another program.
+     * Then warns once about entries and receiver types that match only in part.
      */
-    private static void warnAboutUnmatchedKinds(PGODiagnostics diagnostics) {
-        ConditionalProfileDiagnostics conditionals = diagnostics.conditional();
-        warnIfNoneMatches("branch and switch", conditionals.totalEntries(), conditionals.resolvedEntries());
+    private static void warnAboutUnmatchedCategories(PGODiagnostics diagnostics) {
+        ConditionalDiagnostics conditionalDiagnostics = diagnostics.conditional();
+        warnIfNoneMatches("branch and switch", conditionalDiagnostics.totalEntries(), conditionalDiagnostics.resolvedEntries());
         if (diagnostics.virtualInvoke() != null) {
             warnIfNoneMatches("receiver", diagnostics.virtualInvoke().totalEntries(), diagnostics.virtualInvoke().resolvedEntries());
         }
@@ -471,33 +473,35 @@ public final class PGOProfileUseFeature implements InternalFeature {
 
     /**
      * Warns once when the image lacks some of the methods and types that the entries name, for
-     * every kind of which other entries match. The instrumented build compiled code that this build
-     * does not have, for example because the program changed. A kind that matches nowhere has its
-     * own warning. A sampled stack counts when any of its frames is missing, also when only an outer
-     * frame is and the inner part of the stack is still used.
+     * every category of which other entries match. The instrumented build compiled code that this
+     * build does not have, for example because the program changed. A category that matches nowhere
+     * has its own warning. A sampled stack counts when any of its frames is missing, also when only
+     * an outer frame is and the inner part of the stack is still used.
      */
     private static void warnAboutMissingElements(PGODiagnostics diagnostics) {
-        ConditionalProfileDiagnostics conditionals = diagnostics.conditional();
-        long entries = missingIfOthersMatch(conditionals.resolvedEntries(), conditionals.unresolvedEntries());
-        long receiverTypes = 0;
-        IprofProfileResolver.VirtualInvokeDiagnostics receivers = diagnostics.virtualInvoke();
-        if (receivers != null) {
-            entries += missingIfOthersMatch(receivers.resolvedEntries(), receivers.unresolvedContextEntries() + receivers.noKnownReceiverEntries());
-            receiverTypes = receivers.resolvedEntries() > 0 ? receivers.droppedReceiverRecords() : 0;
+        ConditionalDiagnostics conditionalDiagnostics = diagnostics.conditional();
+        long missingEntries = missingIfOthersMatch(conditionalDiagnostics.resolvedEntries(), conditionalDiagnostics.unresolvedEntries());
+        long droppedReceiverTypes = 0;
+        VirtualInvokeDiagnostics virtualInvokeDiagnostics = diagnostics.virtualInvoke();
+        if (virtualInvokeDiagnostics != null) {
+            missingEntries += missingIfOthersMatch(virtualInvokeDiagnostics.resolvedEntries(),
+                            virtualInvokeDiagnostics.unresolvedEntries() + virtualInvokeDiagnostics.noReceiverInImageEntries());
+            droppedReceiverTypes = virtualInvokeDiagnostics.resolvedEntries() > 0 ? virtualInvokeDiagnostics.droppedReceiverRecords() : 0;
         }
-        IprofProfileResolver.CallCountDiagnostics callCounts = diagnostics.callCount();
-        if (callCounts != null) {
-            entries += missingIfOthersMatch(callCounts.resolvedEntries(), callCounts.unresolvedEntries());
+        CallCountDiagnostics callCountDiagnostics = diagnostics.callCount();
+        if (callCountDiagnostics != null) {
+            missingEntries += missingIfOthersMatch(callCountDiagnostics.resolvedEntries(), callCountDiagnostics.unresolvedEntries());
         }
-        IprofProfileResolver.SamplingDiagnostics samples = diagnostics.sampling();
-        if (samples != null) {
-            /* As in warnAboutUnmatchedKinds, a stack cut at a missing frame matches in part. */
-            entries += missingIfOthersMatch(samples.resolvedEntries() + samples.truncatedEntries(), samples.unresolvedEntries() + samples.truncatedEntries());
+        SamplingDiagnostics samplingDiagnostics = diagnostics.sampling();
+        if (samplingDiagnostics != null) {
+            /* As in warnAboutUnmatchedCategories, a stack cut at a missing frame matches in part. */
+            missingEntries += missingIfOthersMatch(samplingDiagnostics.resolvedEntries() + samplingDiagnostics.truncatedEntries(),
+                            samplingDiagnostics.unresolvedEntries() + samplingDiagnostics.truncatedEntries());
         }
-        if (entries > 0 || receiverTypes > 0) {
+        if (missingEntries > 0 || droppedReceiverTypes > 0) {
             LogUtils.warning("%d entries and %d receiver types of the profile in %s name methods or types that this image does not have, or has twice under one name, " +
                             "so they are not used, or, for a sampled stack, used only in part. The profile was probably recorded for another version of the program. %s lists them.",
-                            entries, receiverTypes, profileOption(), SubstrateOptionsParser.commandArgument(PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails, "+"));
+                            missingEntries, droppedReceiverTypes, profileOption(), SubstrateOptionsParser.commandArgument(PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails, "+"));
         }
     }
 
@@ -505,10 +509,10 @@ public final class PGOProfileUseFeature implements InternalFeature {
         return matched > 0 ? missing : 0;
     }
 
-    private static void warnIfNoneMatches(String kind, int entries, int matched) {
+    private static void warnIfNoneMatches(String category, int entries, int matched) {
         if (entries > 0 && matched == 0) {
             LogUtils.warning("None of the %d %s entries of the profile in %s matches this image, so they are not used. The profile may have been recorded for another program.",
-                            entries, kind, profileOption());
+                            entries, category, profileOption());
         }
     }
 
@@ -525,7 +529,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
         }
         PhaseSuite<HighTierContext> highTier = suites.getHighTier();
         if (samplingHotness != null) {
-            installSamplingInliner(highTier);
+            installProfiledInliner(highTier);
         }
         if (profilesLookup != null) {
             /*
@@ -552,24 +556,24 @@ public final class PGOProfileUseFeature implements InternalFeature {
      * call counts, through the copy constructor that SubstratePriorityInliningPhase has for
      * replacing the provider. The phase keeps its position in the suite.
      */
-    private void installSamplingInliner(PhaseSuite<HighTierContext> highTier) {
+    private void installProfiledInliner(PhaseSuite<HighTierContext> highTier) {
         ListIterator<BasePhase<? super HighTierContext>> position = highTier.findPhase(SubstratePriorityInliningPhase.class);
         if (position == null) {
             return;
         }
         SubstratePriorityInliningPhase current = (SubstratePriorityInliningPhase) position.previous();
-        position.set(new SubstratePriorityInliningPhase(current, new SamplingInliningProvider(hostedUniverse, samplingHotness, profilesLookup), profilesLookup));
+        position.set(new SubstratePriorityInliningPhase(current, new ProfiledInliningProvider(hostedUniverse, samplingHotness, profilesLookup), profilesLookup));
     }
 
     /** Creates the single-use PGO subphase separately for every compilation graph. */
     private static final class ApplyRootProfilesPhase extends BasePhase<HighTierContext> {
         private final HostedUniverse universe;
-        private final IprofProfilesLookup lookup;
+        private final IprofProfilesLookup profilesLookup;
         private final SamplingHotness hotness;
 
-        private ApplyRootProfilesPhase(HostedUniverse universe, IprofProfilesLookup lookup, SamplingHotness hotness) {
+        private ApplyRootProfilesPhase(HostedUniverse universe, IprofProfilesLookup profilesLookup, SamplingHotness hotness) {
             this.universe = universe;
-            this.lookup = lookup;
+            this.profilesLookup = profilesLookup;
             this.hotness = hotness;
         }
 
@@ -579,26 +583,27 @@ public final class PGOProfileUseFeature implements InternalFeature {
                 /* Runs before the inliner and duplication, which read the provider from the root graph. */
                 graph.setGlobalProfileProvider(hotness.providerFor(method));
             }
-            PGOApplyProfilesPhase.createContextInsensitive(universe, lookup).apply(graph, context);
+            PGOApplyProfilesPhase.createContextInsensitive(universe, profilesLookup).apply(graph, context);
         }
     }
 
     /**
-     * Resolved entries per kind, e.g. {@code branches and switches 7505/7505, receivers 1610/1615}.
-     * A sampled stack cut at a frame that the image lacks counts as resolved: its inner part is used.
+     * Matched entries per category, e.g. {@code branches and switches 7505/7505, receivers
+     * 1610/1615}. A sampled stack cut at a frame that the image lacks counts as matched: its inner
+     * part is used.
      */
     private static String resolutionSummary(PGODiagnostics diagnostics) {
         StringBuilder result = new StringBuilder();
         result.append("branches and switches ").append(diagnostics.conditional().resolvedEntries()).append('/').append(diagnostics.conditional().totalEntries());
-        if (entries(diagnostics.virtualInvoke()) > 0) {
+        if (totalEntries(diagnostics.virtualInvoke()) > 0) {
             result.append(", receivers ").append(diagnostics.virtualInvoke().resolvedEntries()).append('/').append(diagnostics.virtualInvoke().totalEntries());
         }
-        if (entries(diagnostics.callCount()) > 0) {
+        if (totalEntries(diagnostics.callCount()) > 0) {
             result.append(", call counts ").append(diagnostics.callCount().resolvedEntries()).append('/').append(diagnostics.callCount().totalEntries());
         }
-        if (entries(diagnostics.sampling()) > 0) {
-            IprofProfileResolver.SamplingDiagnostics samples = diagnostics.sampling();
-            result.append(", stack samples ").append(samples.resolvedEntries() + samples.truncatedEntries()).append('/').append(samples.totalEntries());
+        if (totalEntries(diagnostics.sampling()) > 0) {
+            SamplingDiagnostics samplingDiagnostics = diagnostics.sampling();
+            result.append(", stack samples ").append(samplingDiagnostics.resolvedEntries() + samplingDiagnostics.truncatedEntries()).append('/').append(samplingDiagnostics.totalEntries());
         }
         return result.toString();
     }
@@ -613,37 +618,37 @@ public final class PGOProfileUseFeature implements InternalFeature {
         }
         reportApplication(profilesLookup);
         if (samplingHotness != null) {
-            info("sampling hotness: %d hot compilation roots, %d cold", samplingHotness.hotCompilationUnits(), samplingHotness.coldCompilationUnits());
+            info("sampling hotness: %d compilation roots with samples, %d without", samplingHotness.sampledRootCount(), samplingHotness.unsampledRootCount());
         }
     }
 
+    /** How the compiler used each category of the profile, one line per category. */
     private static void reportApplication(IprofProfilesLookup lookup) {
         if (lookup == null) {
             return;
         }
-        long hits = lookup.hitCount();
-        long misses = lookup.missCount();
-        long queries = hits + misses;
-        double hitRate = queries == 0 ? 0.0 : 100.0 * hits / queries;
-        int matchedContexts = lookup.matchedContextCount();
-        int availableContexts = lookup.availableContextCount();
-        double contextUseRate = availableContexts == 0 ? 0.0 : 100.0 * matchedContexts / availableContexts;
-        info("%d queries, %d hits (%.1f%%), %d misses; contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused",
-                        queries, hits, hitRate, misses, matchedContexts, availableContexts, contextUseRate,
-                        lookup.fullyAppliedContextCount(), lookup.partiallyAppliedContextCount(), lookup.unappliedMatchedContextCount(), lookup.unusedResolvedContextCount());
+        long conditionalHits = lookup.conditionalHits();
+        long conditionalQueries = conditionalHits + lookup.conditionalMisses();
+        long fallbackHits = lookup.conditionalContextFallbackHits();
+        int matchedContexts = lookup.matchedConditionalContextCount();
+        int availableContexts = lookup.availableConditionalContextCount();
+        info("branches and switches: %d queries, %d hits (%.1f%%, %d via shortened context, avg %.1f frames dropped), %d misses; " +
+                        "contexts: %d/%d used (%.1f%%), %d fully applied, %d partially applied, %d matched-not-applied, %d unused",
+                        conditionalQueries, conditionalHits, conditionalQueries == 0 ? 0.0 : 100.0 * conditionalHits / conditionalQueries, fallbackHits,
+                        fallbackHits == 0 ? 0.0 : (double) lookup.conditionalContextFallbackDroppedFrames() / fallbackHits, lookup.conditionalMisses(),
+                        matchedContexts, availableContexts, availableContexts == 0 ? 0.0 : 100.0 * matchedContexts / availableContexts, lookup.fullyAppliedConditionalContextCount(),
+                        lookup.partiallyAppliedConditionalContextCount(), lookup.unappliedMatchedConditionalContextCount(), lookup.unusedConditionalContextCount());
         if (lookup.availableVirtualInvokeContextCount() > 0) {
+            long receiverFallbackHits = lookup.virtualInvokeContextFallbackHits();
             info("virtual invokes: %d queries, %d hits (%d via shortened context, avg %.1f frames dropped), %d misses; contexts: %d/%d used; impossible receivers dropped: %d records, %d events",
-                            lookup.virtualInvokeHitCount() + lookup.virtualInvokeMissCount(), lookup.virtualInvokeHitCount(), lookup.virtualInvokeFallbackCount(),
-                            lookup.virtualInvokeFallbackCount() == 0 ? 0.0 : (double) lookup.virtualInvokeFallbackDroppedFrames() / lookup.virtualInvokeFallbackCount(), lookup
-                                            .virtualInvokeMissCount(),
-                            lookup.matchedVirtualInvokeContextCount(), lookup.availableVirtualInvokeContextCount(),
-                            lookup.impossibleReceiverRecords(), lookup.impossibleReceiverEvents());
+                            lookup.virtualInvokeHits() + lookup.virtualInvokeMisses(), lookup.virtualInvokeHits(), receiverFallbackHits,
+                            receiverFallbackHits == 0 ? 0.0 : (double) lookup.virtualInvokeContextFallbackDroppedFrames() / receiverFallbackHits, lookup.virtualInvokeMisses(),
+                            lookup.matchedVirtualInvokeContextCount(), lookup.availableVirtualInvokeContextCount(), lookup.impossibleReceiverRecords(), lookup.impossibleReceiverEvents());
         }
-        info("shortened-context fallback: %d hits (avg %.1f frames dropped)",
-                        lookup.contextFallbackCount(), lookup.contextFallbackCount() == 0 ? 0.0 : (double) lookup.contextFallbackDroppedFrames() / lookup.contextFallbackCount());
-        if (entries(lookup.diagnostics().callCount()) > 0) {
+        if (totalEntries(lookup.diagnostics().callCount()) > 0) {
             info("call counts: %d call-edge lookups, %d found a count; %d method lookups, %d found a count",
-                            lookup.contextCallCountQueries(), lookup.contextCallCountHits(), lookup.methodCallCountQueries(), lookup.methodCallCountHits());
+                            lookup.contextCallCountHits() + lookup.contextCallCountMisses(), lookup.contextCallCountHits(), lookup.methodCallCountHits() + lookup.methodCallCountMisses(),
+                            lookup.methodCallCountHits());
         }
     }
 
@@ -662,13 +667,13 @@ public final class PGOProfileUseFeature implements InternalFeature {
         info("profile applicability %.1f%%: %d of %d lookups in %d compilation roots found a profile", PGOApplyProfilesPhase.ProfileQuality.getProfileApplicability(), found, found + missing,
                         PGOApplyProfilesPhase.ProfileQuality.getFunctionsCount());
         if (PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue()) {
-            for (String dropped : diagnostics.droppedContexts()) {
+            for (String dropped : diagnostics.droppedEntries()) {
                 info("dropped while loading: %s", dropped);
             }
             for (NodeSourcePosition context : PGOApplyProfilesPhase.ProfileQuality.getProfileFailContexts()) {
                 info("no profile for %s", describe(context));
             }
-            info("resolved context samples: %s", lookup.contextKeySamples(10));
+            info("example resolved conditional contexts: %s", lookup.conditionalContextExamples(10));
         }
     }
 

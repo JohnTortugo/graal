@@ -47,9 +47,9 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
  * larger of the sampled and the call-count hotness of a call edge, and the hot bonus while
  * inlining, which is otherwise zero.
  */
-public final class SamplingInliningProvider extends SubstrateInliningProvider {
+public final class ProfiledInliningProvider extends SubstrateInliningProvider {
 
-    private final IprofProfilesLookup profiles;
+    private final IprofProfilesLookup profilesLookup;
 
     public static final class Options {
         // @formatter:off
@@ -70,20 +70,20 @@ public final class SamplingInliningProvider extends SubstrateInliningProvider {
         // @formatter:on
     }
 
-    public SamplingInliningProvider(HostedUniverse universe, SamplingHotness hotness, IprofProfilesLookup profiles) {
+    public ProfiledInliningProvider(HostedUniverse universe, SamplingHotness hotness, IprofProfilesLookup profilesLookup) {
         super(universe, hotness::cursorFor);
-        this.profiles = profiles;
+        this.profilesLookup = profilesLookup;
     }
 
     @Override
     public double compilationRootRelativeHotness(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
         double sampled = super.compilationRootRelativeHotness(compilationRoot, callPosition, dispatchedMethod);
-        long rootCalls = profiles.getCallCountOrZero(compilationRoot);
+        long rootCalls = profilesLookup.getCallCountOrZero(compilationRoot);
         if (rootCalls <= 0) {
             return sampled;
         }
         NodeSourcePosition edgeContext = new NodeSourcePosition(callPosition, dispatchedMethod, 0);
-        long edgeCalls = profiles.getContextCallCount(edgeContext).orElse(0L);
+        long edgeCalls = profilesLookup.getContextCallCount(edgeContext).orElse(0L);
         if (edgeCalls <= 0) {
             return sampled;
         }

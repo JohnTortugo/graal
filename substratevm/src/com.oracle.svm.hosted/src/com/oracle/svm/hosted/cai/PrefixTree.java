@@ -63,8 +63,8 @@ public class PrefixTree {
     private final long totalTreeCount;
 
     @SuppressWarnings("this-escape")
-    public PrefixTree(PGOProfilesLookup pgoProfiles) {
-        this(pgoProfiles.getSampleCounts().orElseGet(HashMap::new));
+    public PrefixTree(PGOProfilesLookup profilesLookup) {
+        this(profilesLookup.getSampleCounts().orElseGet(HashMap::new));
     }
 
     /** Builds the tree from sampled stacks, each mapped to the number of times it was seen. */

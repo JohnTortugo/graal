@@ -57,11 +57,11 @@ public class CallCountProfileResolutionTest {
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
         Assert.assertEquals(Long.valueOf(7), lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).orElseThrow());
         Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 5)).isEmpty());
-        /* The statistics count every call-edge lookup and the ones that found a count. */
-        Assert.assertEquals(2, lookup.contextCallCountQueries());
+        /* The statistics count the call-edge lookups that found a count and the ones that found none. */
+        Assert.assertEquals(1, lookup.contextCallCountMisses());
         Assert.assertEquals(1, lookup.contextCallCountHits());
         Assert.assertEquals(2, lookup.diagnostics().callCount().resolvedEntries());
-        Assert.assertEquals(7, lookup.diagnostics().callCount().totalCount());
+        Assert.assertEquals(7, lookup.diagnostics().callCount().resolvedCalls());
 
         lookup.setUseCallCounts(false);
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));

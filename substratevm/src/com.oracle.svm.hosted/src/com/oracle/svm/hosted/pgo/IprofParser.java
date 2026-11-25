@@ -113,20 +113,20 @@ public final class IprofParser {
      * One entry of the {@code methods} table: the method's id in the file, its name, and the type
      * ids of its declaring class, return type and parameters.
      */
-    public record MethodDescriptor(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
+    public record ProfileMethod(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
     /** Immutable result of parsing the sections of an iprof file that {@code --pgo} reads. */
     public static final class ParsedIprofProfile {
         private final String version;
         private final Map<Integer, String> typeNamesById;
-        private final Map<Integer, MethodDescriptor> methodsById;
+        private final Map<Integer, ProfileMethod> methodsById;
         private final List<ConditionalEntry> conditionalEntries;
         private final List<CallCountEntry> callCountEntries;
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         private final List<SamplingEntry> samplingEntries;
 
-        ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, MethodDescriptor> methodsById,
+        ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, ProfileMethod> methodsById,
                         List<ConditionalEntry> conditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
             this.version = version;
@@ -146,7 +146,7 @@ public final class IprofParser {
             return typeNamesById;
         }
 
-        public Map<Integer, MethodDescriptor> methodsById() {
+        public Map<Integer, ProfileMethod> methodsById() {
             return methodsById;
         }
 
@@ -198,7 +198,7 @@ public final class IprofParser {
         }
 
         Map<Integer, String> typeNamesById = parseTypes(requireList(top, IprofFormat.TYPES));
-        Map<Integer, MethodDescriptor> methodsById = parseMethods(requireList(top, IprofFormat.METHODS));
+        Map<Integer, ProfileMethod> methodsById = parseMethods(requireList(top, IprofFormat.METHODS));
         /*
          * The profile sections are optional per the iprof schema: an absent section parses as an
          * empty list. PGOProfileUseFeature warns when the profile has no entries at all, or when no
@@ -228,8 +228,8 @@ public final class IprofParser {
         return result;
     }
 
-    private static Map<Integer, MethodDescriptor> parseMethods(List<Object> methods) {
-        Map<Integer, MethodDescriptor> result = new HashMap<>(methods.size());
+    private static Map<Integer, ProfileMethod> parseMethods(List<Object> methods) {
+        Map<Integer, ProfileMethod> result = new HashMap<>(methods.size());
         for (Object element : methods) {
             EconomicMap<String, Object> method = asObject(element, IprofFormat.METHODS);
             int id = requireInt(method, IprofFormat.ID);
@@ -244,7 +244,7 @@ public final class IprofParser {
             for (int i = 2; i < signature.size(); i++) {
                 parameterTypeIds[i - 2] = asInt(signature.get(i), IprofFormat.SIGNATURE);
             }
-            if (result.put(id, new MethodDescriptor(id, name, declaringTypeId, returnTypeId, parameterTypeIds)) != null) {
+            if (result.put(id, new ProfileMethod(id, name, declaringTypeId, returnTypeId, parameterTypeIds)) != null) {
                 throw new IprofFormatException("Duplicate method id " + id);
             }
         }
@@ -278,19 +278,19 @@ public final class IprofParser {
             throw new IprofFormatException("Key '" + IprofFormat.CALL_COUNT_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
-        List<Object> profiles = (List<Object>) value;
-        List<CallCountEntry> result = new ArrayList<>(profiles.size());
-        for (Object element : profiles) {
+        List<Object> callCountProfiles = (List<Object>) value;
+        List<CallCountEntry> result = new ArrayList<>(callCountProfiles.size());
+        for (Object element : callCountProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.CALL_COUNT_PROFILES);
             String ctx = requireString(entry, IprofFormat.CTX);
             List<ContextFrame> context = parseContext(ctx);
-            List<Object> records = requireList(entry, IprofFormat.RECORDS);
-            if (records.size() != 1) {
-                throw new IprofFormatException("Call-count records for context '" + ctx + "' must contain exactly one count");
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
+            if (rawRecords.size() != 1) {
+                throw new IprofFormatException("Call count records for context '" + ctx + "' must contain exactly one count");
             }
-            long count = asLong(records.get(0), IprofFormat.RECORDS);
+            long count = asLong(rawRecords.get(0), IprofFormat.RECORDS);
             if (count < 0 || context.getFirst().bci() != 0) {
-                throw new IprofFormatException("Call-count context '" + ctx + "' must start at method BCI 0 with a non-negative count");
+                throw new IprofFormatException("Call count context '" + ctx + "' must start at method BCI 0 with a non-negative count");
             }
             result.add(new CallCountEntry(context, count));
         }
@@ -311,9 +311,9 @@ public final class IprofParser {
             throw new IprofFormatException("Key '" + IprofFormat.VIRTUAL_INVOKE_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
-        List<Object> profiles = (List<Object>) value;
-        List<VirtualInvokeEntry> result = new ArrayList<>(profiles.size());
-        for (Object element : profiles) {
+        List<Object> virtualInvokeProfiles = (List<Object>) value;
+        List<VirtualInvokeEntry> result = new ArrayList<>(virtualInvokeProfiles.size());
+        for (Object element : virtualInvokeProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.VIRTUAL_INVOKE_PROFILES);
             String ctx = requireString(entry, IprofFormat.CTX);
             List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
@@ -356,9 +356,9 @@ public final class IprofParser {
             throw new IprofFormatException("Key '" + IprofFormat.SAMPLING_PROFILES + "' must be a JSON array");
         }
         @SuppressWarnings("unchecked")
-        List<Object> profiles = (List<Object>) value;
-        List<SamplingEntry> result = new ArrayList<>(profiles.size());
-        for (Object element : profiles) {
+        List<Object> samplingProfiles = (List<Object>) value;
+        List<SamplingEntry> result = new ArrayList<>(samplingProfiles.size());
+        for (Object element : samplingProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.SAMPLING_PROFILES);
             String ctx = requireString(entry, IprofFormat.CTX);
             List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
@@ -381,7 +381,7 @@ public final class IprofParser {
             String ctx = requireString(entry, IprofFormat.CTX);
             List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
             List<ContextFrame> context = parseContext(ctx);
-            long[] records = parseRecords(rawRecords, ctx);
+            long[] records = parseConditionalRecords(rawRecords, ctx);
             result.add(new ConditionalEntry(context, records));
         }
         return result;
@@ -421,26 +421,26 @@ public final class IprofParser {
         return new ContextFrame(methodId, bci);
     }
 
-    private static long[] parseRecords(List<Object> rawRecords, String ctx) {
+    private static long[] parseConditionalRecords(List<Object> rawRecords, String ctx) {
         if (rawRecords.isEmpty() || rawRecords.size() % PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE != 0) {
             throw new IprofFormatException("Conditional records length " + rawRecords.size() + " for context '" + ctx +
                             "' is not a positive multiple of " + PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE);
         }
         int recordCount = rawRecords.size() / PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE;
         long[] records = new long[rawRecords.size()];
-        long totalCount = 0;
+        long entryTotal = 0;
         for (int i = 0; i < rawRecords.size(); i++) {
             records[i] = asLong(rawRecords.get(i), IprofFormat.RECORDS);
         }
         for (int i = 0; i < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
             long successorBci = records[i];
-            long key = records[i + 1];
+            long successorIndex = records[i + 1];
             long count = records[i + 2];
             if (successorBci < Integer.MIN_VALUE || successorBci > Integer.MAX_VALUE) {
                 throw new IprofFormatException("Conditional context '" + ctx + "' has successor BCI outside the integer range: " + successorBci);
             }
-            if (key < 0 || key >= recordCount) {
-                throw new IprofFormatException("Conditional context '" + ctx + "' has branch index " + key + " outside [0," + recordCount + ")");
+            if (successorIndex < 0 || successorIndex >= recordCount) {
+                throw new IprofFormatException("Conditional context '" + ctx + "' has successor index " + successorIndex + " outside [0," + recordCount + ")");
             }
             if (count < 0) {
                 throw new IprofFormatException("Conditional context '" + ctx + "' has negative count " + count);
@@ -451,7 +451,7 @@ public final class IprofParser {
              * wrong probabilities, so such an entry is rejected here.
              */
             try {
-                totalCount = Math.addExact(totalCount, count);
+                entryTotal = Math.addExact(entryTotal, count);
             } catch (ArithmeticException exception) {
                 throw new IprofFormatException("Conditional context '" + ctx + "' event counts overflow a signed 64-bit integer");
             }
@@ -515,21 +515,22 @@ public final class IprofParser {
     }
 
     private static int asInt(Object value, String owner) {
-        long asLong = asLong(value, owner);
-        if (asLong < Integer.MIN_VALUE || asLong > Integer.MAX_VALUE) {
-            throw new IprofFormatException("Value " + asLong + " in '" + owner + "' does not fit in an int");
+        long longValue = asLong(value, owner);
+        if (longValue < Integer.MIN_VALUE || longValue > Integer.MAX_VALUE) {
+            throw new IprofFormatException("Value " + longValue + " in '" + owner + "' does not fit in an int");
         }
-        return (int) asLong;
+        return (int) longValue;
     }
 
     private static long asLong(Object value, String owner) {
         if (value instanceof Integer || value instanceof Long) {
             return ((Number) value).longValue();
         }
-        throw new IprofFormatException("Expected integral number in '" + owner + "' but found " + describe(value));
+        throw new IprofFormatException("Expected integral number in '" + owner + "' but found " + typeName(value));
     }
 
-    private static String describe(Object value) {
+    /** The class of a JSON value, or {@code null}, for an error message. */
+    private static String typeName(Object value) {
         return value == null ? "null" : value.getClass().getName();
     }
 }

@@ -57,85 +57,86 @@ import jdk.vm.ci.code.BytecodePosition;
  * monitor profiles, answer as for an absent profile.
  * <p>
  * {@link IprofProfileResolver} builds the tables and the {@link PGODiagnostics} once the
- * {@code HostedUniverse} is available. The tables do not change after construction; the counters
- * only record how the compiler used them.
+ * {@code HostedUniverse} is available. The tables do not change until {@link #clear} drops them.
+ * The counters record how the compiler used the tables; each counter's name starts with the
+ * category it counts.
  */
 @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = DisallowLayered.class)
 public final class IprofProfilesLookup implements PGOProfilesLookup {
 
-    private final Map<PGOContext, long[]> conditionalData;
+    private volatile Map<PGOContext, long[]> conditionalData;
     /**
      * Sum of the conditional records of every context that starts with the key, innermost frame
      * first: {@code foo:12} is all executions of that branch, {@code foo:12 < a:5} all executions
      * inlined into {@code a} at bci 5, whatever the outer callers (see
-     * {@link IprofProfileResolver#prefixSums}).
+     * {@link IprofProfileResolver#conditionalPrefixSums}).
      */
-    private final Map<PGOContext, long[]> prefixSums;
-    private final Map<NodeSourcePosition, Long> sampleCounts;
-    private final Map<String, Long> callCountsByMethod;
-    private final Map<PGOContext, Long> callCountsByContext;
-    private final Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData;
+    private volatile Map<PGOContext, long[]> conditionalPrefixSums;
+    private volatile Map<NodeSourcePosition, Long> sampleCounts;
+    private volatile Map<String, Long> callCountsByMethod;
+    private volatile Map<PGOContext, Long> callCountsByContext;
+    private volatile Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData;
     private final PGODiagnostics diagnostics;
 
-    private volatile boolean contextFallback = true;
-    private volatile boolean receiverContextFallback = true;
+    private volatile boolean conditionalContextFallback = true;
+    private volatile boolean virtualInvokeContextFallback = true;
     private volatile boolean useCallCounts = true;
     /** Whether consumers see the stack samples; when not, the lookup answers as for a profile without them. */
     private volatile boolean useStackSamples = true;
-    private volatile boolean cleared;
 
     /**
      * Number of {@link #getConditionalProfile(BytecodePosition)} calls that found a record
-     * ({@code hits}), for the full context or, with context fallback, as a prefix sum, and that
-     * found none ({@code misses}). These count how the profile is actually applied while compiling
-     * image graphs, independent of the phase-level {@code PGOApplyProfilesPhase.ProfileQuality}
-     * counters (which are only updated when PGOPrintProfileQuality or
-     * PGOPrintProfileQualityDetails is set). They are always maintained so a deterministic
-     * afterCompilation summary can be produced without enabling any option.
+     * ({@code conditionalHits}), for the full context or, with the context fallback, as a prefix
+     * sum, and that found none ({@code conditionalMisses}). These count how the branch and switch
+     * profiles are used while compiling image graphs, independent of the phase-level
+     * {@code PGOApplyProfilesPhase.ProfileQuality} counters (which are only updated when
+     * PGOPrintProfileQuality or PGOPrintProfileQualityDetails is set). They are always maintained
+     * so a deterministic afterCompilation summary can be produced without enabling any option.
      */
-    private final AtomicLong hitCount = new AtomicLong();
-    private final AtomicLong missCount = new AtomicLong();
-    private final AtomicLong contextFallbackCount = new AtomicLong();
-    private final AtomicLong contextFallbackDroppedFrames = new AtomicLong();
-    /** Exact profile contexts that matched at least one compiler query. */
-    private final Set<Object> matchedContexts = ConcurrentHashMap.newKeySet();
-    /** Best successor-record coverage observed for every matched context. */
-    private final Map<Object, ApplicationCoverage> applicationCoverage = new ConcurrentHashMap<>();
+    private final AtomicLong conditionalHits = new AtomicLong();
+    private final AtomicLong conditionalMisses = new AtomicLong();
+    /** Conditional hits obtained by dropping outermost frames of the query context. */
+    private final AtomicLong conditionalContextFallbackHits = new AtomicLong();
+    private final AtomicLong conditionalContextFallbackDroppedFrames = new AtomicLong();
+    /** Exact conditional contexts that matched at least one compiler query. */
+    private final Set<Object> matchedConditionalContexts = ConcurrentHashMap.newKeySet();
+    /** Best successor-record coverage observed for every matched conditional context. */
+    private final Map<Object, ConditionalCoverage> conditionalCoverage = new ConcurrentHashMap<>();
 
-    private final AtomicLong virtualInvokeHitCount = new AtomicLong();
-    private final AtomicLong virtualInvokeMissCount = new AtomicLong();
+    private final AtomicLong virtualInvokeHits = new AtomicLong();
+    private final AtomicLong virtualInvokeMisses = new AtomicLong();
     private final Set<PGOContext> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
     /** Receiver-profile hits obtained by dropping outermost frames of the query context. */
-    private final AtomicLong virtualInvokeFallbackCount = new AtomicLong();
-    private final AtomicLong virtualInvokeFallbackDroppedFrames = new AtomicLong();
+    private final AtomicLong virtualInvokeContextFallbackHits = new AtomicLong();
+    private final AtomicLong virtualInvokeContextFallbackDroppedFrames = new AtomicLong();
     private final AtomicLong impossibleReceiverRecords = new AtomicLong();
     private final AtomicLong impossibleReceiverEvents = new AtomicLong();
 
-    /** Call-count lookups per call edge and per method, and how many of them found a count. */
-    private final AtomicLong contextCallCountQueries = new AtomicLong();
+    /** Call-count lookups per call edge and per method that found a count, and that found none. */
     private final AtomicLong contextCallCountHits = new AtomicLong();
-    private final AtomicLong methodCallCountQueries = new AtomicLong();
+    private final AtomicLong contextCallCountMisses = new AtomicLong();
     private final AtomicLong methodCallCountHits = new AtomicLong();
+    private final AtomicLong methodCallCountMisses = new AtomicLong();
 
     /**
-     * How many successor records of a matched context the profile has, and how many of them the
-     * phase could match to successors in the graph.
+     * How many successor records of a matched conditional context the profile has, and how many of
+     * them the phase could match to successors in the graph.
      */
-    private record ApplicationCoverage(int profiledSuccessors, int appliedSuccessors) {
+    private record ConditionalCoverage(int profiledSuccessors, int appliedSuccessors) {
     }
 
-    /** Marker for a hit obtained by dropping {@code droppedFrames} outermost frames. */
-    private record ShortenedKey(PGOContext context, int droppedFrames) {
+    /** Marker for a conditional hit obtained by dropping {@code droppedFrames} outermost frames. */
+    private record ShortenedConditionalKey(PGOContext context, int droppedFrames) {
     }
 
-    /** Statistics key of a prefix sum, kept apart from the full-context entry with the same frames. */
-    private record PrefixContext(PGOContext context) {
+    /** Statistics key of a conditional prefix sum, kept apart from the full-context entry with the same frames. */
+    private record ConditionalPrefixKey(PGOContext context) {
     }
 
-    public IprofProfilesLookup(Map<PGOContext, long[]> conditionalData, Map<PGOContext, long[]> prefixSums, Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData,
+    public IprofProfilesLookup(Map<PGOContext, long[]> conditionalData, Map<PGOContext, long[]> conditionalPrefixSums, Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData,
                     Map<NodeSourcePosition, Long> sampleCounts, Map<String, Long> callCountsByMethod, Map<PGOContext, Long> callCountsByContext, PGODiagnostics diagnostics) {
         this.conditionalData = Map.copyOf(conditionalData);
-        this.prefixSums = Map.copyOf(prefixSums);
+        this.conditionalPrefixSums = Map.copyOf(conditionalPrefixSums);
         this.virtualInvokeData = Map.copyOf(virtualInvokeData);
         this.sampleCounts = Map.copyOf(sampleCounts);
         this.callCountsByMethod = Map.copyOf(callCountsByMethod);
@@ -151,12 +152,12 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         this.useStackSamples = enabled;
     }
 
-    public void setContextFallback(boolean enabled) {
-        this.contextFallback = enabled;
+    public void setConditionalContextFallback(boolean enabled) {
+        this.conditionalContextFallback = enabled;
     }
 
-    public void setReceiverContextFallback(boolean enabled) {
-        this.receiverContextFallback = enabled;
+    public void setVirtualInvokeContextFallback(boolean enabled) {
+        this.virtualInvokeContextFallback = enabled;
     }
 
     /** What the resolver found when it matched the profile to the image. */
@@ -164,75 +165,24 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return diagnostics;
     }
 
-    public long virtualInvokeFallbackCount() {
-        return virtualInvokeFallbackCount.get();
-    }
-
-    public long virtualInvokeFallbackDroppedFrames() {
-        return virtualInvokeFallbackDroppedFrames.get();
-    }
-
-    public long contextFallbackCount() {
-        return contextFallbackCount.get();
-    }
-
-    public long contextFallbackDroppedFrames() {
-        return contextFallbackDroppedFrames.get();
-    }
-
     /**
-     * Up to {@code limit} resolved conditional contexts in sorted order, such as
-     * {@code Ljava/lang/String;.charAt(I)C:12 < Lcom/example/Foo;.bar()V:5}.
+     * Drops the tables, as {@link PGOProfilesLookup#clear} asks, so that their memory can be
+     * freed. Every later query then answers as for an absent profile. The counters and the
+     * diagnostics stay, but the counts of available contexts read 0 from then on, so the
+     * statistics should be printed before.
      */
-    public List<String> contextKeySamples(int limit) {
-        return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
-    }
-
-    /** Number of {@link #getConditionalProfile} calls that found a record, for the full context or as a prefix sum. */
-    public long hitCount() {
-        return hitCount.get();
-    }
-
-    /** Number of distinct profile contexts used by at least one compiler query. */
-    public int matchedContextCount() {
-        return matchedContexts.size();
-    }
-
-    /** Number of resolved conditional contexts available to the compiler. */
-    public int availableContextCount() {
-        return conditionalData.size();
-    }
-
-    /** Number of resolved contexts whose profile matched every successor at least once. */
-    public long fullyAppliedContextCount() {
-        return applicationCoverage.values().stream().filter(coverage -> coverage.profiledSuccessors() > 0 && coverage.appliedSuccessors() >= coverage.profiledSuccessors()).count();
-    }
-
-    /** Number of resolved contexts for which only some profiled successors matched. */
-    public long partiallyAppliedContextCount() {
-        return applicationCoverage.values().stream().filter(coverage -> coverage.appliedSuccessors() > 0 && coverage.appliedSuccessors() < coverage.profiledSuccessors()).count();
-    }
-
-    /** Number of matched contexts for which no profiled successor was applied. */
-    public long unappliedMatchedContextCount() {
-        return matchedContexts.size() - fullyAppliedContextCount() - partiallyAppliedContextCount();
-    }
-
-    /** Number of resolved conditional contexts that no {@link #getConditionalProfile} call has matched exactly so far. */
-    public long unusedResolvedContextCount() {
-        return availableContextCount() - matchedContexts.size();
-    }
-
-    /** Number of {@link #getConditionalProfile} calls that found no record. */
-    public long missCount() {
-        return missCount.get();
+    @Override
+    public void clear() {
+        conditionalData = Map.of();
+        conditionalPrefixSums = Map.of();
+        virtualInvokeData = Map.of();
+        sampleCounts = Map.of();
+        callCountsByMethod = Map.of();
+        callCountsByContext = Map.of();
     }
 
     @Override
     public boolean profileCategoryRecorded(String category) {
-        if (cleared) {
-            return false;
-        }
         if (IprofFormat.CALL_COUNT_PROFILES.equals(category)) {
             return useCallCounts && !callCountsByMethod.isEmpty();
         }
@@ -245,48 +195,50 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return IprofFormat.CONDITIONAL_PROFILES.equals(category) && !conditionalData.isEmpty();
     }
 
+    // --- Branch and switch profiles (conditionalProfiles) --------------------------------------
+
     @Override
     public Optional<ProfiledValue<long[]>> getConditionalProfile(BytecodePosition callingContext) {
-        if (cleared || callingContext == null) {
+        if (callingContext == null) {
             return Optional.empty();
         }
-        Object key = selectProfileKey(PGOContext.of(callingContext));
+        Object key = selectConditionalKey(PGOContext.of(callingContext));
         long[] records;
-        if (key instanceof ShortenedKey shortenedKey) {
-            records = prefixSums.get(shortenedKey.context());
-            key = new PrefixContext(shortenedKey.context());
-            contextFallbackCount.incrementAndGet();
-            contextFallbackDroppedFrames.addAndGet(shortenedKey.droppedFrames());
+        if (key instanceof ShortenedConditionalKey shortened) {
+            records = conditionalPrefixSums.get(shortened.context());
+            key = new ConditionalPrefixKey(shortened.context());
+            conditionalContextFallbackHits.incrementAndGet();
+            conditionalContextFallbackDroppedFrames.addAndGet(shortened.droppedFrames());
         } else {
             records = conditionalData.get(key);
         }
         if (records == null) {
-            missCount.incrementAndGet();
+            conditionalMisses.incrementAndGet();
             return Optional.empty();
         }
-        if (!(key instanceof PrefixContext)) {
+        if (!(key instanceof ConditionalPrefixKey)) {
             /* Context statistics are about the profile's own entries; fallback hits are counted apart. */
-            matchedContexts.add(key);
+            matchedConditionalContexts.add(key);
         }
-        hitCount.incrementAndGet();
+        conditionalHits.incrementAndGet();
         return Optional.of(new ProfiledValue<>(ProfileSource.PROFILED, records));
     }
 
     @Override
     public void recordConditionalProfileApplication(BytecodePosition callingContext, int profiledSuccessors, int appliedSuccessors) {
-        if (cleared || callingContext == null) {
+        if (callingContext == null) {
             return;
         }
-        Object key = selectProfileKey(PGOContext.of(callingContext));
-        if (key instanceof ShortenedKey || !conditionalData.containsKey(key)) {
-            /* Coverage is tracked for the profile's own entries only, like matchedContexts. */
+        Object key = selectConditionalKey(PGOContext.of(callingContext));
+        if (key instanceof ShortenedConditionalKey || !conditionalData.containsKey(key)) {
+            /* Coverage is tracked for the profile's own entries only, like matchedConditionalContexts. */
             return;
         }
-        applicationCoverage.compute(key, (_, previous) -> {
+        conditionalCoverage.compute(key, (_, previous) -> {
             if (previous == null) {
-                return new ApplicationCoverage(profiledSuccessors, appliedSuccessors);
+                return new ConditionalCoverage(profiledSuccessors, appliedSuccessors);
             }
-            return new ApplicationCoverage(Math.max(previous.profiledSuccessors(), profiledSuccessors), Math.max(previous.appliedSuccessors(), appliedSuccessors));
+            return new ConditionalCoverage(Math.max(previous.profiledSuccessors(), profiledSuccessors), Math.max(previous.appliedSuccessors(), appliedSuccessors));
         });
     }
 
@@ -297,63 +249,93 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * inlining chain, e.g. a callee the profile saw inlined into other callers that the profiled
      * build now inlines into a new one.
      */
-    private Object selectProfileKey(PGOContext context) {
+    private Object selectConditionalKey(PGOContext context) {
         if (!conditionalData.containsKey(context)) {
-            Object shortened = longestProfiledPrefix(context);
+            Object shortened = longestConditionalPrefix(context);
             return shortened == null ? context : shortened;
         }
         return context;
     }
 
-    private Object longestProfiledPrefix(PGOContext context) {
-        if (!contextFallback || context.depth() == 0) {
+    private Object longestConditionalPrefix(PGOContext context) {
+        if (!conditionalContextFallback || context.depth() == 0) {
             return null;
         }
         /* The full length first: the context itself may only have been seen under more callers. */
         for (int depth = context.depth(); depth >= 1; depth--) {
             PGOContext shorter = context.prefix(depth);
-            if (prefixSums.containsKey(shorter)) {
-                return new ShortenedKey(shorter, context.depth() - depth);
+            if (conditionalPrefixSums.containsKey(shorter)) {
+                return new ShortenedConditionalKey(shorter, context.depth() - depth);
             }
         }
         return null;
     }
 
-    @Override
-    public void clear() {
-        cleared = true;
+    /** Number of {@link #getConditionalProfile} calls that found a record, for the full context or as a prefix sum. */
+    public long conditionalHits() {
+        return conditionalHits.get();
     }
 
-    // --- Call counts ---------------------------------------------------------------------------
+    /** Number of {@link #getConditionalProfile} calls that found no record. */
+    public long conditionalMisses() {
+        return conditionalMisses.get();
+    }
+
+    public long conditionalContextFallbackHits() {
+        return conditionalContextFallbackHits.get();
+    }
+
+    public long conditionalContextFallbackDroppedFrames() {
+        return conditionalContextFallbackDroppedFrames.get();
+    }
+
+    /** Number of distinct conditional contexts of the profile used by at least one compiler query. */
+    public int matchedConditionalContextCount() {
+        return matchedConditionalContexts.size();
+    }
+
+    /** Number of resolved conditional contexts available to the compiler. */
+    public int availableConditionalContextCount() {
+        return conditionalData.size();
+    }
+
+    /** Number of resolved conditional contexts whose profile matched every successor at least once. */
+    public long fullyAppliedConditionalContextCount() {
+        return conditionalCoverage.values().stream().filter(coverage -> coverage.profiledSuccessors() > 0 && coverage.appliedSuccessors() >= coverage.profiledSuccessors()).count();
+    }
+
+    /** Number of resolved conditional contexts for which only some profiled successors matched. */
+    public long partiallyAppliedConditionalContextCount() {
+        return conditionalCoverage.values().stream().filter(coverage -> coverage.appliedSuccessors() > 0 && coverage.appliedSuccessors() < coverage.profiledSuccessors()).count();
+    }
+
+    /** Number of matched conditional contexts for which no profiled successor was applied. */
+    public long unappliedMatchedConditionalContextCount() {
+        return matchedConditionalContexts.size() - fullyAppliedConditionalContextCount() - partiallyAppliedConditionalContextCount();
+    }
+
+    /** Number of resolved conditional contexts that no {@link #getConditionalProfile} call has matched exactly so far. */
+    public long unusedConditionalContextCount() {
+        return Math.max(0, availableConditionalContextCount() - matchedConditionalContexts.size());
+    }
+
+    /**
+     * Up to {@code limit} resolved conditional contexts in sorted order, such as
+     * {@code Ljava/lang/String;.charAt(I)C:12 < Lcom/example/Foo;.bar()V:5}.
+     */
+    public List<String> conditionalContextExamples(int limit) {
+        return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
+    }
+
+    // --- Call counts (callCountProfiles) -------------------------------------------------------
 
     public Optional<Long> getContextCallCount(BytecodePosition callingContext) {
-        if (cleared || !useCallCounts || callingContext == null) {
+        if (!useCallCounts || callingContext == null) {
             return Optional.empty();
         }
-        contextCallCountQueries.incrementAndGet();
         Long count = callCountsByContext.get(PGOContext.of(callingContext));
-        if (count != null) {
-            contextCallCountHits.incrementAndGet();
-        }
+        (count == null ? contextCallCountMisses : contextCallCountHits).incrementAndGet();
         return Optional.ofNullable(count);
-    }
-
-    /** Number of call-edge lookups ({@link #getContextCallCount}) and how many found a count. */
-    public long contextCallCountQueries() {
-        return contextCallCountQueries.get();
-    }
-
-    public long contextCallCountHits() {
-        return contextCallCountHits.get();
-    }
-
-    /** Number of method call-count lookups and how many found a count. */
-    public long methodCallCountQueries() {
-        return methodCallCountQueries.get();
-    }
-
-    public long methodCallCountHits() {
-        return methodCallCountHits.get();
     }
 
     @Override
@@ -366,12 +348,12 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
 
     /** The call count of the method with the given canonical descriptor, summed over all contexts. */
     Optional<ProfiledValue<Long>> methodCallCount(String methodDescriptor) {
-        if (cleared || !useCallCounts) {
+        if (!useCallCounts) {
             return Optional.empty();
         }
-        methodCallCountQueries.incrementAndGet();
         Long count = callCountsByMethod.get(methodDescriptor);
         if (count == null) {
+            methodCallCountMisses.incrementAndGet();
             return Optional.empty();
         }
         methodCallCountHits.incrementAndGet();
@@ -388,14 +370,36 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return getCallCountOrZero(method) > 0;
     }
 
+    /** Number of call-edge lookups ({@link #getContextCallCount}) that found a count. */
+    public long contextCallCountHits() {
+        return contextCallCountHits.get();
+    }
+
+    /** Number of call-edge lookups ({@link #getContextCallCount}) that found none. */
+    public long contextCallCountMisses() {
+        return contextCallCountMisses.get();
+    }
+
+    /** Number of method call-count lookups that found a count. */
+    public long methodCallCountHits() {
+        return methodCallCountHits.get();
+    }
+
+    /** Number of method call-count lookups that found none. */
+    public long methodCallCountMisses() {
+        return methodCallCountMisses.get();
+    }
+
+    // --- Receiver profiles (virtualInvokeProfiles) ---------------------------------------------
+
     @Override
     public Optional<Map<AnalysisType, Long>> getVirtualInvokeProfile(BytecodePosition callingContext) {
-        if (cleared || callingContext == null || virtualInvokeData.isEmpty()) {
+        if (callingContext == null || virtualInvokeData.isEmpty()) {
             return Optional.empty();
         }
         PGOContext key = PGOContext.of(callingContext);
         Map<AnalysisType, Long> receivers = virtualInvokeData.get(key);
-        if (receivers == null && receiverContextFallback) {
+        if (receivers == null && virtualInvokeContextFallback) {
             /*
              * The same indirect call recorded under a shorter inlining chain: the instrumented image
              * compiled the callee standalone (or inlined it less deeply) while this image inlines
@@ -410,31 +414,40 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
                 receivers = virtualInvokeData.get(shorter);
                 if (receivers != null) {
                     key = shorter;
-                    virtualInvokeFallbackCount.incrementAndGet();
-                    virtualInvokeFallbackDroppedFrames.addAndGet(queryDepth - depth);
+                    virtualInvokeContextFallbackHits.incrementAndGet();
+                    virtualInvokeContextFallbackDroppedFrames.addAndGet(queryDepth - depth);
                 }
             }
         }
         if (receivers == null) {
-            virtualInvokeMissCount.incrementAndGet();
+            virtualInvokeMisses.incrementAndGet();
             return Optional.empty();
         }
-        virtualInvokeHitCount.incrementAndGet();
+        virtualInvokeHits.incrementAndGet();
         matchedVirtualInvokeContexts.add(key);
         return Optional.of(receivers);
     }
 
     @Override
-    public Optional<Map<NodeSourcePosition, Long>> getSampleCounts() {
-        return cleared || !useStackSamples || sampleCounts.isEmpty() ? Optional.empty() : Optional.of(sampleCounts);
+    public void recordImpossibleReceiver(long events) {
+        impossibleReceiverRecords.incrementAndGet();
+        impossibleReceiverEvents.addAndGet(events);
     }
 
-    public long virtualInvokeHitCount() {
-        return virtualInvokeHitCount.get();
+    public long virtualInvokeHits() {
+        return virtualInvokeHits.get();
     }
 
-    public long virtualInvokeMissCount() {
-        return virtualInvokeMissCount.get();
+    public long virtualInvokeMisses() {
+        return virtualInvokeMisses.get();
+    }
+
+    public long virtualInvokeContextFallbackHits() {
+        return virtualInvokeContextFallbackHits.get();
+    }
+
+    public long virtualInvokeContextFallbackDroppedFrames() {
+        return virtualInvokeContextFallbackDroppedFrames.get();
     }
 
     public int matchedVirtualInvokeContextCount() {
@@ -445,18 +458,20 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return virtualInvokeData.size();
     }
 
-    @Override
-    public void recordImpossibleReceiver(long events) {
-        impossibleReceiverRecords.incrementAndGet();
-        impossibleReceiverEvents.addAndGet(events);
-    }
-
     public long impossibleReceiverRecords() {
         return impossibleReceiverRecords.get();
     }
 
     public long impossibleReceiverEvents() {
         return impossibleReceiverEvents.get();
+    }
+
+    // --- Stack samples (samplingProfiles) ------------------------------------------------------
+
+    @Override
+    public Optional<Map<NodeSourcePosition, Long>> getSampleCounts() {
+        Map<NodeSourcePosition, Long> samples = sampleCounts;
+        return !useStackSamples || samples.isEmpty() ? Optional.empty() : Optional.of(samples);
     }
 
     // --- Profiles this lookup does not serve: answered as absent ------------------------------

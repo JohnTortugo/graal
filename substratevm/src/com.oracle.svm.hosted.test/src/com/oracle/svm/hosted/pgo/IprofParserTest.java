@@ -58,13 +58,13 @@ public class IprofParserTest {
         return new IprofParser().parse(new StringReader(json));
     }
 
-    private static String profile(String version, String conditionalProfiles) {
+    private static String conditionalProfileJson(String version, String conditionalProfiles) {
         return "{\"version\":\"" + version + "\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
     }
 
     @Test
-    public void parsesSingleFrameContext() throws IOException {
-        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+    public void parsesSingleFrameConditionalContext() throws IOException {
+        ParsedIprofProfile parsed = parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
 
         Assert.assertEquals("1.0.0", parsed.version());
         Assert.assertEquals(1, parsed.conditionalEntries().size());
@@ -74,8 +74,8 @@ public class IprofParserTest {
     }
 
     @Test
-    public void parsesInlinedContextInnermostFirst() throws IOException {
-        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9<1002:1<1003:6<1004:2\",\"records\":[12,0,6,14,1,0]}"));
+    public void parsesInlinedConditionalContextInnermostFirst() throws IOException {
+        ParsedIprofProfile parsed = parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9<1002:1<1003:6<1004:2\",\"records\":[12,0,6,14,1,0]}"));
 
         ConditionalEntry entry = parsed.conditionalEntries().get(0);
         Assert.assertEquals(
@@ -85,13 +85,13 @@ public class IprofParserTest {
 
     @Test
     public void acceptsVersion110() throws IOException {
-        ParsedIprofProfile parsed = parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+        ParsedIprofProfile parsed = parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
         Assert.assertEquals("1.1.0", parsed.version());
     }
 
     @Test
     public void parsesTypeAndMethodTables() throws IOException {
-        ParsedIprofProfile parsed = parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
+        ParsedIprofProfile parsed = parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
 
         Assert.assertEquals("com.example.Foo", parsed.typeNamesById().get(100));
         Assert.assertEquals("bar", parsed.methodsById().get(1001).name());
@@ -102,22 +102,22 @@ public class IprofParserTest {
 
     @Test
     public void rejectsUnsupportedVersion() {
-        assertRejected(() -> parse(profile("2.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}")), "version");
+        assertRejected(() -> parse(conditionalProfileJson("2.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}")), "version");
     }
 
     @Test
-    public void rejectsRecordsNotMultipleOfThree() {
-        assertRejected(() -> parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53]}")), "multiple of");
+    public void rejectsConditionalRecordsNotMultipleOfThree() {
+        assertRejected(() -> parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53]}")), "multiple of");
     }
 
     @Test
-    public void rejectsEmptyRecords() {
-        assertRejected(() -> parse(profile("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[]}")), "multiple of");
+    public void rejectsEmptyConditionalRecords() {
+        assertRejected(() -> parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[]}")), "multiple of");
     }
 
     @Test
     public void rejectsMalformedContextFrame() {
-        assertRejected(() -> parse(profile("1.0.0", "{\"ctx\":\"1001\",\"records\":[20,0,10,53,1,1]}")), "context frame");
+        assertRejected(() -> parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001\",\"records\":[20,0,10,53,1,1]}")), "context frame");
     }
 
     @Test
@@ -134,7 +134,7 @@ public class IprofParserTest {
 
     @Test
     public void parsesEmptyConditionalProfilesArrayAsEmpty() throws IOException {
-        ParsedIprofProfile parsed = parse(profile("1.0.0", ""));
+        ParsedIprofProfile parsed = parse(conditionalProfileJson("1.0.0", ""));
         Assert.assertTrue(parsed.conditionalEntries().isEmpty());
     }
 
@@ -180,11 +180,11 @@ public class IprofParserTest {
 
     @Test
     public void rejectsUnsafeConditionalRecordValues() {
-        assertRejected(() -> parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,-1,1,53,1,1]}")), "branch index");
-        assertRejected(() -> parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,2,1,53,1,1]}")), "branch index");
-        assertRejected(() -> parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,-1,53,1,1]}")), "negative count");
-        assertRejected(() -> parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[2147483648,0,1,53,1,1]}")), "integer range");
-        assertRejected(() -> parse(profile("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,9223372036854775807,53,1,1]}")), "overflow");
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,-1,1,53,1,1]}")), "successor index");
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,2,1,53,1,1]}")), "successor index");
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,-1,53,1,1]}")), "negative count");
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[2147483648,0,1,53,1,1]}")), "integer range");
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,9223372036854775807,53,1,1]}")), "overflow");
     }
 
     @Test
