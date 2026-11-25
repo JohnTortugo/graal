@@ -187,6 +187,16 @@ public class IprofProfileMergerTest {
         IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE, 0), 1.0), new WeightedProfile(conditionalCountProfile(0, Long.MAX_VALUE), 1.0)));
     }
 
+    /* Each weighted count fits in a long, but the counts of the merged section do not when added up. */
+    @Test(expected = IprofFormatException.class)
+    public void rejectsMergedSectionWhoseCountsOverflowWhenAddedUp() throws IOException {
+        String twoCallCounts = "{\"version\":\"1.1.0\"," +
+                        "\"types\":[{\"id\":0,\"name\":\"void\"},{\"id\":1,\"name\":\"com.example.Counter\"}]," +
+                        "\"methods\":[{\"id\":0,\"name\":\"run\",\"signature\":[1,0]},{\"id\":1,\"name\":\"step\",\"signature\":[1,0]}]," +
+                        "\"callCountProfiles\":[{\"ctx\":\"0:0\",\"records\":[3000000000000000000]},{\"ctx\":\"1:0\",\"records\":[3000000000000000000]}]}";
+        IprofProfileMerger.merge(List.of(new WeightedProfile(parse(twoCallCounts), 2.0)));
+    }
+
     private static ParsedIprofProfile conditionalCountProfile(long count) throws IOException {
         return conditionalCountProfile(count, 0);
     }

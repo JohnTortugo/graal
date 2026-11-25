@@ -431,7 +431,12 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     @Override
     public void recordImpossibleReceiver(long events) {
         impossibleReceiverRecords.incrementAndGet();
-        impossibleReceiverEvents.addAndGet(events);
+        /*
+         * PGOApplyProfilesPhase drops a site's impossible receivers each time it applies the profile
+         * to a copy of the site, so this sum is not bounded by the profile's counts (see
+         * ParsedIprofProfile). It stops at Long.MAX_VALUE.
+         */
+        impossibleReceiverEvents.accumulateAndGet(events, (total, more) -> total > Long.MAX_VALUE - more ? Long.MAX_VALUE : total + more);
     }
 
     public long virtualInvokeHits() {

@@ -31,6 +31,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
 import org.graalvm.collections.EconomicMap;
 
@@ -116,7 +118,18 @@ public final class IprofParser {
     public record ProfileMethod(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
 
-    /** Immutable result of parsing the sections of an iprof file that {@code --pgo} reads. */
+    /**
+     * Immutable result of parsing the sections of an iprof file that {@code --pgo} reads.
+     * <p>
+     * The counts of each section add up to at most {@link Long#MAX_VALUE}, a stack sample's count
+     * taken once per frame of its stack; the constructor rejects a section whose counts do not. The
+     * parser and the merger reject negative counts, so every sum that the consumer forms from the
+     * counts of one section fits in a long too: the branch counts of the contexts that share a
+     * prefix, the calls of a method over its contexts, the receivers of a call site. Samples are
+     * counted once per frame because {@code SamplingHotness} adds a stack's count to the tree of
+     * every method on the stack. A real profile stays far below the limit (2^63 events at 10^9 per
+     * second take 292 years), so a section that reaches it comes from a damaged or hand-made file.
+     */
     public static final class ParsedIprofProfile {
         private final String version;
         private final Map<Integer, String> typeNamesById;
@@ -129,6 +142,13 @@ public final class IprofParser {
         ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, ProfileMethod> methodsById,
                         List<ConditionalEntry> conditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
+            checkTotal(IprofFormat.CONDITIONAL_PROFILES, "", conditionalEntries.stream().flatMapToLong(
+                            entry -> counts(entry.records(), PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE, PGOApplyProfilesPhase.CONDITIONAL_RECORD_COUNTER_POSITION)));
+            checkTotal(IprofFormat.CALL_COUNT_PROFILES, "", callCountEntries.stream().mapToLong(CallCountEntry::count));
+            /* A receiver record is [typeId, count]. */
+            checkTotal(IprofFormat.VIRTUAL_INVOKE_PROFILES, "", virtualInvokeEntries.stream().flatMapToLong(entry -> counts(entry.records(), VIRTUAL_INVOKE_RECORD_SIZE, 1)));
+            checkTotal(IprofFormat.SAMPLING_PROFILES, ", each taken once per frame of its stack,",
+                            samplingEntries.stream().mapToLong(entry -> Math.multiplyExact(entry.count(), entry.context().size())));
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
@@ -164,6 +184,23 @@ public final class IprofParser {
 
         public List<SamplingEntry> samplingEntries() {
             return samplingEntries;
+        }
+
+        /** The counts of {@code records}, which are {@code recordSize} longs each, with the count at {@code countPosition}. */
+        private static LongStream counts(long[] records, int recordSize, int countPosition) {
+            return IntStream.iterate(countPosition, i -> i < records.length, i -> i + recordSize).mapToLong(i -> records[i]);
+        }
+
+        /**
+         * Rejects the section if {@code counts} overflow a long when added up. {@code how} says how
+         * the counts are taken, for the message; it is empty or starts with a comma.
+         */
+        private static void checkTotal(String section, String how, LongStream counts) {
+            try {
+                counts.reduce(0L, Math::addExact);
+            } catch (ArithmeticException exception) {
+                throw new IprofFormatException("The counts of section '" + section + "'" + how + " overflow a signed 64-bit integer when added up");
+            }
         }
     }
 
@@ -448,7 +485,8 @@ public final class IprofParser {
             /*
              * PGOApplyProfilesPhase adds up the counts of an entry in a long to turn them into
              * probabilities. A sum that does not fit would wrap around to a negative number and give
-             * wrong probabilities, so such an entry is rejected here.
+             * wrong probabilities, so such an entry is rejected here. ParsedIprofProfile checks the
+             * whole section as well; this check names the entry.
              */
             try {
                 entryTotal = Math.addExact(entryTotal, count);

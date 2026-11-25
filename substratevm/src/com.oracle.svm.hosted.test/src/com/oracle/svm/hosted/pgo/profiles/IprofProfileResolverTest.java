@@ -316,27 +316,6 @@ public class IprofProfileResolverTest {
         Assert.assertEquals(2, lookup.conditionalContextFallbackDroppedFrames());
     }
 
-    /*
-     * A prefix whose summed counts do not fit in a long is left out: the fallback finds no profile
-     * for it rather than one with wrapped-around counts. The full contexts are still found.
-     */
-    @Test
-    public void conditionalPrefixWhoseSumOverflowsIsLeftOut() throws IOException {
-        String viaA = "{\"ctx\":\"1001:9<1001:40\",\"records\":[20,0,5000000000000000000,53,1,0]}";
-        String viaB = "{\"ctx\":\"1001:9<1001:50\",\"records\":[20,0,5000000000000000000,53,1,0]}";
-        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + viaA + "," + viaB + "]}";
-        IprofProfilesLookup lookup = buildLookup(new IprofParser().parse(new StringReader(json)), Set.of(BAR_DESC));
-        Assert.assertEquals(1, lookup.diagnostics().conditional().overflowedPrefixSums());
-
-        BytecodePosition newCaller = new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 60), mockBarMethod(), 9);
-        Assert.assertTrue(lookup.getConditionalProfile(newCaller).isEmpty());
-        Assert.assertEquals(1, lookup.conditionalMisses());
-
-        BytecodePosition deeperViaA = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 70), mockBarMethod(), 40), mockBarMethod(), 9);
-        Assert.assertArrayEquals(new long[]{20, 0, 5000000000000000000L, 53, 1, 0}, lookup.getConditionalProfile(deeperViaA).orElseThrow().value());
-        Assert.assertEquals(1, lookup.conditionalContextFallbackHits());
-    }
-
     @Test
     public void tracksConditionalSuccessorCoverage() throws IOException {
         ParsedIprofProfile parsed = parseConditionalProfiles(

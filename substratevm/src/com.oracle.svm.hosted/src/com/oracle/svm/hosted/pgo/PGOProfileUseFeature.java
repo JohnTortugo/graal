@@ -389,11 +389,6 @@ public final class PGOProfileUseFeature implements InternalFeature {
         PGOApplyProfilesPhase.ProfileQuality.updateProfileRelevance(matchedEntries(diagnostics), totalEntries(diagnostics));
         reportUnusedCategories(diagnostics);
         warnAboutUnmatchedCategories(diagnostics);
-        int overflowedPrefixSums = diagnostics.conditional().overflowedPrefixSums();
-        if (overflowedPrefixSums > 0 && Options.PGOConditionalContextFallback.getValue()) {
-            LogUtils.warning("%s adds up the branch and switch counts of the profile in %s under longer contexts, but for %d contexts the sum does not fit in a long, " +
-                            "so it does not use those sums.", SubstrateOptionsParser.commandArgument(Options.PGOConditionalContextFallback, "+"), profileOption(), overflowedPrefixSums);
-        }
     }
 
     private static int totalEntries(VirtualInvokeDiagnostics virtualInvokeDiagnostics) {

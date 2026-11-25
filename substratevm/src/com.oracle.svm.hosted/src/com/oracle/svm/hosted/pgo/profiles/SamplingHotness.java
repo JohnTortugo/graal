@@ -107,7 +107,10 @@ public final class SamplingHotness {
             if (isIdle(outermostFirst.getLast())) {
                 continue;
             }
-            /* Every frame's suffix (that frame down to the leaf) is a stack rooted at that frame. */
+            /*
+             * Every frame's suffix (that frame down to the leaf) is a stack rooted at that frame, so
+             * the stack's count is added once per frame; ParsedIprofProfile makes sure such sums fit.
+             */
             for (List<NodeSourcePosition> suffixFrames : sampledSuffixes(outermostFirst)) {
                 NodeSourcePosition suffix = null;
                 for (int i = suffixFrames.size() - 1; i >= 0; i--) {

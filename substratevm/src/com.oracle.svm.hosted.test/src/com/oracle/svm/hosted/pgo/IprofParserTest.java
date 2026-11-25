@@ -62,6 +62,11 @@ public class IprofParserTest {
         return "{\"version\":\"" + version + "\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
     }
 
+    /** A profile with only the given section, such as {@code samplingProfiles}, and its entries. */
+    private static String sectionJson(String section, String entries) {
+        return "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"" + section + "\":[" + entries + "]}";
+    }
+
     @Test
     public void parsesSingleFrameConditionalContext() throws IOException {
         ParsedIprofProfile parsed = parse(conditionalProfileJson("1.0.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,10,53,1,1]}"));
@@ -185,6 +190,25 @@ public class IprofParserTest {
         assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,-1,53,1,1]}")), "negative count");
         assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[2147483648,0,1,53,1,1]}")), "integer range");
         assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0,9223372036854775807,53,1,1]}")), "overflow");
+    }
+
+    /*
+     * Every count fits in a long, but the counts of the section do not when added up. The consumer
+     * adds up counts of one section in many places, such as the calls of a method over its
+     * contexts, so such a file is rejected.
+     */
+    @Test
+    public void rejectsSectionsWhoseCountsOverflowWhenAddedUp() {
+        String half = "5000000000000000000";
+        assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,0," + half + ",53,1,0]},{\"ctx\":\"1001:12\",\"records\":[20,0," + half + ",53,1,0]}")),
+                        "section 'conditionalProfiles'");
+        assertRejected(() -> parse(sectionJson("callCountProfiles", "{\"ctx\":\"1001:0\",\"records\":[" + half + "]},{\"ctx\":\"1002:0\",\"records\":[" + half + "]}")),
+                        "section 'callCountProfiles'");
+        assertRejected(() -> parse(sectionJson("virtualInvokeProfiles", "{\"ctx\":\"1001:3\",\"records\":[100," + half + ",101," + half + "]}")), "section 'virtualInvokeProfiles'");
+        assertRejected(() -> parse(sectionJson("samplingProfiles", "{\"ctx\":\"1001:3\",\"records\":[" + half + "]},{\"ctx\":\"1002:3\",\"records\":[" + half + "]}")),
+                        "section 'samplingProfiles'");
+        /* A sample counts once per frame of its stack: 4 frames of 3 * 10^18 samples are 1.2 * 10^19. */
+        assertRejected(() -> parse(sectionJson("samplingProfiles", "{\"ctx\":\"1001:3<1002:5<1001:7<1002:9\",\"records\":[3000000000000000000]}")), "once per frame");
     }
 
     @Test

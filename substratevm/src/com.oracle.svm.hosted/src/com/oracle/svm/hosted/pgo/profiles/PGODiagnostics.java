@@ -66,20 +66,17 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
      *            first one is kept
      * @param singleFrameEntries the resolved entries with a context of one frame
      * @param inlinedContextEntries the resolved entries with a context of more frames
-     * @param overflowedPrefixSums how many prefixes of the resolved contexts the context fallback
-     *            leaves out, because their summed counts do not fit in a long
      */
     public record ConditionalDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, int duplicateContextEntries, int singleFrameEntries,
-                    int inlinedContextEntries, int overflowedPrefixSums) {
+                    int inlinedContextEntries) {
         /**
          * For example {@code iprof conditionalProfiles: 7222 entries, 7208 resolved (99.8%), 14
-         * unresolved, 0 duplicate-context; 2801 single-frame, 4407 inlined-context; 0 overflowed
-         * prefix sums}.
+         * unresolved, 0 duplicate-context; 2801 single-frame, 4407 inlined-context}.
          */
         public String summary() {
-            return String.format("iprof conditionalProfiles: %d entries, %d resolved (%.1f%%), %d unresolved, %d duplicate-context; %d single-frame, %d inlined-context; " +
-                            "%d overflowed prefix sums", totalEntries, resolvedEntries, totalEntries == 0 ? 0.0 : 100.0 * resolvedEntries / totalEntries, unresolvedEntries,
-                            duplicateContextEntries, singleFrameEntries, inlinedContextEntries, overflowedPrefixSums);
+            return String.format("iprof conditionalProfiles: %d entries, %d resolved (%.1f%%), %d unresolved, %d duplicate-context; %d single-frame, %d inlined-context",
+                            totalEntries, resolvedEntries, totalEntries == 0 ? 0.0 : 100.0 * resolvedEntries / totalEntries, unresolvedEntries, duplicateContextEntries,
+                            singleFrameEntries, inlinedContextEntries);
         }
     }
 

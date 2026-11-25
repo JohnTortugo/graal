@@ -216,9 +216,8 @@ public final class IprofProfileResolver {
                 inlined++;
             }
         }
-        Set<PGOContext> overflowedPrefixes = new HashSet<>();
-        prefixSums.putAll(conditionalPrefixSums(table, overflowedPrefixes));
-        return new ConditionalDiagnostics(profile.conditionalEntries().size(), resolved, unresolved, duplicates, singleFrame, inlined, overflowedPrefixes.size());
+        prefixSums.putAll(conditionalPrefixSums(table));
+        return new ConditionalDiagnostics(profile.conditionalEntries().size(), resolved, unresolved, duplicates, singleFrame, inlined);
     }
 
     /** A branch or switch arm of a conditional record: its successor bci and successor index. */
@@ -231,38 +230,16 @@ public final class IprofProfileResolver {
      * successor index and count. The counts of one arm are summed; arms keep the order of their
      * first record. For example, the entries {@code foo:12 < a:5 -> [14, 0, 9, 17, 1, 1]} and
      * {@code foo:12 < b:7 -> [14, 0, 2, 17, 1, 8]} give {@code foo:12 -> [14, 0, 11, 17, 1, 9]}
-     * and keep both full contexts.
-     * <p>
-     * {@code PGOApplyProfilesPhase} adds up the counts of a record in a long. The parser and the
-     * merger make sure that the counts of one entry fit, but the sum over several entries need not.
-     * A prefix whose counts would not fit is left out and added to {@code overflowedPrefixes}: the
-     * fallback then finds no profile for it, rather than one with wrapped-around counts.
+     * and keep both full contexts. No sum overflows, because the counts of the whole section fit in
+     * a long when added up (see {@link ParsedIprofProfile}).
      */
-    static Map<PGOContext, long[]> conditionalPrefixSums(Map<PGOContext, long[]> table, Set<PGOContext> overflowedPrefixes) {
+    static Map<PGOContext, long[]> conditionalPrefixSums(Map<PGOContext, long[]> table) {
         Map<PGOContext, Map<Arm, Long>> sums = new HashMap<>();
-        Map<PGOContext, Long> prefixTotals = new HashMap<>();
         for (Map.Entry<PGOContext, long[]> entry : table.entrySet()) {
             PGOContext context = entry.getKey();
             long[] records = entry.getValue();
-            long entryTotal = 0;
-            for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
-                entryTotal += records[i + 2];
-            }
             for (int depth = 1; depth <= context.depth(); depth++) {
-                PGOContext prefix = context.prefix(depth);
-                if (overflowedPrefixes.contains(prefix)) {
-                    continue;
-                }
-                long prefixTotal = prefixTotals.getOrDefault(prefix, 0L);
-                if (prefixTotal > Long.MAX_VALUE - entryTotal) {
-                    overflowedPrefixes.add(prefix);
-                    prefixTotals.remove(prefix);
-                    sums.remove(prefix);
-                    continue;
-                }
-                prefixTotals.put(prefix, prefixTotal + entryTotal);
-                /* No arm can overflow: the counts of each arm add up to at most the total. */
-                Map<Arm, Long> armCounts = sums.computeIfAbsent(prefix, _ -> new LinkedHashMap<>());
+                Map<Arm, Long> armCounts = sums.computeIfAbsent(context.prefix(depth), _ -> new LinkedHashMap<>());
                 for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
                     armCounts.merge(new Arm(records[i], records[i + 1]), records[i + 2], Long::sum);
                 }

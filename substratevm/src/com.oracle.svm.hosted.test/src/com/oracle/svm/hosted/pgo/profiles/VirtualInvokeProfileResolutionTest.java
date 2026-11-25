@@ -161,4 +161,14 @@ public class VirtualInvokeProfileResolutionTest {
         /* A different call site in the same method is never served by the fallback. */
         Assert.assertTrue(withFallback.getVirtualInvokeProfile(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 10)).isEmpty());
     }
+
+    /* The phase reports a site's impossible receivers once per copy of the site, so their sum stops at Long.MAX_VALUE. */
+    @Test
+    public void impossibleReceiverEventsStopAtTheLongLimit() {
+        IprofProfilesLookup lookup = IprofProfileResolverTest.receiverLookup(Map.of());
+        lookup.recordImpossibleReceiver(Long.MAX_VALUE - 1);
+        lookup.recordImpossibleReceiver(5);
+        Assert.assertEquals(2, lookup.impossibleReceiverRecords());
+        Assert.assertEquals(Long.MAX_VALUE, lookup.impossibleReceiverEvents());
+    }
 }
