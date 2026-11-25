@@ -96,7 +96,7 @@ public class SamplingProfileResolutionTest {
     public void accountsForUnresolvableStacks() throws IOException {
         ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1005:3\",\"records\":[7]},{\"ctx\":\"99999:1\",\"records\":[5]}");
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, java.util.Set.of(IprofProfileResolverTest.BAR_DESC));
-        IprofProfileResolver.SamplingDiagnostics d = lookup.samplingDiagnostics();
+        IprofProfileResolver.SamplingDiagnostics d = lookup.diagnostics().sampling();
         Assert.assertEquals(2, d.totalEntries());
         Assert.assertEquals(0, d.resolvedEntries());
         Assert.assertEquals(2, d.unresolvedEntries());

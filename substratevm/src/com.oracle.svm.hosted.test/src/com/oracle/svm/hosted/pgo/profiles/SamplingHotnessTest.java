@@ -24,11 +24,17 @@
  */
 package com.oracle.svm.hosted.pgo.profiles;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 
 import org.junit.Assert;
 import org.junit.Test;
+
+import jdk.graal.compiler.graph.NodeSourcePosition;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
+import jdk.vm.ci.meta.ResolvedJavaType;
 
 public class SamplingHotnessTest {
     @Test
@@ -58,5 +64,38 @@ public class SamplingHotnessTest {
     @Test(expected = IllegalArgumentException.class)
     public void rejectsEmptySampledStack() {
         SamplingHotness.accountSamples(Map.of(List.of(), 1L), frame -> frame, _ -> false);
+    }
+
+    /**
+     * A thread parked in {@code Object.wait} uses no processor time. The resolver matches the
+     * sampler's frame name {@code waitSubst} to {@code Object.wait}, so such stacks end in
+     * {@code Object.wait}, and they must not count as self time.
+     */
+    @Test
+    public void countsObjectWaitAsIdle() {
+        ResolvedJavaType object = mock(ResolvedJavaType.class, Map.of("getName", "Ljava/lang/Object;"));
+        /* BytecodePosition accepts any bci for a code size of 0. */
+        ResolvedJavaMethod wait = mock(ResolvedJavaMethod.class, Map.of("getName", "wait", "getDeclaringClass", object, "getCodeSize", 0));
+        SamplingHotness hotness = new SamplingHotness(Map.of(new NodeSourcePosition(null, wait, 2), 4L));
+
+        Assert.assertEquals(4, hotness.idleSamples());
+        Assert.assertEquals(0, hotness.totalSamples());
+    }
+
+    /**
+     * A JVMCI interface whose methods named in {@code answers} return the given values. Default
+     * methods, such as {@code toJavaName()}, run their JVMCI code.
+     */
+    private static <T> T mock(Class<T> type, Map<String, Object> answers) {
+        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (instance, method, arguments) -> {
+            if (answers.containsKey(method.getName())) {
+                return answers.get(method.getName());
+            }
+            return switch (method.getName()) {
+                case "hashCode" -> System.identityHashCode(instance);
+                case "equals" -> instance == arguments[0];
+                default -> InvocationHandler.invokeDefault(instance, method, arguments);
+            };
+        }));
     }
 }

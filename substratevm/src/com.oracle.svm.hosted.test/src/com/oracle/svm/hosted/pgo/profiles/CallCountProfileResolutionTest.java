@@ -60,8 +60,8 @@ public class CallCountProfileResolutionTest {
         /* The statistics count every call-edge lookup and the ones that found a count. */
         Assert.assertEquals(2, lookup.contextCallCountQueries());
         Assert.assertEquals(1, lookup.contextCallCountHits());
-        Assert.assertEquals(2, lookup.callCountDiagnostics().resolvedEntries());
-        Assert.assertEquals(7, lookup.callCountDiagnostics().totalCount());
+        Assert.assertEquals(2, lookup.diagnostics().callCount().resolvedEntries());
+        Assert.assertEquals(7, lookup.diagnostics().callCount().totalCount());
 
         lookup.setUseCallCounts(false);
         Assert.assertFalse(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
@@ -72,8 +72,8 @@ public class CallCountProfileResolutionTest {
     public void missingOuterFrameDoesNotUndercountPresentMethod() throws Exception {
         ParsedIprofProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC));
-        Assert.assertEquals(0, lookup.callCountDiagnostics().resolvedEntries());
-        Assert.assertEquals(1, lookup.callCountDiagnostics().unresolvedEntries());
+        Assert.assertEquals(0, lookup.diagnostics().callCount().resolvedEntries());
+        Assert.assertEquals(1, lookup.diagnostics().callCount().unresolvedEntries());
         Assert.assertTrue(lookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES));
         Assert.assertEquals(Long.valueOf(9), lookup.methodCallCount(IprofProfileResolverTest.BAR_DESC).orElseThrow().value());
     }

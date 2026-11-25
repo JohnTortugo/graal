@@ -24,9 +24,6 @@
  */
 package com.oracle.svm.hosted.pgo.profiles;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -39,7 +36,6 @@ import com.oracle.graal.pointsto.meta.AnalysisType;
 import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.ProfilingUtilities;
-import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.DisallowLayered;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
@@ -56,63 +52,34 @@ import jdk.vm.ci.code.BytecodePosition;
  * ({@link IprofFormat}): {@code conditionalProfiles} (branch and switch successor counts),
  * {@code callCountProfiles}, {@code virtualInvokeProfiles} (receiver types) and
  * {@code samplingProfiles} (stack samples). Conditional and receiver profiles, and call counts per
- * call edge, are looked up by canonical calling context; call counts per method by method
- * descriptor; the stack samples are handed out as one map. All other queries, such as instanceof,
- * image-heap and monitor profiles, answer as for an absent profile.
+ * call edge, are looked up by {@link PGOContext}; call counts per method by method descriptor; the
+ * stack samples are handed out as one map. All other queries, such as instanceof, image-heap and
+ * monitor profiles, answer as for an absent profile.
  * <p>
- * The tables are built by {@code PGOProfileUseFeature} once the {@code HostedUniverse} is
- * available; see {@link IprofProfileResolver} for the resolution algorithm. The tables do not
- * change after construction; the counters only record how the compiler used them.
+ * {@link IprofProfileResolver} builds the tables and the {@link PGODiagnostics} once the
+ * {@code HostedUniverse} is available. The tables do not change after construction; the counters
+ * only record how the compiler used them.
  */
 @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class, other = DisallowLayered.class)
 public final class IprofProfilesLookup implements PGOProfilesLookup {
 
-    /**
-     * A single canonical frame of a calling context: a JVM-descriptor method identity and a
-     * bytecode index. Using a descriptor string (rather than a resolved method reference) lets the
-     * same key be produced from the profile method table and from a query
-     * {@link BytecodePosition}, independent of {@code NodeSourcePosition} identity or its
-     * {@code sourceLanguagePosition}.
-     */
-    public record FrameKey(String methodDescriptor, int bci) {
-    }
-
-    private final Map<List<FrameKey>, long[]> conditionalData;
+    private final Map<PGOContext, long[]> conditionalData;
     /**
      * Sum of the conditional records of every context that starts with the key, innermost frame
-     * first: {@code [foo:12]} is all executions of that branch, {@code [foo:12, a:5]} all
-     * executions inlined into {@code a} at bci 5, whatever the outer callers (see
-     * {@link #prefixSums}).
+     * first: {@code foo:12} is all executions of that branch, {@code foo:12 < a:5} all executions
+     * inlined into {@code a} at bci 5, whatever the outer callers (see
+     * {@link IprofProfileResolver#prefixSums}).
      */
-    private final Map<List<FrameKey>, long[]> prefixSums;
+    private final Map<PGOContext, long[]> prefixSums;
     private final Map<NodeSourcePosition, Long> sampleCounts;
     private final Map<String, Long> callCountsByMethod;
-    private final Map<List<FrameKey>, Long> callCountsByContext;
-    private final IprofProfileResolver.CallCountDiagnostics callCountDiagnostics;
-    private final IprofProfileResolver.SamplingDiagnostics samplingDiagnostics;
-    private final Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData;
-    private final IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics;
-    private final AtomicLong virtualInvokeHitCount = new AtomicLong();
-    private final AtomicLong virtualInvokeMissCount = new AtomicLong();
-    private final Set<List<FrameKey>> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
-    /** Receiver-profile hits obtained by dropping outermost frames of the query context. */
-    private final AtomicLong virtualInvokeFallbackCount = new AtomicLong();
-    private final AtomicLong virtualInvokeFallbackDroppedFrames = new AtomicLong();
+    private final Map<PGOContext, Long> callCountsByContext;
+    private final Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData;
+    private final PGODiagnostics diagnostics;
+
+    private volatile boolean contextFallback = true;
     private volatile boolean receiverContextFallback = true;
-    private final AtomicLong impossibleReceiverRecords = new AtomicLong();
-    private final AtomicLong impossibleReceiverEvents = new AtomicLong();
-    private final ConditionalProfileDiagnostics diagnostics;
     private volatile boolean useCallCounts = true;
-    /** Call-count lookups per call edge and per method, and how many of them found a count. */
-    private final AtomicLong contextCallCountQueries = new AtomicLong();
-    private final AtomicLong contextCallCountHits = new AtomicLong();
-    private final AtomicLong methodCallCountQueries = new AtomicLong();
-    private final AtomicLong methodCallCountHits = new AtomicLong();
-    /** Image descriptors that name more than one method or type; no profile entry is applied to those. */
-    private volatile int ambiguousImageMethods;
-    private volatile int ambiguousImageTypes;
-    /** Readable contexts of the entries the resolver dropped, collected only when asked for. */
-    private volatile List<String> droppedContexts = List.of();
     /** Whether consumers see the stack samples; when not, the lookup answers as for a profile without them. */
     private volatile boolean useStackSamples = true;
     private volatile boolean cleared;
@@ -130,11 +97,25 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     private final AtomicLong missCount = new AtomicLong();
     private final AtomicLong contextFallbackCount = new AtomicLong();
     private final AtomicLong contextFallbackDroppedFrames = new AtomicLong();
-    private volatile boolean contextFallback = true;
     /** Exact profile contexts that matched at least one compiler query. */
     private final Set<Object> matchedContexts = ConcurrentHashMap.newKeySet();
     /** Best successor-record coverage observed for every matched context. */
     private final Map<Object, ApplicationCoverage> applicationCoverage = new ConcurrentHashMap<>();
+
+    private final AtomicLong virtualInvokeHitCount = new AtomicLong();
+    private final AtomicLong virtualInvokeMissCount = new AtomicLong();
+    private final Set<PGOContext> matchedVirtualInvokeContexts = ConcurrentHashMap.newKeySet();
+    /** Receiver-profile hits obtained by dropping outermost frames of the query context. */
+    private final AtomicLong virtualInvokeFallbackCount = new AtomicLong();
+    private final AtomicLong virtualInvokeFallbackDroppedFrames = new AtomicLong();
+    private final AtomicLong impossibleReceiverRecords = new AtomicLong();
+    private final AtomicLong impossibleReceiverEvents = new AtomicLong();
+
+    /** Call-count lookups per call edge and per method, and how many of them found a count. */
+    private final AtomicLong contextCallCountQueries = new AtomicLong();
+    private final AtomicLong contextCallCountHits = new AtomicLong();
+    private final AtomicLong methodCallCountQueries = new AtomicLong();
+    private final AtomicLong methodCallCountHits = new AtomicLong();
 
     /**
      * How many successor records of a matched context the profile has, and how many of them the
@@ -143,60 +124,23 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     private record ApplicationCoverage(int profiledSuccessors, int appliedSuccessors) {
     }
 
-    public IprofProfilesLookup(Map<List<FrameKey>, long[]> conditionalData,
-                    ConditionalProfileDiagnostics diagnostics, Map<List<FrameKey>, Map<AnalysisType, Long>> virtualInvokeData,
-                    IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics,
-                    Map<NodeSourcePosition, Long> sampleCounts, IprofProfileResolver.SamplingDiagnostics samplingDiagnostics,
-                    Map<String, Long> callCountsByMethod, Map<List<FrameKey>, Long> callCountsByContext,
-                    IprofProfileResolver.CallCountDiagnostics callCountDiagnostics) {
+    /** Marker for a hit obtained by dropping {@code droppedFrames} outermost frames. */
+    private record ShortenedKey(PGOContext context, int droppedFrames) {
+    }
+
+    /** Statistics key of a prefix sum, kept apart from the full-context entry with the same frames. */
+    private record PrefixContext(PGOContext context) {
+    }
+
+    public IprofProfilesLookup(Map<PGOContext, long[]> conditionalData, Map<PGOContext, long[]> prefixSums, Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData,
+                    Map<NodeSourcePosition, Long> sampleCounts, Map<String, Long> callCountsByMethod, Map<PGOContext, Long> callCountsByContext, PGODiagnostics diagnostics) {
+        this.conditionalData = Map.copyOf(conditionalData);
+        this.prefixSums = Map.copyOf(prefixSums);
+        this.virtualInvokeData = Map.copyOf(virtualInvokeData);
         this.sampleCounts = Map.copyOf(sampleCounts);
         this.callCountsByMethod = Map.copyOf(callCountsByMethod);
         this.callCountsByContext = Map.copyOf(callCountsByContext);
-        this.callCountDiagnostics = callCountDiagnostics;
-        this.samplingDiagnostics = samplingDiagnostics;
-        this.virtualInvokeData = Map.copyOf(virtualInvokeData);
-        this.virtualInvokeDiagnostics = virtualInvokeDiagnostics;
-        this.conditionalData = Map.copyOf(conditionalData);
-        this.prefixSums = prefixSums(conditionalData);
         this.diagnostics = diagnostics;
-    }
-
-    /** A branch or switch arm of a conditional record: its successor bci and successor index. */
-    private record Arm(long successorBci, long successorIndex) {
-    }
-
-    /**
-     * Adds every entry's records to each prefix of its context, including the full context. A
-     * record is {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE} longs: successor bci,
-     * successor index and count. The counts of one arm are summed; arms keep the order of their
-     * first record. For example, the entries {@code [foo:12, a:5] -> [14, 0, 9, 17, 1, 1]} and
-     * {@code [foo:12, b:7] -> [14, 0, 2, 17, 1, 8]} give {@code [foo:12] -> [14, 0, 11, 17, 1, 9]}
-     * and keep both full contexts.
-     */
-    static Map<List<FrameKey>, long[]> prefixSums(Map<List<FrameKey>, long[]> conditionalData) {
-        Map<List<FrameKey>, Map<Arm, Long>> sums = new HashMap<>();
-        for (Map.Entry<List<FrameKey>, long[]> entry : conditionalData.entrySet()) {
-            List<FrameKey> context = entry.getKey();
-            long[] records = entry.getValue();
-            for (int depth = 1; depth <= context.size(); depth++) {
-                Map<Arm, Long> counts = sums.computeIfAbsent(List.copyOf(context.subList(0, depth)), _ -> new LinkedHashMap<>());
-                for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
-                    counts.merge(new Arm(records[i], records[i + 1]), records[i + 2], Long::sum);
-                }
-            }
-        }
-        Map<List<FrameKey>, long[]> result = new HashMap<>(sums.size());
-        sums.forEach((context, counts) -> {
-            long[] records = new long[counts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
-            int i = 0;
-            for (Map.Entry<Arm, Long> arm : counts.entrySet()) {
-                records[i++] = arm.getKey().successorBci();
-                records[i++] = arm.getKey().successorIndex();
-                records[i++] = arm.getValue();
-            }
-            result.put(context, records);
-        });
-        return Map.copyOf(result);
     }
 
     public void setUseCallCounts(boolean enabled) {
@@ -215,28 +159,9 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         this.receiverContextFallback = enabled;
     }
 
-    /** Records how many distinct method and type descriptors name more than one image method or type. */
-    public void setAmbiguousImageDescriptors(int methods, int types) {
-        this.ambiguousImageMethods = methods;
-        this.ambiguousImageTypes = types;
-    }
-
-    public int ambiguousImageMethods() {
-        return ambiguousImageMethods;
-    }
-
-    public int ambiguousImageTypes() {
-        return ambiguousImageTypes;
-    }
-
-    /** Records the readable contexts of the entries the resolver dropped. */
-    public void setDroppedContexts(List<String> contexts) {
-        this.droppedContexts = List.copyOf(contexts);
-    }
-
-    /** The dropped entries, if the resolver was asked to collect them; otherwise empty. */
-    public List<String> droppedContexts() {
-        return droppedContexts;
+    /** What the resolver found when it matched the profile to the image. */
+    public PGODiagnostics diagnostics() {
+        return diagnostics;
     }
 
     public long virtualInvokeFallbackCount() {
@@ -255,12 +180,10 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return contextFallbackDroppedFrames.get();
     }
 
-    /** Deterministic quality/summary information gathered while building the table. */
-    public ConditionalProfileDiagnostics conditionalDiagnostics() {
-        return diagnostics;
-    }
-
-    /** Returns deterministic context-key samples for profile compatibility diagnostics. */
+    /**
+     * Up to {@code limit} resolved conditional contexts in sorted order, such as
+     * {@code Ljava/lang/String;.charAt(I)C:12 < Lcom/example/Foo;.bar()V:5}.
+     */
     public List<String> contextKeySamples(int limit) {
         return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
     }
@@ -327,7 +250,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared || callingContext == null) {
             return Optional.empty();
         }
-        Object key = selectProfileKey(canonicalize(callingContext));
+        Object key = selectProfileKey(PGOContext.of(callingContext));
         long[] records;
         if (key instanceof ShortenedKey shortenedKey) {
             records = prefixSums.get(shortenedKey.context());
@@ -354,7 +277,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared || callingContext == null) {
             return;
         }
-        Object key = selectProfileKey(canonicalize(callingContext));
+        Object key = selectProfileKey(PGOContext.of(callingContext));
         if (key instanceof ShortenedKey || !conditionalData.containsKey(key)) {
             /* Coverage is tracked for the profile's own entries only, like matchedContexts. */
             return;
@@ -374,7 +297,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * inlining chain, e.g. a callee the profile saw inlined into other callers that the profiled
      * build now inlines into a new one.
      */
-    private Object selectProfileKey(List<FrameKey> context) {
+    private Object selectProfileKey(PGOContext context) {
         if (!conditionalData.containsKey(context)) {
             Object shortened = longestProfiledPrefix(context);
             return shortened == null ? context : shortened;
@@ -382,41 +305,18 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return context;
     }
 
-    private Object longestProfiledPrefix(List<FrameKey> context) {
-        if (!contextFallback || context.isEmpty()) {
+    private Object longestProfiledPrefix(PGOContext context) {
+        if (!contextFallback || context.depth() == 0) {
             return null;
         }
         /* The full length first: the context itself may only have been seen under more callers. */
-        for (int depth = context.size(); depth >= 1; depth--) {
-            List<FrameKey> shorter = context.subList(0, depth);
+        for (int depth = context.depth(); depth >= 1; depth--) {
+            PGOContext shorter = context.prefix(depth);
             if (prefixSums.containsKey(shorter)) {
-                return new ShortenedKey(List.copyOf(shorter), context.size() - depth);
+                return new ShortenedKey(shorter, context.depth() - depth);
             }
         }
         return null;
-    }
-
-    /** Marker for a hit obtained by dropping {@code droppedFrames} outermost frames. */
-    private record ShortenedKey(List<FrameKey> context, int droppedFrames) {
-    }
-
-    /** Statistics key of a prefix sum, kept apart from the full-context entry with the same frames. */
-    private record PrefixContext(List<FrameKey> context) {
-    }
-
-    /**
-     * Builds the canonical, innermost-first {@link FrameKey} chain for a query context. This mirrors
-     * how the profile stores {@code methodId:bci} frames and how
-     * {@code PGOApplyProfilesPhase.createPointContext} assembles the query (leaf frame first,
-     * followed by its callers). For {@code String.charAt} at bci 12 inlined into {@code Foo.bar} at
-     * bci 5 it gives {@code [(Ljava/lang/String;.charAt(I)C, 12), (Lcom/example/Foo;.bar()V, 5)]}.
-     */
-    static List<FrameKey> canonicalize(BytecodePosition position) {
-        List<FrameKey> frames = new ArrayList<>();
-        for (BytecodePosition current = position; current != null; current = current.getCaller()) {
-            frames.add(new FrameKey(ProfilingUtilities.methodDescriptor(current.getMethod()), current.getBCI()));
-        }
-        return frames;
     }
 
     @Override
@@ -431,15 +331,11 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
             return Optional.empty();
         }
         contextCallCountQueries.incrementAndGet();
-        Long count = callCountsByContext.get(canonicalize(callingContext));
+        Long count = callCountsByContext.get(PGOContext.of(callingContext));
         if (count != null) {
             contextCallCountHits.incrementAndGet();
         }
         return Optional.ofNullable(count);
-    }
-
-    public IprofProfileResolver.CallCountDiagnostics callCountDiagnostics() {
-        return callCountDiagnostics;
     }
 
     /** Number of call-edge lookups ({@link #getContextCallCount}) and how many found a count. */
@@ -497,7 +393,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         if (cleared || callingContext == null || virtualInvokeData.isEmpty()) {
             return Optional.empty();
         }
-        List<FrameKey> key = canonicalize(callingContext);
+        PGOContext key = PGOContext.of(callingContext);
         Map<AnalysisType, Long> receivers = virtualInvokeData.get(key);
         if (receivers == null && receiverContextFallback) {
             /*
@@ -508,13 +404,14 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
              * receivers agree, so the shorter context is the best available estimate. A type guard
              * with a fallback keeps a wrong estimate a performance question, not a correctness one.
              */
-            for (int depth = key.size() - 1; depth >= 1 && receivers == null; depth--) {
-                List<FrameKey> shorter = key.subList(0, depth);
+            int queryDepth = key.depth();
+            for (int depth = queryDepth - 1; depth >= 1 && receivers == null; depth--) {
+                PGOContext shorter = key.prefix(depth);
                 receivers = virtualInvokeData.get(shorter);
                 if (receivers != null) {
-                    key = List.copyOf(shorter);
+                    key = shorter;
                     virtualInvokeFallbackCount.incrementAndGet();
-                    virtualInvokeFallbackDroppedFrames.addAndGet(callingContextDepth(callingContext) - depth);
+                    virtualInvokeFallbackDroppedFrames.addAndGet(queryDepth - depth);
                 }
             }
         }
@@ -527,25 +424,9 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return Optional.of(receivers);
     }
 
-    private static int callingContextDepth(BytecodePosition position) {
-        int depth = 0;
-        for (BytecodePosition current = position; current != null; current = current.getCaller()) {
-            depth++;
-        }
-        return depth;
-    }
-
     @Override
     public Optional<Map<NodeSourcePosition, Long>> getSampleCounts() {
         return cleared || !useStackSamples || sampleCounts.isEmpty() ? Optional.empty() : Optional.of(sampleCounts);
-    }
-
-    public IprofProfileResolver.SamplingDiagnostics samplingDiagnostics() {
-        return samplingDiagnostics;
-    }
-
-    public IprofProfileResolver.VirtualInvokeDiagnostics virtualInvokeDiagnostics() {
-        return virtualInvokeDiagnostics;
     }
 
     public long virtualInvokeHitCount() {

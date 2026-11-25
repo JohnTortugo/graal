@@ -42,7 +42,6 @@ import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.VirtualInvokeEntry;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfileResolver.VirtualInvokeDiagnostics;
-import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 
 import jdk.vm.ci.code.BytecodePosition;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
@@ -117,7 +116,7 @@ public class VirtualInvokeProfileResolutionTest {
         Map<String, AnalysisType> noTypes = Map.of();
         IprofProfilesLookup lookup = IprofProfileResolverTest.buildLookup(parsed, Set.of(IprofProfileResolverTest.BAR_DESC), noTypes);
 
-        VirtualInvokeDiagnostics d = lookup.virtualInvokeDiagnostics();
+        VirtualInvokeDiagnostics d = lookup.diagnostics().virtualInvoke();
         Assert.assertEquals(3, d.totalEntries());
         Assert.assertEquals(0, d.resolvedEntries());
         Assert.assertEquals(1, d.unresolvedContextEntries());
@@ -140,7 +139,7 @@ public class VirtualInvokeProfileResolutionTest {
     public void shortenedContextFallbackServesInlinedCopies() {
         ResolvedJavaMethod bar = IprofProfileResolverTest.mockBarMethod();
         Map<AnalysisType, Long> receivers = Collections.singletonMap(null, 7L);
-        Map<List<FrameKey>, Map<AnalysisType, Long>> data = Map.of(List.of(new FrameKey(IprofProfileResolverTest.BAR_DESC, 9)), receivers);
+        Map<PGOContext, Map<AnalysisType, Long>> data = Map.of(new PGOContext(List.of(new PGOContext.Frame(IprofProfileResolverTest.BAR_DESC, 9))), receivers);
         BytecodePosition inlinedTwice = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, bar, 30), bar, 14), bar, 9);
 
         IprofProfilesLookup exactOnly = IprofProfileResolverTest.receiverLookup(data);

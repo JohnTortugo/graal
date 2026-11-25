@@ -44,7 +44,6 @@ import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.pgo.IprofParser;
 import com.oracle.svm.hosted.pgo.IprofParser.MethodDescriptor;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
-import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup.FrameKey;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup.ProfiledValue;
 
 import jdk.graal.compiler.graph.NodeSourcePosition;
@@ -99,13 +98,13 @@ public class IprofProfileResolverTest {
     }
 
     /** A lookup that holds only the given receiver profiles. */
-    static IprofProfilesLookup receiverLookup(Map<List<FrameKey>, Map<AnalysisType, Long>> receivers) {
-        return new IprofProfilesLookup(Map.of(), null, receivers, null, Map.of(), null, Map.of(), Map.of(), null);
+    static IprofProfilesLookup receiverLookup(Map<PGOContext, Map<AnalysisType, Long>> receivers) {
+        return new IprofProfilesLookup(Map.of(), Map.of(), receivers, Map.of(), Map.of(), Map.of(), null);
     }
 
     /** A lookup that holds only the given stack samples. */
     static IprofProfilesLookup samplingLookup(Map<NodeSourcePosition, Long> samples) {
-        return new IprofProfilesLookup(Map.of(), null, Map.of(), null, samples, null, Map.of(), Map.of(), null);
+        return new IprofProfilesLookup(Map.of(), Map.of(), Map.of(), samples, Map.of(), Map.of(), null);
     }
 
     private static ParsedIprofProfile parse(String conditionalProfiles) throws IOException {
@@ -132,6 +131,15 @@ public class IprofProfileResolverTest {
         Assert.assertEquals(BAZ_DESC, IprofProfileResolver.descriptorForProfileMethod(baz, parsed.typeNamesById()));
     }
 
+    /* Stack-sample frames named by stack-trace name are matched to image methods by class and signature first. */
+    @Test
+    public void removesTheMethodNameFromADescriptor() {
+        Assert.assertEquals("Ljava/lang/Object;(J)V", IprofProfileResolver.withoutMethodName("Ljava/lang/Object;.waitSubst(J)V"));
+        Assert.assertEquals("Lcom/example/Foo$$Lambda.0x1234;()V", IprofProfileResolver.withoutMethodName("Lcom/example/Foo$$Lambda.0x1234;.run()V"));
+        /* A descriptor without a class name of the form L...; is kept whole. */
+        Assert.assertEquals("[I.clone()Ljava/lang/Object;", IprofProfileResolver.withoutMethodName("[I.clone()Ljava/lang/Object;"));
+    }
+
     // --- table build: context resolution --------------------------------------------------------
 
     @Test
@@ -140,7 +148,7 @@ public class IprofProfileResolverTest {
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
         Assert.assertTrue(lookup.profileCategoryRecorded("conditionalProfiles"));
-        ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
+        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
         Assert.assertEquals(1, d.totalEntries());
         Assert.assertEquals(1, d.resolvedEntries());
         Assert.assertEquals(1, d.singleFrameEntries());
@@ -153,7 +161,7 @@ public class IprofProfileResolverTest {
         ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC, BAZ_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
+        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
         Assert.assertEquals(1, d.resolvedEntries());
         Assert.assertEquals(1, d.inlinedContextEntries());
         Assert.assertEquals(0, d.singleFrameEntries());
@@ -165,7 +173,7 @@ public class IprofProfileResolverTest {
         ParsedIprofProfile parsed = parse("{\"ctx\":\"1001:9<1002:1\",\"records\":[20,0,10,53,1,1]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
+        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
         Assert.assertEquals(0, d.resolvedEntries());
         Assert.assertEquals(1, d.unresolvedEntries());
         Assert.assertFalse(lookup.profileCategoryRecorded("conditionalProfiles"));
@@ -192,7 +200,7 @@ public class IprofProfileResolverTest {
                                         "{\"ctx\":\"1001:9\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
+        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
         Assert.assertEquals(2, d.totalEntries());
         Assert.assertEquals(1, d.resolvedEntries());
         Assert.assertEquals(1, d.duplicateContextEntries());
@@ -208,7 +216,7 @@ public class IprofProfileResolverTest {
                                         "{\"ctx\":\"1001:42\",\"records\":[20,0,1,53,1,10]}");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
 
-        ConditionalProfileDiagnostics d = lookup.conditionalDiagnostics();
+        ConditionalProfileDiagnostics d = lookup.diagnostics().conditional();
         Assert.assertEquals(2, d.resolvedEntries());
         Assert.assertEquals(0, d.duplicateContextEntries());
     }
@@ -241,8 +249,8 @@ public class IprofProfileResolverTest {
         // conditionalProfiles present but empty -> nothing resolves -> category not recorded.
         ParsedIprofProfile parsed = parse("");
         IprofProfilesLookup lookup = buildLookup(parsed, Set.of(BAR_DESC));
-        Assert.assertEquals(0, lookup.conditionalDiagnostics().totalEntries());
-        Assert.assertEquals(0, lookup.conditionalDiagnostics().resolvedEntries());
+        Assert.assertEquals(0, lookup.diagnostics().conditional().totalEntries());
+        Assert.assertEquals(0, lookup.diagnostics().conditional().resolvedEntries());
         Assert.assertFalse(lookup.profileCategoryRecorded("conditionalProfiles"));
     }
 
@@ -300,6 +308,27 @@ public class IprofProfileResolverTest {
         Assert.assertArrayEquals(new long[]{20, 0, 7, 53, 1, 3}, viaAOnly);
         Assert.assertEquals(2, lookup.contextFallbackCount());
         Assert.assertEquals(2, lookup.contextFallbackDroppedFrames());
+    }
+
+    /*
+     * A prefix whose summed counts do not fit in a long is left out: the fallback finds no profile
+     * for it rather than one with wrapped-around counts. The full contexts are still found.
+     */
+    @Test
+    public void prefixWhoseSumOverflowsIsLeftOut() throws IOException {
+        String viaA = "{\"ctx\":\"1001:9<1001:40\",\"records\":[20,0,5000000000000000000,53,1,0]}";
+        String viaB = "{\"ctx\":\"1001:9<1001:50\",\"records\":[20,0,5000000000000000000,53,1,0]}";
+        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + viaA + "," + viaB + "]}";
+        IprofProfilesLookup lookup = buildLookup(new IprofParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        Assert.assertEquals(1, lookup.diagnostics().overflowedPrefixSums());
+
+        BytecodePosition newCaller = new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 60), mockBarMethod(), 9);
+        Assert.assertTrue(lookup.getConditionalProfile(newCaller).isEmpty());
+        Assert.assertEquals(1, lookup.missCount());
+
+        BytecodePosition deeperViaA = new BytecodePosition(new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 70), mockBarMethod(), 40), mockBarMethod(), 9);
+        Assert.assertArrayEquals(new long[]{20, 0, 5000000000000000000L, 53, 1, 0}, lookup.getConditionalProfile(deeperViaA).orElseThrow().value());
+        Assert.assertEquals(1, lookup.contextFallbackCount());
     }
 
     @Test

@@ -76,6 +76,7 @@ public final class SamplingHotness {
     private static final Set<String> IDLE_LEAF_CLASSES = Set.of(
                     "com.oracle.svm.core.thread.PlatformThreads",
                     "com.oracle.svm.core.thread.JavaThreads",
+                    "java.lang.Object",
                     "java.lang.Thread",
                     "jdk.internal.misc.Unsafe",
                     "sun.misc.Unsafe",
