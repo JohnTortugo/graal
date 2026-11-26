@@ -36,6 +36,10 @@ import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 
+/**
+ * Unit tests for {@link SamplingHotness}: how it counts the self samples of methods from sampled
+ * stacks, which stacks it treats as idle, and the per-frame suffixes it builds.
+ */
 public class SamplingHotnessTest {
     @Test
     public void countsSelfSamplesAndExcludesIdleStacks() {
@@ -83,8 +87,8 @@ public class SamplingHotnessTest {
     }
 
     /**
-     * A JVMCI interface whose methods named in {@code answers} return the given values. Default
-     * methods, such as {@code toJavaName()}, run their JVMCI code.
+     * A mock of the JVMCI interface {@code type} whose methods named in {@code answers} return the
+     * given values. Default methods, such as {@code toJavaName()}, run their JVMCI code.
      */
     private static <T> T jvmciProxy(Class<T> type, Map<String, Object> answers) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (instance, method, arguments) -> {

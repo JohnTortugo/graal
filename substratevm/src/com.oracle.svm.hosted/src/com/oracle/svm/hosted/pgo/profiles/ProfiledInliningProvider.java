@@ -49,32 +49,50 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
  */
 public final class ProfiledInliningProvider extends SubstrateInliningProvider {
 
+    /** The resolved profile, for its {@code callCountProfiles}. */
     private final IprofProfilesLookup profilesLookup;
 
+    /** Options that turn single uses of the profile in the inliner and later phases on or off. */
     public static final class Options {
         // @formatter:off
+        /** The factor that {@link ProfiledInliningProvider#hotBonusWhileInlining} returns. */
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
         public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
 
+        /** What {@link ProfiledInliningProvider#shouldApplyProfilesWhileExpanding} returns. */
         @Option(help = "Apply profiles to callee graphs expanded under a hot compilation root.")//
         public static final HostedOptionKey<Boolean> PGOApplyProfilesWhileExpanding = new HostedOptionKey<>(true);
 
+        /** Off to measure sampled callee profiles, as the pgo-receivers-disabled gate run does. */
         @Option(help = "Let the inliner prefer sampled callee method profiles at indirect calls over analysis type profiles.")//
         public static final HostedOptionKey<Boolean> PGOSamplingMethodProfiles = new HostedOptionKey<>(true);
 
+        /** Read by {@link SamplingHotness#providerFor}. */
         @Option(help = "Report sampled compilation roots as hot callers (enables hot-callee devirtualization and hot-caller profile application).")//
         public static final HostedOptionKey<Boolean> PGOSamplingHotCaller = new HostedOptionKey<>(true);
 
+        /** Read by {@link SamplingHotness#providerFor}. */
         @Option(help = "Expose sampled self time to the compiler, which gives hot code larger budgets in duplication and loop unrolling.")//
         public static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
         // @formatter:on
     }
 
+    /**
+     * Creates a provider that finds each compilation root's calling contexts in {@code hotness}.
+     *
+     * @param universe the image's universe
+     * @param hotness the method-rooted tree of sampled stacks
+     * @param profilesLookup the resolved profile, for its {@code callCountProfiles}
+     */
     public ProfiledInliningProvider(HostedUniverse universe, SamplingHotness hotness, IprofProfilesLookup profilesLookup) {
         super(universe, hotness::cursorFor);
         this.profilesLookup = profilesLookup;
     }
 
+    /**
+     * The sampled hotness, or, if larger, the share of the root's calls that went through this call
+     * edge according to {@code callCountProfiles}, capped at 1.
+     */
     @Override
     public double compilationRootRelativeHotness(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
         double sampled = super.compilationRootRelativeHotness(compilationRoot, callPosition, dispatchedMethod);
@@ -91,21 +109,25 @@ public final class ProfiledInliningProvider extends SubstrateInliningProvider {
         return Math.max(sampled, callRatio);
     }
 
+    /** The sampled callee profile, or {@code null} if {@code PGOSamplingMethodProfiles} is off. */
     @Override
     public JavaMethodProfile samplingMethodProfiles(Map<CallTreeNode, PrefixTree.Cursor> nodeContextMap, HostedMethod root, CallTreeNode caller, CallTargetNode callee) {
         return Options.PGOSamplingMethodProfiles.getValue() ? super.samplingMethodProfiles(nodeContextMap, root, caller, callee) : null;
     }
 
+    /** The sampled callee profile, or {@code null} if {@code PGOSamplingMethodProfiles} is off. */
     @Override
     public JavaMethodProfile samplingMethodProfiles(HostedMethod compilationRoot, Invoke calleeInvoke) {
         return Options.PGOSamplingMethodProfiles.getValue() ? super.samplingMethodProfiles(compilationRoot, calleeInvoke) : null;
     }
 
+    /** On by default; the base provider never applies profiles while expanding. */
     @Override
     protected boolean shouldApplyProfilesWhileExpanding(OptionValues options) {
         return Options.PGOApplyProfilesWhileExpanding.getValue(options);
     }
 
+    /** {@code PGOHotInliningBonus}; the base provider gives no bonus. */
     @Override
     protected int hotBonusWhileInlining(OptionValues options) {
         return Options.PGOHotInliningBonus.getValue(options);

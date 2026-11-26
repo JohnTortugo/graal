@@ -86,6 +86,8 @@ public final class IprofProfileResolver {
      * signature type ids of {@code java.lang.String}, {@code char} and {@code int} gives
      * {@code Ljava/lang/String;.charAt(I)C}.
      *
+     * @param method the entry of the profile's {@code methods} table
+     * @param typeNamesById the profile's {@code types} table: type names by type id
      * @return the descriptor, or {@code null} if a referenced type id is missing.
      */
     public static String descriptorForProfileMethod(ProfileMethod method, Map<Integer, String> typeNamesById) {
@@ -108,9 +110,10 @@ public final class IprofProfileResolver {
     }
 
     /**
-     * The descriptor of a profile type, as JVMCI writes it: {@code I}, {@code [I},
+     * The descriptor of the profile type {@code typeId}, as JVMCI writes it: {@code I}, {@code [I},
      * {@code Ljava/lang/String;} and {@code LFoo$$Lambda.0x1234;} for {@code int}, {@code [I},
-     * {@code java.lang.String} and the hidden class {@code Foo$$Lambda/0x1234}.
+     * {@code java.lang.String} and the hidden class {@code Foo$$Lambda/0x1234}. Returns
+     * {@code null} if {@code typeNamesById} lacks the id.
      */
     private static String descriptorForTypeId(int typeId, Map<Integer, String> typeNamesById) {
         String name = typeNamesById.get(typeId);
@@ -142,19 +145,24 @@ public final class IprofProfileResolver {
         return buildLookup(profile, methods, methodsByStackTraceName, types, ambiguousMethods.size(), ambiguousTypes.size(), collectDroppedEntries ? new ArrayList<>() : null);
     }
 
-    static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
-        return buildLookup(profile, methodsByDescriptor, typesByDescriptor, null);
-    }
-
+    /**
+     * Builds the lookup without stack-trace names or ambiguity counts; for tests.
+     *
+     * @param profile the parsed profile
+     * @param methodsByDescriptor methods available in the image, keyed by their canonical descriptor
+     * @param typesByDescriptor types available in the image, keyed by their descriptor
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry
+     * @return the lookup that serves the resolved entries
+     */
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor,
                     List<String> droppedEntries) {
         return buildLookup(profile, methodsByDescriptor, Map.of(), typesByDescriptor, 0, 0, droppedEntries);
     }
 
     /**
-     * Builds the lookup and diagnostics from a parsed profile and the set of canonical method
-     * descriptors present in the image. This is the universe-independent core of {@link #resolve}
-     * and is directly unit-testable.
+     * Builds the lookup and diagnostics from a parsed profile and the image's methods and types,
+     * indexed by descriptor. This is the universe-independent core of {@link #resolve} and is
+     * directly unit-testable.
      *
      * @param profile the parsed profile.
      * @param methodsByDescriptor methods available in the image, keyed by their canonical
@@ -166,6 +174,7 @@ public final class IprofProfileResolver {
      * @param ambiguousMethodCount how many method descriptors name more than one image method.
      * @param ambiguousTypeCount how many type descriptors name more than one image type.
      * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry.
+     * @return the lookup that serves the resolved entries, with its diagnostics.
      */
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, HostedMethod> methodsByStackTraceName,
                     Map<String, AnalysisType> typesByDescriptor, int ambiguousMethodCount, int ambiguousTypeCount, List<String> droppedEntries) {
@@ -197,6 +206,14 @@ public final class IprofProfileResolver {
     /**
      * Resolves {@code conditionalProfiles} into {@code table}, and puts the sums that the context
      * fallback serves into {@code prefixSums} (see {@link #conditionalPrefixSums}).
+     *
+     * @param profile the parsed profile
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param presentDescriptors the descriptors of the image's methods
+     * @param table receives the records of each resolved context
+     * @param prefixSums receives the summed records of each context prefix
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry
+     * @return what the resolution found
      */
     private static ConditionalDiagnostics resolveConditionalProfiles(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<PGOContext, long[]> table, Map<PGOContext, long[]> prefixSums, List<String> droppedEntries) {
@@ -233,7 +250,12 @@ public final class IprofProfileResolver {
         return new ConditionalDiagnostics(profile.conditionalEntries().size(), resolved, unresolved, duplicates, singleFrame, inlined);
     }
 
-    /** A branch or switch arm of a conditional record: its successor bci and successor index. */
+    /**
+     * A branch or switch arm of a conditional record: its successor bci and successor index.
+     *
+     * @param successorBci the bci of the successor
+     * @param successorIndex the index of the successor
+     */
     private record Arm(long successorBci, long successorIndex) {
     }
 
@@ -245,6 +267,9 @@ public final class IprofProfileResolver {
      * {@code foo:12 < b:7 -> [14, 0, 2, 17, 1, 8]} give {@code foo:12 -> [14, 0, 11, 17, 1, 9]}
      * and keep both full contexts. No sum overflows, because the counts of the whole section fit in
      * a long when added up (see {@link ParsedIprofProfile}).
+     *
+     * @param table the records of each resolved context
+     * @return the summed records of each context prefix
      */
     static Map<PGOContext, long[]> conditionalPrefixSums(Map<PGOContext, long[]> table) {
         Map<PGOContext, Map<Arm, Long>> sums = new HashMap<>();
@@ -277,6 +302,14 @@ public final class IprofProfileResolver {
      * that chain of callers. The count is added to the context only if every frame is in the image,
      * as for the other kinds. It is added to the method's total whenever the method itself is in the
      * image, so a caller that the image lacks does not lower the method's count.
+     *
+     * @param profile the parsed profile
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param presentDescriptors the descriptors of the image's methods
+     * @param byContext receives the call count of each resolved context
+     * @param byMethod receives the call count of each method, summed over its contexts
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry
+     * @return what the resolution found
      */
     private static CallCountDiagnostics resolveCallCountProfiles(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<PGOContext, Long> byContext, Map<String, Long> byMethod, List<String> droppedEntries) {
@@ -308,6 +341,14 @@ public final class IprofProfileResolver {
      * receiver type that the image does not have is dropped from its site, which keeps the other
      * observed receivers and its whole context. {@code PGOProfileUseFeature} warns about such
      * types: they mean that the instrumented build saw code that this build does not have.
+     *
+     * @param profile the parsed profile
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param presentDescriptors the descriptors of the image's methods
+     * @param typesByDescriptor the image's types by descriptor
+     * @param table receives the receiver types and their counts of each resolved context
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry
+     * @return what the resolution found
      */
     private static VirtualInvokeDiagnostics resolveVirtualInvokeProfiles(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors,
                     Map<String, AnalysisType> typesByDescriptor, Map<PGOContext, Map<AnalysisType, Long>> table, List<String> droppedEntries) {
@@ -364,16 +405,24 @@ public final class IprofProfileResolver {
      * Resolves sampled stacks into the {@link NodeSourcePosition} chains {@code PrefixTree} expects:
      * the position itself is the outermost frame and the caller chain walks inward to the sampled
      * leaf.
-     *
+     * <p>
      * Frames are resolved from the leaf outward and the stack is truncated at the first frame whose
-     * method is absent from the image. A profile recorded on a different build of the application may
-     * contain frames that do not exist in this image (for example hidden lambda classes or generated
-     * factory methods); keeping the innermost resolvable segment preserves leaf hotness and the contexts
-     * below the mismatch, which is what a method-rooted view consumes. A stack whose leaf itself is
-     * unresolvable is dropped. The sampler names a frame as stack traces do, which for a few
-     * substituted JDK methods is not the method's name in the image ({@code Object.waitSubst} for
-     * {@code Object.wait}); {@code methodsByDescriptor} also holds the methods under those names
-     * (see {@link #indexStackTraceNames}).
+     * method is absent from the image. A profile recorded on a different build of the application
+     * may contain frames that do not exist in this image (for example hidden lambda classes or
+     * generated factory methods); keeping the innermost resolvable segment preserves leaf hotness
+     * and the contexts below the mismatch, which is what a method-rooted view consumes. A stack
+     * whose leaf itself is unresolvable is dropped. The sampler names a frame as stack traces do,
+     * which for a few substituted JDK methods is not the method's name in the image
+     * ({@code Object.waitSubst} for {@code Object.wait}); {@code methodsByDescriptor} also holds
+     * the methods under those names (see {@link #indexStackTraceNames}).
+     *
+     * @param profile the parsed profile
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param methodsByDescriptor the image's methods by descriptor and by sampled name
+     * @param sampleCounts receives the count of each resolved stack
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped or
+     *            cut stack
+     * @return what the resolution found
      */
     private static SamplingDiagnostics resolveSamplingProfiles(ParsedIprofProfile profile, Map<Integer, String> descriptorByMethodId, Map<String, HostedMethod> methodsByDescriptor,
                     Map<NodeSourcePosition, Long> sampleCounts, List<String> droppedEntries) {
@@ -447,6 +496,12 @@ public final class IprofProfileResolver {
      * collects them: innermost frame first, as in the file, with every frame that is not in the
      * image marked. For example {@code call count: Lcom/example/Foo;.bar()V:0 <
      * Lcom/example/Old;.run()V:7 (not in the image)}.
+     *
+     * @param droppedEntries the list to add to, or {@code null} if the caller does not collect them
+     * @param kind what was dropped and why, such as {@code call count}
+     * @param context the frames of the dropped entry, innermost first
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param presentDescriptors the descriptors of the image's methods
      */
     private static void addDropped(List<String> droppedEntries, String kind, List<ContextFrame> context, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
         if (droppedEntries == null) {
@@ -470,6 +525,11 @@ public final class IprofProfileResolver {
      * {@code null} if any frame's method is absent from the image. For example, the context
      * {@code 7:12<3:5} gives {@code Ljava/lang/String;.charAt(I)C:12 < Lcom/example/Foo;.bar()V:5}
      * when the methods table names those methods with ids 7 and 3.
+     *
+     * @param entryContext the frames of the entry, innermost first
+     * @param descriptorByMethodId the descriptor of each method of the profile by its id
+     * @param presentDescriptors the descriptors of the image's methods
+     * @return the context, or {@code null} if a frame's method is not in the image
      */
     private static PGOContext resolveContext(List<ContextFrame> entryContext, Map<Integer, String> descriptorByMethodId, Set<String> presentDescriptors) {
         List<Frame> frames = new ArrayList<>(entryContext.size());
@@ -483,7 +543,10 @@ public final class IprofProfileResolver {
         return new PGOContext(frames);
     }
 
-    /** The descriptor of every method of the profile's methods table by id, such as {@code 7 -> Ljava/lang/String;.charAt(I)C}. */
+    /**
+     * The descriptor of every method of the {@code methods} table of {@code profile} by id, such as
+     * {@code 7 -> Ljava/lang/String;.charAt(I)C}. A method whose types are missing is left out.
+     */
     private static Map<Integer, String> buildProfileMethodDescriptors(ParsedIprofProfile profile) {
         Map<Integer, String> descriptorByMethodId = new HashMap<>(profile.methodsById().size());
         for (ProfileMethod method : profile.methodsById().values()) {
@@ -500,6 +563,10 @@ public final class IprofProfileResolver {
      * share (classes of the same name from different class loaders) names neither of them: their
      * profile entries stay unresolved rather than being applied to whichever method came first.
      * Such descriptors are added to {@code ambiguous}.
+     *
+     * @param universe the image's methods
+     * @param ambiguous receives the descriptors that two image methods share
+     * @return the image methods by descriptor, without the ambiguous ones
      */
     private static Map<String, HostedMethod> indexUniverseMethods(HostedUniverse universe, Set<String> ambiguous) {
         Map<String, HostedMethod> methodsByDescriptor = new HashMap<>();
@@ -520,6 +587,11 @@ public final class IprofProfileResolver {
      * The frames of the stack samples that no canonical descriptor of the image names. A frame
      * whose descriptor names two image methods is left out: it stays unresolved, as in the other
      * sections.
+     *
+     * @param profile the parsed profile
+     * @param presentDescriptors the descriptors of the image's methods
+     * @param ambiguousDescriptors the descriptors that two image methods share
+     * @return the descriptors of the unresolved sampled frames
      */
     private static Set<String> unresolvedSampleFrames(ParsedIprofProfile profile, Set<String> presentDescriptors, Set<String> ambiguousDescriptors) {
         Map<Integer, String> descriptorByMethodId = buildProfileMethodDescriptors(profile);
@@ -543,6 +615,10 @@ public final class IprofProfileResolver {
      * {@code Ljava/lang/Object;.waitSubst(J)V}. Only methods whose class and signature match an
      * unresolved frame are asked for their stack-trace name. A name that two image methods share
      * names neither.
+     *
+     * @param universe the image's methods
+     * @param unresolvedFrames the sampled frames that no canonical descriptor names
+     * @return the image methods by the sampled name of their frames
      */
     private static Map<String, HostedMethod> indexStackTraceNames(HostedUniverse universe, Set<String> unresolvedFrames) {
         if (unresolvedFrames.isEmpty()) {
@@ -568,7 +644,14 @@ public final class IprofProfileResolver {
         return result;
     }
 
-    /** A method descriptor without the method's name: {@code Ljava/lang/Object;(J)V} for {@code Ljava/lang/Object;.wait(J)V}. */
+    /**
+     * A method descriptor without the method's name: {@code Ljava/lang/Object;(J)V} for
+     * {@code Ljava/lang/Object;.wait(J)V}.
+     *
+     * @param methodDescriptor a canonical method descriptor
+     * @return the descriptor without the name, or {@code methodDescriptor} itself if it is not of
+     *         that form, as for methods of array types such as {@code [I.clone()Ljava/lang/Object;}
+     */
     static String withoutMethodName(String methodDescriptor) {
         int nameStart = methodDescriptor.indexOf(";.") + 2;
         int signatureStart = methodDescriptor.indexOf('(', nameStart);

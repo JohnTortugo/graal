@@ -42,9 +42,14 @@ import jdk.vm.ci.code.BytecodePosition;
  * resolves and answers it.
  */
 public class CallCountProfileResolutionTest {
+    /**
+     * A profile up to the value of its {@code callCountProfiles} section. It declares the methods
+     * {@code bar} (id 7) and {@code caller} (id 8).
+     */
     private static final String PREFIX = "{\"version\":\"1.1.0\",\"types\":[{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"}]," +
                     "\"methods\":[{\"id\":7,\"name\":\"bar\",\"signature\":[1,2,3]},{\"id\":8,\"name\":\"caller\",\"signature\":[1,2,3]}],\"conditionalProfiles\":[],\"callCountProfiles\":";
 
+    /** Parses a profile whose {@code callCountProfiles} section is the array {@code entries}. */
     private static ParsedIprofProfile parse(String entries) throws Exception {
         return new IprofParser().parse(new StringReader(PREFIX + entries + "}"));
     }
@@ -68,6 +73,10 @@ public class CallCountProfileResolutionTest {
         Assert.assertTrue(lookup.getContextCallCount(new BytecodePosition(null, IprofProfileResolverTest.mockBarMethod(), 0)).isEmpty());
     }
 
+    /**
+     * The outer frame {@code caller} is not in the image, so the entry does not resolve as a call
+     * edge. Its count still adds to the call count of {@code bar}, which is in the image.
+     */
     @Test
     public void missingOuterFrameDoesNotUndercountPresentMethod() throws Exception {
         ParsedIprofProfile parsed = parse("[{\"ctx\":\"7:0<8:4\",\"records\":[9]}]");
@@ -78,6 +87,7 @@ public class CallCountProfileResolutionTest {
         Assert.assertEquals(Long.valueOf(9), lookup.methodCallCount(IprofProfileResolverTest.BAR_DESC).orElseThrow().value());
     }
 
+    /** A call count belongs to a method's entry, so its innermost frame must be at BCI 0. */
     @Test(expected = IprofFormatException.class)
     public void rejectsNonEntryBci() throws Exception {
         parse("[{\"ctx\":\"7:1\",\"records\":[1]}]");

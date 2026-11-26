@@ -296,12 +296,13 @@ public final class PGOInstrumentationFeature implements InternalFeature {
     }
 
     /**
-     * Adds the instrumentation phases immediately before the inliner, where {@code --pgo} applies
-     * the root's profiles, so every branch and call is instrumented in the shape the optimized
-     * build queries; the inliner instruments the graphs it expands (see
+     * Adds the instrumentation {@code phase} to {@code highTier} immediately before the inliner,
+     * where {@code --pgo} applies the root's profiles, so every branch and call is instrumented in
+     * the shape the optimized build queries; the inliner instruments the graphs it expands (see
      * {@link #instrumentExpandedGraph}). Phases placed after the inliner would see branches that
      * inlining and canonicalization had already split or folded, and miss every call the
-     * instrumented image inlined or devirtualized.
+     * instrumented image inlined or devirtualized. Without an inliner the phase runs first in the
+     * high tier.
      */
     private static void addBeforeInliner(PhaseSuite<HighTierContext> highTier, BasePhase<HighTierContext> phase) {
         ListIterator<BasePhase<? super HighTierContext>> inliner = highTier.findPhase(AbstractInliningPhase.class);

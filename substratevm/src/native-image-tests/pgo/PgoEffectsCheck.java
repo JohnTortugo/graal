@@ -32,10 +32,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -57,15 +60,18 @@ import jdk.vm.ci.code.BytecodeFrame;
 
 /**
  * Checks what PGO did to the compiled graphs of {@link PgoWorkload}, from the graph dumps a build
- * wrote with {@code -H:Dump=:1} and a method filter that covers the workload. Modes:
+ * wrote with {@code -H:Dump=:1} (the instrumented build with
+ * {@code -H:Dump=:1,ProfileInstrumentation:3}) and a method filter that covers the workload. The
+ * gate in {@code mx_substratevm.py} ({@code pgo_e2e_test_task}) compiles this class against the
+ * compiler's graph-file reader and runs it once per checked build. Modes:
  *
  * <ul>
  * <li>{@code profiled <dumpDir> <iprof> <name>=<count>...}: every branch
  * probability the compiler marked as profiled equals what the profile file records for that
  * branch (through the same context lookup the consumer performs); the profile file itself records
  * exactly the branch, switch, receiver, and call-edge counts the program reports; the monomorphic
- * interface call is guarded and direct; and both workload switches carry their recorded
- * distributions.</li>
+ * interface call is guarded and then called directly or inlined; and both workload switches carry
+ * their recorded distributions.</li>
  * <li>{@code profiled-receivers-disabled}, {@code profiled-switches-disabled} and
  * {@code profiled-branches-disabled}, with the same arguments: the consumer of one kind is off, so
  * that kind shows no effect while the others still show theirs.</li>
@@ -80,9 +86,11 @@ import jdk.vm.ci.code.BytecodeFrame;
  * profile is checked against ground truth without repeating how the workload computes them.
  */
 public final class PgoEffectsCheck {
+    /** Largest difference between two probabilities that still counts as equal. */
     private static final double TOLERANCE = 1e-6;
-
+    /** The dumped {@code profileData} of an {@code IfNode}; group 1 is the profile source. */
     private static final Pattern BRANCH_PROBABILITY = Pattern.compile("^(\\w+) designatedSuccessorProbability: (\\S+)$");
+    /** The dumped {@code profileData} of a switch; group 1 is the profile source. */
     private static final Pattern SWITCH_KEY_PROBABILITIES = Pattern.compile("^(\\w+) keyProbabilities: \\[(.*)\\]$");
     /** {@code pkg.Class.method(File.java:12) [bci:34]}; a frame of a node source position. */
     private static final Pattern FRAME = Pattern.compile("^(\\S+)\\(.*\\) \\[bci:(-?\\d+)\\]$");
@@ -94,18 +102,26 @@ public final class PgoEffectsCheck {
      * instrumentation phases at level 3 ({@code -H:Dump=:1,ProfileInstrumentation:3}).
      */
     private static final String AFTER_INSTRUMENTATION = "After phase CallCountProfileInstrumentation";
-
+    /** The failed checks; the program exits with status 1 when any is recorded. */
     private final List<String> failures = new ArrayList<>();
+    /** How many times each kind of check ran, printed so that a check that never ran is visible. */
     private final Map<String, Integer> checked = new TreeMap<>();
 
+    /**
+     * Runs the checks of one mode and exits with status 1 if any fails.
+     *
+     * @param args the mode, the dump directory and, for the {@code profiled} modes, the profile
+     *            file and the {@code name=count} pairs the training run printed
+     * @throws IOException if a dump or the profile file cannot be read
+     */
     public static void main(String[] args) throws IOException {
         PgoEffectsCheck check = new PgoEffectsCheck();
         String mode = args[0];
         Map<String, InputGraph> graphs = check.loadGraphs(Path.of(args[1]), mode.equals("instrumented") ? AFTER_INSTRUMENTATION : "After high tier");
         switch (mode) {
-            case "profiled" -> check.checkProfiled(args, graphs, true, true, true);
-            case "profiled-receivers-disabled" -> check.checkProfiled(args, graphs, false, true, true);
-            case "profiled-switches-disabled" -> check.checkProfiled(args, graphs, true, false, true);
+            case "profiled" -> check.checkProfiled(args, graphs, true, true);
+            case "profiled-receivers-disabled" -> check.checkProfiled(args, graphs, false, true);
+            case "profiled-switches-disabled" -> check.checkProfiled(args, graphs, true, false);
             case "profiled-branches-disabled" -> check.checkBranchesDisabled(args, graphs);
             case "unprofiled" -> {
                 check.checkNoProfiledControlSplits(graphs);
@@ -126,14 +142,23 @@ public final class PgoEffectsCheck {
         failures.add(message);
     }
 
+    /** Records that a check of kind {@code what} ran. */
     private void count(String what) {
         checked.merge(what, 1, Integer::sum);
     }
 
     /** The counts the training run printed, passed by the gate as {@code name=count} arguments. */
     private static final class TrainingCounts {
+        /** The printed value of each name. */
         private final Map<String, String> values = new HashMap<>();
 
+        /**
+         * Parses the {@code name=count} arguments.
+         *
+         * @param args the program arguments
+         * @param first the index of the first {@code name=count} argument
+         * @throws IllegalArgumentException if an argument has no name
+         */
         TrainingCounts(String[] args, int first) {
             for (int i = first; i < args.length; i++) {
                 int separator = args[i].indexOf('=');
@@ -144,6 +169,13 @@ public final class PgoEffectsCheck {
             }
         }
 
+        /**
+         * The value printed for {@code name}.
+         *
+         * @param name the printed name
+         * @return the value as text
+         * @throws IllegalArgumentException if the training run did not print {@code name}
+         */
         String text(String name) {
             String value = values.get(name);
             if (value == null) {
@@ -152,17 +184,29 @@ public final class PgoEffectsCheck {
             return value;
         }
 
+        /**
+         * The value printed for {@code name}, as a number.
+         *
+         * @param name the printed name
+         * @return the value
+         * @throws IllegalArgumentException if the training run did not print {@code name}
+         * @throws NumberFormatException if the value is not a number
+         */
         long count(String name) {
             return Long.parseLong(text(name));
         }
     }
 
-    private void checkProfiled(String[] args, Map<String, InputGraph> graphs, boolean expectReceiverEffects, boolean expectSwitchEffects,
-                    boolean expectRecordedSwitch) throws IOException {
+    /**
+     * Checks the {@code graphs} of a build with the profile {@code args[2]}, trained on the input
+     * that printed the counts in {@code args[3..]}. {@code expectReceiverEffects} and
+     * {@code expectSwitchEffects} say whether the build applies receiver and switch profiles.
+     */
+    private void checkProfiled(String[] args, Map<String, InputGraph> graphs, boolean expectReceiverEffects, boolean expectSwitchEffects) throws IOException {
         Profile profile = Profile.read(Path.of(args[2]));
         TrainingCounts counts = new TrainingCounts(args, 3);
         checkProfiledBranches(graphs, profile);
-        checkGroundTruth(profile, counts, expectRecordedSwitch);
+        checkGroundTruth(profile, counts);
         checkDistributionBranches(graphs, counts);
         checkDevirtualized(graphs, expectReceiverEffects);
         if (expectSwitchEffects) {
@@ -174,7 +218,11 @@ public final class PgoEffectsCheck {
 
     // ------------------------------------------------------------------ graph access
 
-    /** Loads the named graph of every compiled workload method; keyed by {@code Class.method}. */
+    /**
+     * Loads, from every hosted-compilation dump file in {@code dumpDir}, the last graph whose name
+     * ends with {@code graphName}; keyed by {@code Class.method}. Records a failure if none is
+     * found.
+     */
     private Map<String, InputGraph> loadGraphs(Path dumpDir, String graphName) throws IOException {
         Map<String, InputGraph> result = new LinkedHashMap<>();
         try (Stream<Path> files = Files.list(dumpDir)) {
@@ -199,6 +247,7 @@ public final class PgoEffectsCheck {
         return result;
     }
 
+    /** Adds every graph in {@code folder} and its sub-folders to {@code out}, in dump order. */
     private static void collect(Folder folder, List<InputGraph> out) {
         for (FolderElement element : folder.getElements()) {
             if (element instanceof InputGraph graph) {
@@ -210,22 +259,28 @@ public final class PgoEffectsCheck {
         }
     }
 
+    /** The simple class name of {@code node}, e.g. {@code IfNode}. */
     private static String nodeClass(InputNode node) {
         String name = String.valueOf(node.getProperties().get("class"));
         return name.substring(name.lastIndexOf('.') + 1);
     }
 
+    /** The dumped property {@code name} of {@code node} as text, or {@code null} if absent. */
     private static String property(InputNode node, String name) {
         Object value = node.getProperties().get(name);
         return value == null ? null : String.valueOf(value);
     }
 
+    /** The {@code relativeFrequency} of {@code node}, or NaN if the dump has none. */
     private static double frequency(InputNode node) {
         String value = property(node, "relativeFrequency");
         return value == null ? Double.NaN : Double.parseDouble(value);
     }
 
-    /** The node's inlining context as {@code Class.method:bci} frames, innermost first. */
+    /**
+     * The inlining context of {@code node} as {@code Class.method:bci} frames, innermost first;
+     * empty without a source position.
+     */
     private static List<String> context(InputNode node) {
         String position = property(node, "nodeSourcePosition");
         if (position == null) {
@@ -241,6 +296,7 @@ public final class PgoEffectsCheck {
         return frames;
     }
 
+    /** The bci of the innermost frame of {@code node}, or MIN_VALUE without a position. */
     private static int bci(InputNode node) {
         List<String> context = context(node);
         return context.isEmpty() ? Integer.MIN_VALUE : Integer.parseInt(context.getFirst().substring(context.getFirst().lastIndexOf(':') + 1));
@@ -254,6 +310,10 @@ public final class PgoEffectsCheck {
         return nodes;
     }
 
+    /**
+     * The node that {@code from}'s edge named {@code label} (e.g. {@code trueSuccessor},
+     * {@code next}) leads to in {@code graph}, looked up in {@code nodes}; {@code null} if none.
+     */
     private static InputNode successor(InputGraph graph, Map<Integer, InputNode> nodes, InputNode from, String label) {
         for (InputEdge edge : graph.getEdges()) {
             if (edge.getFrom() == from.getId() && edge.getLabel().equals(label)) {
@@ -263,6 +323,10 @@ public final class PgoEffectsCheck {
         return null;
     }
 
+    /**
+     * The call target node that is the {@code callTarget} input of {@code invoke} in
+     * {@code graph}, looked up in {@code nodes}; {@code null} if none.
+     */
     private static InputNode callTarget(InputGraph graph, Map<Integer, InputNode> nodes, InputNode invoke) {
         for (InputEdge edge : graph.getEdges()) {
             if (edge.getTo() == invoke.getId() && edge.getLabel().equals("callTarget")) {
@@ -274,15 +338,33 @@ public final class PgoEffectsCheck {
 
     // ------------------------------------------------------------------ the profile file
 
-    /** The parts of an iprof file the checks need, with contexts as {@code Class.method:bci} chains. */
+    /**
+     * The parts of an iprof file the checks need, with contexts as {@code Class.method:bci} chains.
+     */
     private static final class Profile {
-        /** Conditional entries: context chain to successor records [bci, index, count]*. */
+        /**
+         * The {@code conditionalProfiles} section: context chain to the records of every entry
+         * with that chain, each a flat array of (successor bci, successor index, count) triples.
+         */
         final Map<List<String>, List<long[]>> conditionalProfiles = new HashMap<>();
-        /** Receiver profiles: context chain to type name to count. */
+        /** The {@code virtualInvokeProfiles} section: context chain to receiver type to count. */
         final Map<List<String>, Map<String, Long>> virtualInvokeProfiles = new HashMap<>();
-        /** Exact target-first call contexts to their execution counts. */
+        /**
+         * The {@code callCountProfiles} section: call context, callee frame first, to its count,
+         * summed over entries with the same context.
+         */
         final Map<List<String>, Long> callCountProfiles = new HashMap<>();
 
+        /**
+         * Reads the sections the checks need from an iprof file, with method and type ids replaced
+         * by their names.
+         *
+         * @param file the iprof file
+         * @return the profile
+         * @throws IOException if the file cannot be read
+         * @throws IllegalArgumentException if a {@code callCountProfiles} entry has other than one
+         *             count
+         */
         @SuppressWarnings("unchecked")
         static Profile read(Path file) throws IOException {
             EconomicMap<String, Object> root = (EconomicMap<String, Object>) new JsonParser(Files.readString(file)).parse();
@@ -323,11 +405,16 @@ public final class PgoEffectsCheck {
             return profile;
         }
 
+        /** The section {@code name} of {@code root}, or an empty list if the file has none. */
         private static Object section(EconomicMap<String, Object> root, String name) {
             Object value = root.get(name);
             return value == null ? List.of() : value;
         }
 
+        /**
+         * Turns an iprof context {@code ctx}, {@code methodId:bci} frames joined by {@code <}, into
+         * {@code Class.method:bci} frames, naming each method through {@code methods}.
+         */
         private static List<String> context(Map<Long, String> methods, String ctx) {
             List<String> frames = new ArrayList<>();
             for (String frame : ctx.split("<")) {
@@ -337,6 +424,7 @@ public final class PgoEffectsCheck {
             return frames;
         }
 
+        /** The JSON number array {@code list} as a {@code long[]}. */
         @SuppressWarnings("unchecked")
         private static long[] longs(Object list) {
             List<Object> values = (List<Object>) list;
@@ -351,6 +439,10 @@ public final class PgoEffectsCheck {
          * The records the consumer would use for this context: the exact chain, else the sum of all
          * entries whose chain starts with the longest matching part of it, outermost frames dropped
          * first (the shortened-context fallback, {@code IprofProfilesLookup}).
+         *
+         * @param context the query context, innermost frame first
+         * @return the records of the exact entries, or one summed record for the longest prefix
+         *         that has entries; {@code null} if not even the innermost frame has one
          */
         List<long[]> conditionalFor(List<String> context) {
             List<long[]> exact = conditionalProfiles.get(context);
@@ -387,8 +479,9 @@ public final class PgoEffectsCheck {
     }
 
     /**
-     * The true-successor probability the consumer sets from a record on a branch whose successors
-     * start at {@code trueBci} and {@code falseBci}, following
+     * The true-successor probability the consumer sets from {@code records}, one record of
+     * (successor bci, successor index, count) triples, on a branch whose successors start at
+     * {@code trueBci} and {@code falseBci}, following
      * {@code PGOApplyProfilesPhase.aggregatedProbabilities} and its caller: each record entry gets
      * its key's share of the counts, zero shares are clamped, the last entry that names a valid
      * bytecode index gives that index its key's probability, and the successors that start at a
@@ -415,14 +508,7 @@ public final class PgoEffectsCheck {
             long key = records[3 * e + 1];
             shares[e] = (double) countByKey.get(key) / (entriesByKey.get(key) * total);
         }
-        long zeros = Arrays.stream(shares).filter(p -> p == 0.0).count();
-        if (zeros > 0) {
-            double adjustment = zeros * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
-            double scale = 1 / (1 - (entries - zeros) * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY);
-            for (int e = 0; e < entries; e++) {
-                shares[e] = shares[e] == 0.0 ? BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY : shares[e] - adjustment * (shares[e] - BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
-            }
-        }
+        clampZeros(shares);
         Map<Long, Double> byKey = new HashMap<>();
         for (int e = 0; e < entries; e++) {
             byKey.merge(records[3 * e + 1], shares[e], Double::sum);
@@ -443,7 +529,27 @@ public final class PgoEffectsCheck {
         return result;
     }
 
-    /** Per-successor-bci probabilities the consumer derives from a record, including its clamping of zero counts. */
+    /**
+     * Clamps the zero entries of {@code probabilities} to the extremely-slow-path probability and
+     * scales the others down so that the sum stays the same, as the consumer does.
+     */
+    private static void clampZeros(double[] probabilities) {
+        long zeros = Arrays.stream(probabilities).filter(p -> p == 0.0).count();
+        if (zeros > 0) {
+            double adjustment = zeros * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
+            double scale = 1 / (1 - (probabilities.length - zeros) * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY);
+            for (int i = 0; i < probabilities.length; i++) {
+                probabilities[i] = probabilities[i] == 0.0 ? BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY
+                                : probabilities[i] - adjustment * (probabilities[i] - BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
+            }
+        }
+    }
+
+    /**
+     * The probability of each successor bci that the consumer derives from {@code records}, one
+     * switch record of (successor bci, successor index, count) triples, including its clamping of
+     * zero counts; empty when all counts are zero.
+     */
     private static Map<Integer, Double> expectedProbabilities(long[] records) {
         Map<Integer, Long> countByBci = new LinkedHashMap<>();
         long total = 0;
@@ -456,14 +562,7 @@ public final class PgoEffectsCheck {
         }
         final long sum = total;
         double[] probabilities = countByBci.values().stream().mapToDouble(c -> (double) c / sum).toArray();
-        long zeros = Arrays.stream(probabilities).filter(p -> p == 0.0).count();
-        if (zeros > 0) {
-            double adjustment = zeros * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
-            double scale = 1 / (1 - (probabilities.length - zeros) * BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY);
-            for (int i = 0; i < probabilities.length; i++) {
-                probabilities[i] = probabilities[i] == 0.0 ? BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY : probabilities[i] - adjustment * (probabilities[i] - BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY) * scale;
-            }
-        }
+        clampZeros(probabilities);
         Map<Integer, Double> result = new LinkedHashMap<>();
         int i = 0;
         for (Integer bci : countByBci.keySet()) {
@@ -475,8 +574,9 @@ public final class PgoEffectsCheck {
     // ------------------------------------------------------------------ checks
 
     /**
-     * Every profiled branch probability is what the profile file records for that branch under the
-     * consumer's context lookup, assigned to the right successor.
+     * Every profiled branch probability in {@code graphs} is what {@code profile} records for that
+     * branch under the consumer's context lookup, assigned to the right successor, and there are
+     * at least 10 such branches.
      */
     private void checkProfiledBranches(Map<String, InputGraph> graphs, Profile profile) {
         for (Map.Entry<String, InputGraph> entry : graphs.entrySet()) {
@@ -528,8 +628,11 @@ public final class PgoEffectsCheck {
         }
     }
 
-    /** The profile file records exactly the counts the program itself reports for the training run. */
-    private void checkGroundTruth(Profile profile, TrainingCounts counts, boolean expectRecordedSwitch) {
+    /**
+     * {@code profile} records exactly the branch, receiver and call-edge {@code counts} the program
+     * itself reports for the training run, and its switch counts.
+     */
+    private void checkGroundTruth(Profile profile, TrainingCounts counts) {
         long squares = counts.count("squares");
         long triangles = counts.count("triangles");
         long circlesInMixed = counts.count("mixedCircles");
@@ -550,11 +653,13 @@ public final class PgoEffectsCheck {
         expectBranchCounts(profile, "PgoWorkload.threadedBranch", threadTrue, threadFalse, "short-lived thread branch outcomes merged at thread exit");
         expectCallCount(profile, "PgoWorkload.liveSnapshotBranch", liveTrue + liveFalse);
         expectBranchCounts(profile, "PgoWorkload.liveSnapshotBranch", liveTrue, liveFalse, "live daemon-thread outcomes collected by the teardown snapshot");
-        if (expectRecordedSwitch) {
-            expectSwitchCounts(profile, "PgoWorkload.profiledSwitch", counts.count("switchZero"), counts.count("switchOne"), counts.count("switchTwo"));
-        }
+        expectSwitchCounts(profile, "PgoWorkload.profiledSwitch", counts.count("switchZero"), counts.count("switchOne"), counts.count("switchTwo"));
     }
 
+    /**
+     * The {@code callCountProfiles} entries of {@code profile} whose callee frame is the entry of
+     * {@code method} ({@code PgoWorkload.name}) sum to {@code expected}, over all calling contexts.
+     */
     private void expectCallCount(Profile profile, String method, long expected) {
         count("recorded call-edge counts equal to the program's own counts");
         long recorded = 0;
@@ -572,6 +677,10 @@ public final class PgoEffectsCheck {
         }
     }
 
+    /**
+     * Some conditional record of {@code profile} whose innermost frame is in {@code method} has
+     * exactly the successor counts {@code expectedCounts}, in record order.
+     */
     private void expectSwitchCounts(Profile profile, String method, long... expectedCounts) {
         count("recorded switch counts equal to the program's own counts");
         long[] expected = expectedCounts.clone();
@@ -597,6 +706,11 @@ public final class PgoEffectsCheck {
         fail("no switch record in " + method + " has successor counts " + Arrays.toString(expected) + "; found " + seen);
     }
 
+    /**
+     * Some two-successor record of {@code profile} whose innermost frame is in {@code method} has
+     * the counts {@code first} and {@code second}, in either order; {@code description} names the
+     * branch in the failure message.
+     */
     private void expectBranchCounts(Profile profile, String method, long first, long second, String description) {
         count("recorded counts equal to the program's own counts");
         for (Map.Entry<List<String>, List<long[]>> entry : profile.conditionalProfiles.entrySet()) {
@@ -612,6 +726,10 @@ public final class PgoEffectsCheck {
         fail("no record in " + method + " has the counts {" + first + ", " + second + "} (" + description + ")");
     }
 
+    /**
+     * The receiver records of {@code profile} for the call whose context starts with the methods
+     * {@code frames} (innermost first) sum, per simple type name, to {@code expected}.
+     */
     private void expectReceivers(Profile profile, List<String> frames, Map<String, Long> expected) {
         count("recorded receivers equal to the program's own counts");
         /*
@@ -650,8 +768,10 @@ public final class PgoEffectsCheck {
     }
 
     /**
-     * The two profiled branches of the shape distribution carry the distribution the program built,
-     * on the successor the source puts the squares and triangles on.
+     * In {@code graphs}, the two profiled branches of the shape distribution carry the distribution
+     * the program built, on the successor the source puts the squares and triangles on, and the
+     * end-of-input branch carries its one exit in {@code parseCalls}; all from the training
+     * {@code counts}.
      */
     private void checkDistributionBranches(Map<String, InputGraph> graphs, TrainingCounts counts) {
         long squares = counts.count("squares");
@@ -662,13 +782,18 @@ public final class PgoEffectsCheck {
         expectProfiledBranch(graphs, List.of("PgoWorkload.mixed"), squareShare, "the square share of the mixed shapes");
         expectProfiledBranch(graphs, List.of("PgoWorkload.mixed"), triangleShare, "the triangle share of the non-square mixed shapes");
         /*
-         * parseRecord tests for the end of input and returns Long.MIN_VALUE, which main tests again.
-         * Once parseRecord is inlined into main the two tests fold into one, at either position.
+         * parseRecord tests for the end of input and returns Long.MIN_VALUE, which main tests
+         * again. Once parseRecord is inlined into main the two tests fold into one, at either
+         * position.
          */
         expectProfiledBranch(graphs, List.of("PgoWorkload.parseRecord", "PgoWorkload.main"), 1.0 / counts.count("parseCalls"), "the end-of-input exit");
     }
 
-    /** A profiled branch of one of {@code methods} has {@code expected}, in its own graph or in one it was inlined into. */
+    /**
+     * A profiled branch of one of {@code methods} has the probability {@code expected}, in its own
+     * graph in {@code graphs} or in one it was inlined into; {@code description} names the branch
+     * in the failure message.
+     */
     private void expectProfiledBranch(Map<String, InputGraph> graphs, List<String> methods, double expected, String description) {
         count("distribution branches with the program's own probability");
         List<String> seen = new ArrayList<>();
@@ -697,7 +822,8 @@ public final class PgoEffectsCheck {
      * devirtualized to the recorded implementation, which is then called directly or, at
      * {@code -O3}, inlined. Without one the recorded type is not singled out: the call stays an
      * interface call, or, at {@code -O3}, the inliner dispatches over every implementation the
-     * closed-world analysis allows.
+     * closed-world analysis allows. {@code profiled} says which of the two {@code graphs} must
+     * show.
      */
     private void checkDevirtualized(Map<String, InputGraph> graphs, boolean profiled) {
         count("devirtualization of the monomorphic interface call");
@@ -709,14 +835,12 @@ public final class PgoEffectsCheck {
         Map<Integer, InputNode> nodes = nodesById(graph);
         double hotInterface = 0;
         double hotDirect = 0;
-        boolean inlinedImplementation = false;
-        java.util.Set<String> inlinedTypes = new java.util.TreeSet<>();
+        Set<String> inlinedTypes = new TreeSet<>();
         for (InputNode node : graph.getNodes()) {
             for (String frame : context(node)) {
                 Matcher implementation = AREA_FRAME.matcher(frame);
                 if (implementation.matches()) {
                     inlinedTypes.add(implementation.group(1));
-                    inlinedImplementation |= implementation.group(1).equals("Square") || implementation.group(1).equals("Circle");
                 }
             }
             if (!nodeClass(node).startsWith("Invoke")) {
@@ -737,7 +861,7 @@ public final class PgoEffectsCheck {
             }
         }
         if (profiled) {
-            if (hotDirect < 1000 && !inlinedImplementation) {
+            if (hotDirect < 1000 && !inlinedTypes.contains("Square") && !inlinedTypes.contains("Circle")) {
                 fail("unitAreas: the recorded receiver's area() is neither called directly in the hot loop (max frequency " + hotDirect + ") nor inlined");
             }
             if (hotInterface > 1e-3) {
@@ -754,12 +878,21 @@ public final class PgoEffectsCheck {
         }
     }
 
-    /** Both switches carry distributions derived from their exact recorded successor counts. */
+    /**
+     * In {@code graphs}, both workload switches carry distributions derived from their exact
+     * successor counts in {@code profile}.
+     */
     private void checkSwitch(Map<String, InputGraph> graphs, Profile profile) {
         checkSwitch(graphs, profile, "parseStruct");
         checkSwitch(graphs, profile, "profiledSwitch");
     }
 
+    /**
+     * Every profiled {@code IntegerSwitchNode} of {@code method} in {@code graphs} has the
+     * successor probabilities of one of its records in {@code profile}, and at least one does.
+     * Copies whose unreachable keys were removed after the profile was applied are counted but not
+     * compared.
+     */
     private void checkSwitch(Map<String, InputGraph> graphs, Profile profile, String method) {
         count("profiled switch distributions");
         int matchedSwitches = 0;
@@ -784,9 +917,9 @@ public final class PgoEffectsCheck {
                     continue;
                 }
                 /*
-                 * The record counts per successor; the switch distributes a successor's share over
-                 * the keys that lead to it. The dump must list the successor probabilities, and they
-                 * must equal the record's shares.
+                 * The record counts per successor; the switch distributes a successor's share
+                 * over the keys that lead to it. The dump must list the successor probabilities,
+                 * and they must equal the record's shares.
                  */
                 Map<Integer, Double> successors = successorProbabilities(graphEntry.getValue(), node, graphNodes);
                 if (successors == null) {
@@ -802,9 +935,9 @@ public final class PgoEffectsCheck {
                 }
                 if (!matched && pruned) {
                     /*
-                     * A copy, for example in an unrolled loop, in which keys that cannot occur there
-                     * were removed after the profile was applied; the remaining keys keep their
-                     * shares, renormalized, so the distribution is no longer the record's.
+                     * A copy, for example in an unrolled loop, in which keys that cannot occur
+                     * there were removed after the profile was applied; the remaining keys keep
+                     * their shares, renormalized, so the distribution is no longer the record's.
                      */
                     count("profiled switch copies with unreachable keys removed");
                     continue;
@@ -821,6 +954,10 @@ public final class PgoEffectsCheck {
         }
     }
 
+    /**
+     * With {@code -H:-PGOUseSwitchProfiles}: {@code graphs} contain a switch of both workload
+     * switch methods, and none carries a profiled distribution.
+     */
     private void checkNoProfiledSwitches(Map<String, InputGraph> graphs) {
         count("disabled switch consumer leaves switch distributions unprofiled");
         Map<String, Boolean> found = new HashMap<>();
@@ -851,16 +988,19 @@ public final class PgoEffectsCheck {
     }
 
     /**
-     * Successor bytecode index to probability from the dumped cache {@code (id|Name,probability)}.
+     * Successor bytecode index to probability for the switch {@code node} of {@code graph}, from
+     * its dumped cache {@code (id|Name,probability)}, with successors looked up in {@code nodes}.
      * The cache can keep entries for successors the switch had before it was copied or simplified;
-     * only the switch's current successors count.
+     * only the switch's current successors count. {@code null} when the dump has no cache, a
+     * current successor has no bytecode position, two successors at one bytecode index have
+     * different probabilities, or no successor is left.
      */
     private static Map<Integer, Double> successorProbabilities(InputGraph graph, InputNode node, Map<Integer, InputNode> nodes) {
         String cache = property(node, "successorProbabilityCache");
         if (cache == null) {
             return null;
         }
-        java.util.Set<Integer> current = new java.util.HashSet<>();
+        Set<Integer> current = new HashSet<>();
         for (InputEdge edge : graph.getEdges()) {
             if (edge.getFrom() == node.getId() && edge.getLabel().equals("successors")) {
                 current.add(edge.getTo());
@@ -884,6 +1024,7 @@ public final class PgoEffectsCheck {
         return byBci.isEmpty() ? null : byBci;
     }
 
+    /** Whether {@code actual} and {@code expected} have the same keys and equal probabilities. */
     private static boolean sameDistribution(Map<Integer, Double> actual, Map<Integer, Double> expected) {
         if (!actual.keySet().equals(expected.keySet())) {
             return false;
@@ -897,8 +1038,9 @@ public final class PgoEffectsCheck {
     }
 
     /**
-     * With {@code -H:-PGOUseBranchProfiles} no {@code IfNode} carries a profiled probability, while
-     * the same build still applies the switch and receiver profiles.
+     * With {@code -H:-PGOUseBranchProfiles} no {@code IfNode} in {@code graphs} carries a profiled
+     * probability, while the same build still applies the switch and receiver profiles of the
+     * profile file {@code args[2]}.
      */
     private void checkBranchesDisabled(String[] args, Map<String, InputGraph> graphs) throws IOException {
         Profile profile = Profile.read(Path.of(args[2]));
@@ -923,6 +1065,11 @@ public final class PgoEffectsCheck {
         checkSwitch(graphs, profile);
     }
 
+    /**
+     * In a build without a profile, no node in {@code graphs} carries a profiled probability; the
+     * graphs must hold at least 10 branches and switches and the code of {@code mixed} and
+     * {@code parseRecord}.
+     */
     private void checkNoProfiledControlSplits(Map<String, InputGraph> graphs) {
         count("unprofiled graphs without profiled branches");
         int controlSplits = 0;
@@ -942,7 +1089,7 @@ public final class PgoEffectsCheck {
         }
     }
 
-    /** Whether {@code method} was compiled, as its own graph or inlined into another one. */
+    /** Whether {@code method} was compiled, as its own graph in {@code graphs} or inlined. */
     private static boolean hasCodeOf(Map<String, InputGraph> graphs, String method) {
         if (graphs.containsKey(method)) {
             return true;
@@ -963,8 +1110,10 @@ public final class PgoEffectsCheck {
      * Right after the instrumentation phases, before the inliner: every branch the producer selects
      * owns a counter at the start of each successor and no other branch has one, every indirect
      * call has one receiver counter, and every graph has at least as many call-count counters as
-     * direct calls. The producer selects a branch as {@code ProfilingUtilities.relevantConditionalSitesFromGraph}
-     * does: not an implicit-exception check, and every frame of its position has a bytecode index.
+     * direct calls. The producer selects a branch as
+     * {@code ProfilingUtilities.relevantConditionalSitesFromGraph} does: not an implicit-exception
+     * check, and every frame of its position has a bytecode index. Checks every workload graph in
+     * {@code graphs}, and at least 20 branch counters in total.
      */
     private void checkInstrumentation(Map<String, InputGraph> graphs) {
         int counters = 0;
@@ -1024,7 +1173,7 @@ public final class PgoEffectsCheck {
                 fail(entry.getKey() + ": " + indirectInvokes + " indirect calls but " + receiverCounters + " receiver counters");
             }
             if (callCounters < directInvokes) {
-                fail(entry.getKey() + ": " + directInvokes + " direct calls but only " + callCounters + " call-count/switch counters");
+                fail(entry.getKey() + ": " + directInvokes + " direct calls but only " + callCounters + " call-count counters");
             }
             count("instrumented graphs");
         }
@@ -1033,17 +1182,20 @@ public final class PgoEffectsCheck {
         }
     }
 
+    /** The {@code next} node of {@code node} in {@code graph}; {@code null} if either is absent. */
     private static InputNode next(InputGraph graph, Map<Integer, InputNode> nodes, InputNode node) {
         return node == null ? null : successor(graph, nodes, node, "next");
     }
 
+    /** Whether {@code node} is present and its class has the simple name {@code simpleName}. */
     private static boolean isClass(InputNode node, String simpleName) {
         return node != null && nodeClass(node).equals(simpleName);
     }
 
     /**
-     * The producer skips a branch whose position has a frame with {@link BytecodeFrame#UNKNOWN_BCI}
-     * or {@link BytecodeFrame#INVALID_FRAMESTATE_BCI}.
+     * Whether {@code node} has a source position in which no frame has
+     * {@link BytecodeFrame#UNKNOWN_BCI} or {@link BytecodeFrame#INVALID_FRAMESTATE_BCI}; the
+     * producer skips a branch with such a frame.
      */
     private static boolean hasBytecodePositions(InputNode node) {
         List<String> context = context(node);

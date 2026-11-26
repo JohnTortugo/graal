@@ -39,9 +39,13 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
  */
 public class ConditionalProbabilityMathTest {
 
+    /** Tolerance for probabilities that must match exactly up to rounding. */
     private static final double EPS = 1e-9;
 
-    /** Records {20, 0, 10, 53, 1, 1}: the successor at BCI 20 taken 10 times, the one at BCI 53 once. */
+    /**
+     * Records {20, 0, 10, 53, 1, 1}: the successor at BCI 20 taken 10 times, the one at BCI 53
+     * once.
+     */
     @Test
     public void distributesDocumentedVectorTenToOne() {
         Optional<double[]> probabilities = PGOApplyProfilesPhase.distributeConditionalProbabilities(new long[]{20, 0, 10, 53, 1, 1});
@@ -131,15 +135,23 @@ public class ConditionalProbabilityMathTest {
         Assert.assertTrue(byBci.containsKey(53));
     }
 
+    /**
+     * With one key per successor, every key gets its successor's recorded probability and the prior
+     * probabilities play no part.
+     */
     @Test
     public void switchProbabilitiesAreInstalledAtomically() {
-        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(3, new int[]{0, 1, 2}, new double[]{1.0 / 3, 1.0 / 3, 1.0 / 3}, new double[]{0.2, 0.3, 0.5});
+        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(new int[]{0, 1, 2}, new double[]{1.0 / 3, 1.0 / 3, 1.0 / 3}, new double[]{0.2, 0.3, 0.5});
         Assert.assertArrayEquals(new double[]{0.2, 0.3, 0.5}, result, 1e-12);
     }
 
+    /**
+     * Keys 0 and 1 share successor 0, whose recorded probability 0.6 is split 1:2 as their priors
+     * 0.1 and 0.2 are; key 2 alone gets successor 1's 0.4.
+     */
     @Test
     public void sharedSwitchTargetPreservesPriorKeyRatio() {
-        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(2, new int[]{0, 0, 1}, new double[]{0.1, 0.2, 0.7}, new double[]{0.6, 0.4});
+        double[] result = PGOApplyProfilesPhase.distributeSwitchProbabilities(new int[]{0, 0, 1}, new double[]{0.1, 0.2, 0.7}, new double[]{0.6, 0.4});
         Assert.assertArrayEquals(new double[]{0.2, 0.4, 0.4}, result, 1e-12);
     }
 }

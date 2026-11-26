@@ -87,12 +87,24 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         @Option(help = "Print the quality metrics (relevance and applicability) for the provided profiles i.e. iprof file(s).")//
         public static final HostedOptionKey<Boolean> PGOPrintProfileQuality = new HostedOptionKey<>(false);
 
+        /**
+         * Lets an image be built without receiver profiles, to see what they add. The PGO
+         * end-to-end test turns it off in its {@code pgo-receivers-disabled} build.
+         */
         @Option(help = "Apply virtualInvokeProfiles receiver frequencies.")//
         public static final HostedOptionKey<Boolean> PGOUseReceiverProfiles = new HostedOptionKey<>(true);
 
+        /**
+         * Lets an image be built without switch profiles, to see what they add. The PGO
+         * end-to-end test turns it off in its {@code pgo-switches-disabled} build.
+         */
         @Option(help = "Apply conditionalProfiles to SwitchNode successors.")//
         public static final HostedOptionKey<Boolean> PGOUseSwitchProfiles = new HostedOptionKey<>(true);
 
+        /**
+         * Lets an image be built without branch profiles, to see what they add. The PGO
+         * end-to-end test turns it off in its {@code pgo-branches-disabled} build.
+         */
         @Option(help = "Apply conditionalProfiles to IfNode branches.")//
         public static final HostedOptionKey<Boolean> PGOUseBranchProfiles = new HostedOptionKey<>(true);
         // @formatter:on
@@ -107,6 +119,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     private static final int CONDITIONAL_RECORD_BCI_POSITION = 0;
     public static final int CONDITIONAL_RECORD_KEY_POSITION = 1;
     public static final int CONDITIONAL_RECORD_COUNTER_POSITION = 2;
+    /** The profiles of the {@code --pgo} files, resolved against this image. */
     private final PGOProfilesLookup profilesLookup;
     private final NodeSourcePosition inliningContext;
     private final HostedUniverse hUniverse;
@@ -124,28 +137,70 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * <p>
      * Should be tracking only when applying
      * {@link #createContextInsensitive(HostedUniverse, PGOProfilesLookup) context insensitive
-     * profiles} and if PGOPrintProfileQuality and PGOPrintProfileQualityDetails are set
-     * (respectively).
-     * <p>
+     * profiles}: the metrics with PGOPrintProfileQuality, and the metrics and their details with
+     * PGOPrintProfileQualityDetails.
      */
     private final ProfileQuality.Level profileQualityLevel;
 
+    /**
+     * Creates the phase that applies profiles to a cutoff expanded inside a hot compilation root.
+     * The expanded graph is treated as hot whatever its own profile says.
+     *
+     * @param inliningContext the position of the expanded call, appended as the caller chain of
+     *            every profile query
+     * @param hUniverse the hosted universe
+     * @param compilationRootContext the prefix-tree cursor at the expanded method, used to look up
+     *            method profiles from samples
+     * @param profilesLookup the profiles to apply
+     * @return the phase
+     */
     public static PGOApplyProfilesPhase createForExpandingHotCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext,
                     PGOProfilesLookup profilesLookup) {
         return new PGOApplyProfilesPhase(inliningContext, hUniverse, compilationRootContext, profilesLookup, true, ProfileQuality.Level.NOT_TRACKING);
     }
 
+    /**
+     * Creates the phase that applies profiles to an expanded cutoff, queried under the context of
+     * the expanded call.
+     *
+     * @param inliningContext the position of the expanded call, appended as the caller chain of
+     *            every profile query
+     * @param hUniverse the hosted universe
+     * @param profilesLookup the profiles to apply
+     * @return the phase
+     */
     public static PGOApplyProfilesPhase createForExpandingCutoffs(NodeSourcePosition inliningContext, HostedUniverse hUniverse, PGOProfilesLookup profilesLookup) {
         return new PGOApplyProfilesPhase(inliningContext, hUniverse, null, profilesLookup, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
+    /**
+     * Creates the phase that applies profiles to a hot compilation root before it is compiled.
+     *
+     * @param hUniverse the hosted universe
+     * @param compilationRootContext the prefix-tree cursor at the compilation root, used to look up
+     *            method profiles from samples
+     * @param profilesLookup the profiles to apply
+     * @return the phase
+     */
     public static PGOApplyProfilesPhase createForBeforeHotCompilationPhase(HostedUniverse hUniverse, PrefixTree.Cursor compilationRootContext, PGOProfilesLookup profilesLookup) {
         return new PGOApplyProfilesPhase(null, hUniverse, compilationRootContext, profilesLookup, false, ProfileQuality.Level.NOT_TRACKING);
     }
 
+    /**
+     * Creates the phase that applies profiles to a method graph without a calling context. This is
+     * the only phase that tracks profile quality, as {@code -H:+PGOPrintProfileQuality} and
+     * {@code -H:+PGOPrintProfileQualityDetails} ask.
+     *
+     * @param hUniverse the hosted universe
+     * @param profilesLookup the profiles to apply
+     * @return the phase
+     */
     public static PGOApplyProfilesPhase createContextInsensitive(HostedUniverse hUniverse, PGOProfilesLookup profilesLookup) {
         ProfileQuality.Level level = ProfileQuality.Level.NOT_TRACKING;
-        /* The details are a superset of the metrics, so asking for them alone also tracks the metrics. */
+        /*
+         * The details are a superset of the metrics, so asking for them alone also tracks the
+         * metrics.
+         */
         if (PGOPrintProfileQuality.getValue() || PGOPrintProfileQualityDetails.getValue()) {
             level = ProfileQuality.Level.TRACKING;
             if (PGOPrintProfileQualityDetails.getValue()) {
@@ -176,12 +231,16 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     /**
-     * A record applies to a successor only through the successor's bytecode position. Successors
+     * Returns whether a conditional record with bytecode index {@code bci} can be applied. A
+     * record applies to a successor only through the successor's bytecode position. Successors
      * without one (an inlined intrinsic or substitution, bci -1; an exception edge, -3 or -4; an
      * unknown position, {@code BytecodeFrame.UNKNOWN_BCI}, -5) are indistinguishable from each
      * other: applying their record would give every such successor the same probability, replacing
      * the static or injected prior with a value that need not even sum to one across the branch.
      * Such successors keep their prior.
+     *
+     * @param bci the bytecode index of a successor in a {@code conditionalProfiles} record
+     * @return {@code true} if {@code bci} is a real bytecode index ({@code >= 0})
      */
     public static boolean validConditionalBci(long bci) {
         return bci >= 0;
@@ -289,9 +348,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     /**
-     * Applies the conditional profiles to the branches and switches that the instrumentation phase
-     * instruments, each queried under its own calling context ({@link ConditionalSite#context()}),
-     * the context it was recorded under.
+     * Applies the {@code conditionalProfiles} to the branches and switches of {@code graph} that
+     * the instrumentation phase instruments, each queried under its own calling context
+     * ({@link ConditionalSite#context()}), the context it was recorded under.
      */
     private void updateProfilesForConditionals(StructuredGraph graph) {
         if (!profilesLookup.profileCategoryRecorded(CONDITIONAL_PROFILES)) {
@@ -305,7 +364,10 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         }
     }
 
-    /** {@code -H:-PGOUseSwitchProfiles} and {@code -H:-PGOUseBranchProfiles} leave their kind of site unprofiled. */
+    /**
+     * Returns whether profiles are applied to {@code node}'s kind of site:
+     * {@code -H:-PGOUseSwitchProfiles} and {@code -H:-PGOUseBranchProfiles} leave it unprofiled.
+     */
     private static boolean shouldApplyConditional(ControlSplitNode node) {
         return node instanceof SwitchNode ? Options.PGOUseSwitchProfiles.getValue() : Options.PGOUseBranchProfiles.getValue();
     }
@@ -532,6 +594,11 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * fallback invoke when that probability is positive; a zero entry would be dropped silently and
      * the type switch would no longer cover every possible receiver. Unobserved analysed types keep
      * an extremely small probability instead.
+     *
+     * @param profile an exact type profile
+     * @return {@code profile} itself when no type has probability zero; otherwise a copy where each
+     *         such type has {@code EXTREMELY_SLOW_PATH_PROBABILITY} and the other probabilities are
+     *         scaled down so that all still sum to one
      */
     static JavaTypeProfile withoutZeroProbabilities(JavaTypeProfile profile) {
         JavaTypeProfile.ProfiledType[] types = profile.getTypes();
@@ -555,8 +622,9 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     /**
-     * Keeps only observed receivers that the exact static profile admits. Returns empty when none of
-     * the observed receivers is possible here, so the static profile is left untouched.
+     * Keeps only the {@code observed} receivers that the exact {@code staticTypeProfile} admits
+     * and counts the others as impossible receivers. Returns empty when none of the observed
+     * receivers is possible here, so the static profile is left untouched.
      */
     private Optional<Map<AnalysisType, Long>> restrictToStaticTypes(Map<AnalysisType, Long> observed, JavaTypeProfile staticTypeProfile) {
         Set<ResolvedJavaType> admitted = new HashSet<>();
@@ -594,6 +662,10 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
         // TODO GR-51733 BS Infer conditional based on samples.
     }
 
+    /**
+     * Applies the {@code conditionalProfiles} record of {@code site}'s context to its node, and
+     * records how much of it was applied for the profile quality report.
+     */
     private void updateConditionalProbabilities(ConditionalSite site) {
         NodeSourcePosition context = site.context();
         ControlSplitNode conditionalNode = site.node();
@@ -609,12 +681,19 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
     }
 
     /**
-     * How many successor probabilities the record has ({@code profiledSuccessors}) and how many of
-     * them were set on successors of the graph node ({@code appliedSuccessors}).
+     * How much of a {@code conditionalProfiles} record was applied to a graph node.
+     *
+     * @param profiledSuccessors how many successor probabilities the record has
+     * @param appliedSuccessors how many of them were set on successors of the graph node
      */
     private record ConditionalApplication(int profiledSuccessors, int appliedSuccessors) {
     }
 
+    /**
+     * Sets the probabilities recorded in {@code conditionalSuccessors} on the live successors of
+     * {@code conditionalNode} whose bytecode index has a record. Switches go to
+     * {@link #setSwitchProbabilities}; {@code source} is stored with every probability.
+     */
     private static ConditionalApplication setSuccessorsProbabilities(ProfileData.ProfileSource source, long[] conditionalSuccessors, ControlSplitNode conditionalNode) {
         if (conditionalNode instanceof SwitchNode switchNode) {
             return setSwitchProbabilities(source, conditionalSuccessors, switchNode);
@@ -637,6 +716,12 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * probability per key, and several keys can share a successor. The profile is applied only when
      * every live successor has its own bytecode position and a recorded probability; otherwise the
      * switch keeps its prior.
+     *
+     * @param source the profile source stored with the key probabilities
+     * @param records the {@code conditionalProfiles} record of the switch
+     * @param switchNode the switch
+     * @return how many successor probabilities the record has and how many were applied: all of
+     *         them, or none
      */
     private static ConditionalApplication setSwitchProbabilities(ProfileData.ProfileSource source, long[] records, SwitchNode switchNode) {
         Optional<Map<Integer, Double>> probabilities = aggregatedProbabilities(records);
@@ -665,7 +750,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
             keySuccessors[i] = switchNode.keySuccessorIndex(i);
             prior[i] = switchNode.keyProbability(i);
         }
-        double[] keyProbabilities = distributeSwitchProbabilities(successors.size(), keySuccessors, prior, successorProbabilities);
+        double[] keyProbabilities = distributeSwitchProbabilities(keySuccessors, prior, successorProbabilities);
         switchNode.setProfileData(SwitchProbabilityData.create(keyProbabilities, source));
         return new ConditionalApplication(probabilities.get().size(), successors.size());
     }
@@ -675,14 +760,14 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      * the keys' prior probabilities, or evenly when the priors of a successor's keys are all zero.
      * The result keeps one probability per key and still sums to the successors' total.
      *
-     * @param successorCount number of switch successors
      * @param keySuccessors for every key (the default key last), the index of its successor
      * @param prior the switch's key probabilities before the profile is applied
      * @param successorProbabilities the recorded probability of every successor
+     * @return the probability of every key, in the order of {@code keySuccessors}
      */
-    public static double[] distributeSwitchProbabilities(int successorCount, int[] keySuccessors, double[] prior, double[] successorProbabilities) {
-        double[] priorBySuccessor = new double[successorCount];
-        int[] keysBySuccessor = new int[successorCount];
+    public static double[] distributeSwitchProbabilities(int[] keySuccessors, double[] prior, double[] successorProbabilities) {
+        double[] priorBySuccessor = new double[successorProbabilities.length];
+        int[] keysBySuccessor = new int[successorProbabilities.length];
         for (int i = 0; i < keySuccessors.length; i++) {
             priorBySuccessor[keySuccessors[i]] += prior[i];
             keysBySuccessor[keySuccessors[i]]++;

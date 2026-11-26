@@ -57,8 +57,20 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
  */
 public final class IprofProfileMerger {
 
-    /** One input of a merge: a parsed profile and the factor applied to all of its counts. */
+    /**
+     * One input of a merge: a parsed profile and the factor applied to all of its counts.
+     *
+     * @param profile the parsed profile
+     * @param weight the factor its counts are multiplied by; finite and positive
+     */
     public record WeightedProfile(ParsedIprofProfile profile, double weight) {
+        /**
+         * Checks the weight.
+         *
+         * @param profile the parsed profile
+         * @param weight the factor its counts are multiplied by
+         * @throws IllegalArgumentException if {@code weight} is not finite or not positive
+         */
         public WeightedProfile {
             if (!Double.isFinite(weight) || !(weight > 0.0)) {
                 throw new IllegalArgumentException("Profile weight must be finite and positive: " + weight);
@@ -69,40 +81,51 @@ public final class IprofProfileMerger {
     /**
      * The identity of a method across files: the names of its declaring class, return type and
      * parameter types, and its name. Ids differ between files; this identity does not.
+     *
+     * @param declaringType the name of the declaring class
+     * @param name the method's name
+     * @param returnType the name of the return type
+     * @param parameterTypes the names of the parameter types, in order
      */
     private record MethodIdentity(String declaringType, String name, String returnType, List<String> parameterTypes) {
     }
 
+    /** The merged {@code types} table: merged type id by type name, in order of first use. */
     private final Map<String, Integer> typeIds = new LinkedHashMap<>();
+    /** Merged method id by method identity, ids given in order of first use. */
     private final Map<MethodIdentity, Integer> methodIds = new LinkedHashMap<>();
+    /** The merged {@code methods} table, with merged type ids in the signatures. */
     private final Map<Integer, ProfileMethod> methodsById = new LinkedHashMap<>();
+    /** The merged {@code conditionalProfiles}: scaled count of each arm, by merged context. */
     private final Map<List<ContextFrame>, Map<Arm, Long>> conditionalCounts = new LinkedHashMap<>();
+    /** The merged {@code callCountProfiles}: scaled count by merged context. */
     private final Map<List<ContextFrame>, Long> callCounts = new LinkedHashMap<>();
+    /**
+     * The merged {@code virtualInvokeProfiles}: scaled count by merged receiver type id, by merged
+     * context.
+     */
     private final Map<List<ContextFrame>, Map<Integer, Long>> receiverCounts = new LinkedHashMap<>();
+    /** The merged {@code samplingProfiles}: scaled sample count by merged stack. */
     private final Map<List<ContextFrame>, Long> sampleCounts = new LinkedHashMap<>();
+    /** The iprof version of the first input, which every other input must have too. */
     private String version;
 
     private IprofProfileMerger() {
     }
 
     /**
-     * Similarity of two profiles' sampling data in [0, 1], as {@code gcov-tool overlap} defines it
-     * for arc counters: the sum over all methods of {@code min(a_i / sum(a), b_i / sum(b))} where
-     * {@code a_i} is the inclusive sample count of method {@code i}. 1 means the two runs spent
-     * their time in the same methods in the same proportions; values well below 1 mean the runs
-     * exercise different code and the merged profile is a compromise between them.
+     * The similarity of the sampling data of every pair of the given profiles. The overlap of two
+     * profiles is in [0, 1], as {@code gcov-tool overlap} defines it for arc counters: the sum over
+     * all methods of {@code min(a_i / sum(a), b_i / sum(b))} where {@code a_i} is the inclusive
+     * sample count of method {@code i}. 1 means the two runs spent their time in the same methods in
+     * the same proportions; values well below 1 mean the runs exercise different code and the
+     * merged profile is a compromise between them. The overlap is {@link Double#NaN} if either
+     * profile has no stack samples, because it is not defined then.
      *
-     * @return the overlap, or {@link Double#NaN} if either profile has no stack samples, because
-     *         the overlap is not defined then
-     */
-    public static double samplingOverlap(ParsedIprofProfile first, ParsedIprofProfile second) {
-        return overlap(inclusiveSamplesByMethod(first), inclusiveSamplesByMethod(second));
-    }
-
-    /**
-     * The {@link #samplingOverlap} of every pair of the given profiles: entry {@code [i][j]} for
-     * profiles {@code i} and {@code j}. The matrix is symmetric; its diagonal is 1, or
-     * {@link Double#NaN} for a profile without stack samples.
+     * @param profiles the profiles to compare
+     * @return the overlap matrix, {@code profiles.size()} by {@code profiles.size()}: entry
+     *         {@code [i][j]} for profiles {@code i} and {@code j}; it is symmetric and its diagonal
+     *         is 1, or {@link Double#NaN} for a profile without stack samples
      */
     public static double[][] samplingOverlaps(List<ParsedIprofProfile> profiles) {
         List<Map<MethodIdentity, Long>> samplesByMethod = profiles.stream().map(IprofProfileMerger::inclusiveSamplesByMethod).toList();
@@ -116,6 +139,10 @@ public final class IprofProfileMerger {
         return result;
     }
 
+    /**
+     * The overlap that {@link #samplingOverlaps} defines, of two profiles given as inclusive sample
+     * counts by method, or {@link Double#NaN} if either has no samples.
+     */
     private static double overlap(Map<MethodIdentity, Long> firstSamples, Map<MethodIdentity, Long> secondSamples) {
         double firstTotal = firstSamples.values().stream().mapToLong(Long::longValue).sum();
         double secondTotal = secondSamples.values().stream().mapToLong(Long::longValue).sum();
@@ -132,6 +159,11 @@ public final class IprofProfileMerger {
         return result;
     }
 
+    /**
+     * The inclusive sample count of each method of {@code profile}: the samples of every stack the
+     * method is on, counted once per stack even when the method is on it more than once (as in
+     * recursion). Frames whose method id is not in the {@code methods} table are skipped.
+     */
     private static Map<MethodIdentity, Long> inclusiveSamplesByMethod(ParsedIprofProfile profile) {
         Map<MethodIdentity, Long> samplesByMethod = new HashMap<>();
         for (SamplingEntry entry : profile.samplingEntries()) {
@@ -148,6 +180,7 @@ public final class IprofProfileMerger {
         return samplesByMethod;
     }
 
+    /** The identity of {@code method}, with the type names that {@code profile} declares. */
     private static MethodIdentity methodIdentity(ParsedIprofProfile profile, ProfileMethod method) {
         return new MethodIdentity(typeName(profile, method.declaringTypeId()), method.name(), typeName(profile, method.returnTypeId()),
                         Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
@@ -160,6 +193,7 @@ public final class IprofProfileMerger {
      *
      * @param profiles the profiles to merge, at least one
      * @return the merged profile
+     * @throws IllegalArgumentException if {@code profiles} is empty
      * @throws IprofFormatException if the profiles have different versions or refer to undeclared
      *             ids, or if a scaled count, a merged count or the total of a merged section does
      *             not fit in a long
@@ -178,6 +212,11 @@ public final class IprofProfileMerger {
         return merger.mergedProfile();
     }
 
+    /**
+     * Adds {@code profile} to the merge: gives its types and methods merged ids, and adds its
+     * counts, scaled by {@code weight}, to those of the same merged context (and arm or receiver
+     * type).
+     */
     private void addProfile(ParsedIprofProfile profile, double weight) {
         if (version == null) {
             version = profile.version();
@@ -218,6 +257,7 @@ public final class IprofProfileMerger {
         }
     }
 
+    /** The name {@code profile} declares for {@code typeId}; an undeclared id is a format error. */
     private static String typeName(ParsedIprofProfile profile, int typeId) {
         String name = profile.typeNamesById().get(typeId);
         if (name == null) {
@@ -226,6 +266,10 @@ public final class IprofProfileMerger {
         return name;
     }
 
+    /**
+     * Rewrites the method ids of {@code context} from input ids to merged ids with
+     * {@code inputToMergedMethodId}; an undeclared method id is a format error.
+     */
     private static List<ContextFrame> remap(List<ContextFrame> context, Map<Integer, Integer> inputToMergedMethodId) {
         List<ContextFrame> result = new ArrayList<>(context.size());
         for (ContextFrame frame : context) {
@@ -238,17 +282,26 @@ public final class IprofProfileMerger {
         return result;
     }
 
-    /** A branch or switch arm of a conditional record: its successor bci and successor index. */
+    /**
+     * A branch or switch arm of a conditional record: its successor bci and successor index.
+     *
+     * @param successorBci the BCI of the successor
+     * @param successorIndex the index of the successor among those of the branch or switch
+     */
     private record Arm(long successorBci, long successorIndex) {
     }
 
-    /** Adds conditional records, {@code [successorBci, successorIndex, count]} triples, by arm. */
+    /**
+     * Adds conditional records, {@code [successorBci, successorIndex, count]} triples, to
+     * {@code target} by arm, each count scaled by {@code weight}.
+     */
     private static void addConditionalRecords(Map<Arm, Long> target, long[] records, double weight) {
         for (int i = 0; i + 2 < records.length; i += PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE) {
             target.merge(new Arm(records[i], records[i + 1]), scale(records[i + 2], weight), IprofProfileMerger::addCounts);
         }
     }
 
+    /** The arm counts as conditional records, one triple per arm in insertion order. */
     private static long[] toConditionalRecords(Map<Arm, Long> armCounts) {
         long[] result = new long[armCounts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
         int i = 0;
@@ -260,10 +313,12 @@ public final class IprofProfileMerger {
         return result;
     }
 
+    /**
+     * {@code count} times {@code weight}, rounded. Weight 1 returns {@code count} as it is, because
+     * a long above 2^53 does not convert to a double exactly. A product that does not fit in a long
+     * is a format error.
+     */
     private static long scale(long count, double weight) {
-        if (count < 0) {
-            throw new IprofFormatException("Cannot merge a negative profile count: " + count);
-        }
         if (weight == 1.0) {
             return count;
         }
@@ -274,6 +329,7 @@ public final class IprofProfileMerger {
         return Math.round(scaled);
     }
 
+    /** {@code left + right}; a sum that overflows a long is a format error. */
     private static long addCounts(long left, long right) {
         try {
             return Math.addExact(left, right);
@@ -282,6 +338,13 @@ public final class IprofProfileMerger {
         }
     }
 
+    /**
+     * Builds the merged profile from the merged tables.
+     *
+     * @return the merged profile
+     * @throws IprofFormatException if the counts of a merged section add up to more than
+     *             {@link Long#MAX_VALUE}
+     */
     private ParsedIprofProfile mergedProfile() {
         Map<Integer, String> typeNamesById = new LinkedHashMap<>();
         typeIds.forEach((name, id) -> typeNamesById.put(id, name));

@@ -46,6 +46,10 @@ import jdk.graal.compiler.graph.NodeSourcePosition;
  */
 public class SamplingProfileResolutionTest {
 
+    /**
+     * The {@code types} and {@code methods} sections of the test profiles and an empty
+     * {@code conditionalProfiles} section. It ends with a comma so that another section can follow.
+     */
     private static final String TYPES_AND_METHODS = "\"types\":[" +
                     "{\"id\":4,\"name\":\"int\"}," +
                     "{\"id\":8,\"name\":\"void\"}," +
@@ -56,6 +60,10 @@ public class SamplingProfileResolutionTest {
                     "{\"id\":1005,\"name\":\"main\",\"signature\":[100,8]}" +
                     "],\"conditionalProfiles\":[],";
 
+    /**
+     * Parses a profile whose {@code samplingProfiles} section holds the entries
+     * {@code samplingProfiles}.
+     */
     private static ParsedIprofProfile parse(String samplingProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"samplingProfiles\":[" + samplingProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
@@ -89,8 +97,9 @@ public class SamplingProfileResolutionTest {
     }
 
     /*
-     * Real resolution needs HostedMethod instances; with none present every stack is unresolvable
-     * at its leaf and is dropped, which exercises the accounting path.
+     * Real resolution needs HostedMethod instances. The test has none ({@code bar} maps to
+     * {@code null}), so every stack is unresolvable at its leaf and is dropped, which exercises the
+     * accounting path.
      */
     @Test
     public void accountsForUnresolvableStacks() throws IOException {

@@ -1024,19 +1024,23 @@ def pgo_e2e_test_task(extra_image_args=None):
     inputs = [train_a, train_b, unseen]
 
     def dump_options(name, levels=':1'):
+        """The options that dump the workload's graphs at `levels` into the dump directory of build `name`."""
         # At -O3 the optimized build inlines main into the Native Image method that calls it; dump that method too.
         return svm_experimental_options(['-H:Dump=' + levels, '-H:MethodFilter=PgoWorkload.*,PgoWorkload$Reader.*,JavaMainWrapper.*,IsolateEnterStub.*',
                                          '-H:DumpPath=' + join(output_dir, 'dump-' + name), '-H:PrintGraph=File'])
 
     def check_effects(mode, name, *checker_args):
+        """Runs PgoEffectsCheck in `mode` on the graph dumps of build `name`, passing it `checker_args`."""
         mx.run_java(['-cp', checker_classpath + os.pathsep + checker_dir, 'pgoworkload.PgoEffectsCheck', mode, join(output_dir, 'dump-' + name)] + list(checker_args), jdk=mx.get_jdk())
 
     def run_lines(cmd, args):
+        """Runs `cmd` with the workload arguments `args` and returns its output lines."""
         lines = []
         mx.run(cmd + args, out=lambda line: lines.append(line.rstrip()))
         return lines
 
     def outputs_of(cmd):
+        """The output lines of `cmd` for each of the inputs, keyed by the input as a tuple."""
         return {tuple(a): run_lines(cmd, a) for a in inputs}
 
     expected = outputs_of([mx.get_jdk().java, '-cp', output_dir, main_class])
@@ -1045,6 +1049,7 @@ def pgo_e2e_test_task(extra_image_args=None):
             mx.abort('PGO workload reference output is malformed for ' + str(args) + ': ' + str(lines))
 
     def check_output(name, cmd):
+        """Aborts unless `cmd`, called `name` in messages, prints what the JDK prints on every input."""
         actual = outputs_of(cmd)
         for args in expected:
             if actual[args] != expected[args]:
@@ -1053,6 +1058,10 @@ def pgo_e2e_test_task(extra_image_args=None):
 
     with native_image_context(IMAGE_ASSERTION_FLAGS) as native_image:
         def build(name, image_args):
+            """
+            Builds the workload image `name` with `image_args`, adding the PGO statistics for an
+            optimized build. Returns the image path and the build output lines.
+            """
             build_log = []
             build_args = ['-cp', output_dir, '-o', join(output_dir, name)] + image_args + [main_class]
             if any(arg.startswith('--pgo=') for arg in image_args):
@@ -1066,18 +1075,21 @@ def pgo_e2e_test_task(extra_image_args=None):
             return image, build_log
 
         def summary(build_log, needle):
+            """The last line of `build_log` that contains `needle`; aborts when there is none."""
             found = [line for line in build_log if needle in line]
             if not found:
                 mx.abort('build summary lacks "' + needle + '":\n' + '\n'.join(build_log[-40:]))
             return found[-1]
 
         def summary_int(line, pattern):
+            """The number that the first group of `pattern` matches in `line`, spaces removed; aborts on no match."""
             match = re.search(pattern, line)
             if not match:
                 mx.abort('cannot parse "' + pattern + '" from: ' + line)
             return int(match.group(1).replace(' ', ''))
 
         def expect(condition, message):
+            """Aborts the check with `message` unless `condition` holds."""
             if not condition:
                 mx.abort('PGO end-to-end check failed: ' + message)
 
@@ -1231,7 +1243,7 @@ def pgo_e2e_test_task(extra_image_args=None):
             check_output(name, [image])
             effects_mode = checks.get('effects')
             if effects_mode:
-                check_effects(effects_mode, name.replace('pgo-', ''), checks.get('effect_profile', profile_a), *effect_counts)
+                check_effects(effects_mode, name.replace('pgo-', ''), profile_a, *effect_counts)
 
 
 def pgo_native_unittests_task(extra_image_args=None):
@@ -1249,6 +1261,12 @@ def pgo_native_unittests_task(extra_image_args=None):
     profile = join(output_dir, 'tests.iprof')
 
     def run_corpus(name, build_args, run_args, selectors=None):
+        """
+        Runs the native unit tests chosen by `selectors` (all when None) in an image built with
+        `build_args` and run with `run_args`, and returns the Class#method names of the failing
+        tests. `name` labels the run in messages. Aborts when no tests ran, when the failures
+        cannot all be named, or when the run failed without failing tests.
+        """
         lines = []
         cmd = ['native-unittest'] + (selectors or []) + (['--build-args'] + build_args if build_args else []) + (['--run-args'] + run_args if run_args else [])
         if extra_image_args:

@@ -38,10 +38,18 @@ import jdk.vm.ci.code.BytecodePosition;
  * by descriptor ({@link ProfilingUtilities#methodDescriptor}), so the context that
  * {@link IprofProfileResolver} builds from the profile's methods table equals the one that
  * {@link #of} builds from a compiler query.
+ *
+ * @param frames the frames, innermost first; copied, so the context does not change
  */
 public record PGOContext(List<Frame> frames) {
 
-    /** One frame of a context: a method, named by its descriptor, and a bytecode index in it. */
+    /**
+     * One frame of a context: a method, named by its descriptor, and a bytecode index in it.
+     *
+     * @param methodDescriptor the method, as {@link ProfilingUtilities#methodDescriptor} names it
+     * @param bci the bytecode index in that method: the call site of an outer frame, or the
+     *            profiled position of the innermost frame
+     */
     public record Frame(String methodDescriptor, int bci) {
         @Override
         public String toString() {
@@ -49,11 +57,21 @@ public record PGOContext(List<Frame> frames) {
         }
     }
 
+    /**
+     * Creates a context with an immutable copy of {@code frames}.
+     *
+     * @param frames the frames, innermost first
+     */
     public PGOContext {
         frames = List.copyOf(frames);
     }
 
-    /** The context of a compiler query, innermost frame first. */
+    /**
+     * The context of a compiler query, innermost frame first.
+     *
+     * @param position the queried position, with its callers up to the compilation root
+     * @return one frame per position from {@code position} outward
+     */
     public static PGOContext of(BytecodePosition position) {
         List<Frame> frames = new ArrayList<>();
         for (BytecodePosition current = position; current != null; current = current.getCaller()) {
@@ -62,12 +80,21 @@ public record PGOContext(List<Frame> frames) {
         return new PGOContext(frames);
     }
 
-    /** The number of frames. */
+    /**
+     * The number of frames.
+     *
+     * @return the number of frames
+     */
     public int depth() {
         return frames.size();
     }
 
-    /** The innermost {@code depth} frames: {@code foo:12} of {@code foo:12 < a:5}. */
+    /**
+     * The innermost {@code depth} frames: {@code foo:12} of {@code foo:12 < a:5}.
+     *
+     * @param depth how many frames to keep, from 0 to {@link #depth()}
+     * @return a context of the innermost {@code depth} frames
+     */
     public PGOContext prefix(int depth) {
         return new PGOContext(frames.subList(0, depth));
     }

@@ -39,6 +39,10 @@ import com.oracle.svm.hosted.pgo.PGOProfileUseFeature.ProfileSpec;
  */
 public class PGOProfileSpecTest {
 
+    /**
+     * Checks that {@code spec} splits into the file {@code path} and the weight {@code weight}, and
+     * that the text reported as an ignored weight is {@code ignoredWeight} ({@code null} for none).
+     */
     private static void assertSpec(String spec, String path, double weight, String ignoredWeight) {
         ProfileSpec parsed = ProfileSpec.parse(spec);
         Assert.assertEquals(spec, path, parsed.path());

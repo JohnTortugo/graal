@@ -61,13 +61,16 @@ import jdk.vm.ci.meta.Signature;
  */
 public class IprofProfileResolverTest {
 
-    // Descriptors that match the TYPES_AND_METHODS table below.
+    /** The type descriptor of {@code com.example.Foo} from {@link #TYPES_AND_METHODS}. */
     private static final String FOO = "Lcom/example/Foo;";
-    // com.example.Foo.bar(int)void
+    /** The method descriptor of {@code com.example.Foo.bar(int)void}, method id 1001. */
     static final String BAR_DESC = FOO + ".bar(I)V";
-    // com.example.Foo.baz(int)java.lang.String
+    /** The method descriptor of {@code com.example.Foo.baz(int)String}, method id 1002. */
     private static final String BAZ_DESC = FOO + ".baz(I)Ljava/lang/String;";
-
+    /**
+     * The {@code types} and {@code methods} sections that the test profiles share. It ends with a
+     * comma so that another section can follow.
+     */
     private static final String TYPES_AND_METHODS = "\"types\":[" +
                     "{\"id\":4,\"name\":\"int\"}," +
                     "{\"id\":8,\"name\":\"void\"}," +
@@ -84,29 +87,56 @@ public class IprofProfileResolverTest {
      * Image methods cannot be created in a unit test, so the descriptors map to {@code null}: the
      * resolver only needs to know which are present, and stack samples, which need the method,
      * stay unresolved.
+     *
+     * @param profile the parsed profile
+     * @param presentDescriptors the descriptors of the methods that are in the image
+     * @return the lookup built from {@code profile}
      */
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Set<String> presentDescriptors) {
         return buildLookup(profile, presentDescriptors, Map.of());
     }
 
+    /**
+     * Like {@link #buildLookup(ParsedIprofProfile, Set)}, and also resolves the receiver types of
+     * {@code virtualInvokeProfiles} by their descriptors.
+     *
+     * @param profile the parsed profile
+     * @param presentDescriptors the descriptors of the methods that are in the image
+     * @param typesByDescriptor the image types that receiver types resolve to, by type descriptor
+     * @return the lookup built from {@code profile}
+     */
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Set<String> presentDescriptors, Map<String, AnalysisType> typesByDescriptor) {
         Map<String, HostedMethod> methods = new HashMap<>();
         for (String descriptor : presentDescriptors) {
             methods.put(descriptor, null);
         }
-        return IprofProfileResolver.buildLookup(profile, methods, typesByDescriptor);
+        return IprofProfileResolver.buildLookup(profile, methods, typesByDescriptor, null);
     }
 
-    /** A lookup that holds only the given receiver profiles. */
+    /**
+     * A lookup that holds only the given receiver profiles.
+     *
+     * @param receivers the receiver counts of every indirect-invoke context
+     * @return the lookup
+     */
     static IprofProfilesLookup receiverLookup(Map<PGOContext, Map<AnalysisType, Long>> receivers) {
         return new IprofProfilesLookup(Map.of(), Map.of(), receivers, Map.of(), Map.of(), Map.of(), null);
     }
 
-    /** A lookup that holds only the given stack samples. */
+    /**
+     * A lookup that holds only the given stack samples.
+     *
+     * @param samples the sample count of every stack
+     * @return the lookup
+     */
     static IprofProfilesLookup samplingLookup(Map<NodeSourcePosition, Long> samples) {
         return new IprofProfilesLookup(Map.of(), Map.of(), Map.of(), samples, Map.of(), Map.of(), null);
     }
 
+    /**
+     * Parses a version 1.0.0 profile whose {@code conditionalProfiles} section holds the entries
+     * {@code conditionalProfiles}.
+     */
     private static ParsedIprofProfile parseConditionalProfiles(String conditionalProfiles) throws IOException {
         String json = "{\"version\":\"1.0.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));
@@ -279,10 +309,7 @@ public class IprofProfileResolverTest {
     /* A branch queried under an inlining chain the profile never saw falls back to the branch's shorter-context entry. */
     @Test
     public void unseenConditionalContextFallsBackToShorterContext() throws IOException {
-        String entry = "{\"ctx\":\"1001:9\",\"records\":[20,0,7,53,1,3]}";
-        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + entry + "]}";
-        IprofProfilesLookup lookup = buildLookup(
-                        new IprofParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        IprofProfilesLookup lookup = buildLookup(parseConditionalProfiles("{\"ctx\":\"1001:9\",\"records\":[20,0,7,53,1,3]}"), Set.of(BAR_DESC));
         BytecodePosition caller = new BytecodePosition(null, mockBarMethod(), 40);
         BytecodePosition inlined = new BytecodePosition(caller, mockBarMethod(), 9);
 
@@ -301,9 +328,7 @@ public class IprofProfileResolverTest {
     public void unseenConditionalContextUsesSumOfLongestMatchingPrefix() throws IOException {
         String viaA = "{\"ctx\":\"1001:9<1001:40\",\"records\":[20,0,7,53,1,3]}";
         String viaB = "{\"ctx\":\"1001:9<1001:50\",\"records\":[20,0,1,53,1,9]}";
-        String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + viaA + "," + viaB + "]}";
-        IprofProfilesLookup lookup = buildLookup(
-                        new IprofParser().parse(new StringReader(json)), Set.of(BAR_DESC));
+        IprofProfilesLookup lookup = buildLookup(parseConditionalProfiles(viaA + "," + viaB), Set.of(BAR_DESC));
 
         BytecodePosition newCaller = new BytecodePosition(new BytecodePosition(null, mockBarMethod(), 60), mockBarMethod(), 9);
         long[] summed = lookup.getConditionalProfile(newCaller).orElseThrow().value();
@@ -316,6 +341,11 @@ public class IprofProfileResolverTest {
         Assert.assertEquals(2, lookup.conditionalContextFallbackDroppedFrames());
     }
 
+    /**
+     * Of two profiled contexts, one is queried and one is unused. The queried one then counts as
+     * unapplied, partly applied or fully applied as the phase reports 0, 1 or 2 of its 2 successors
+     * applied; the latest report wins.
+     */
     @Test
     public void tracksConditionalSuccessorCoverage() throws IOException {
         ParsedIprofProfile parsed = parseConditionalProfiles(
@@ -338,6 +368,13 @@ public class IprofProfileResolverTest {
         Assert.assertEquals(0, lookup.unappliedMatchedConditionalContextCount());
     }
 
+    /**
+     * A mock of {@code com.example.Foo.bar(int)void} with just enough behavior to give
+     * {@link #BAR_DESC} as its descriptor. Every call returns a new mock, and mocks are equal only
+     * to themselves.
+     *
+     * @return the mock method
+     */
     static ResolvedJavaMethod mockBarMethod() {
         JavaType intType = proxy(JavaType.class, "I");
         JavaType voidType = proxy(JavaType.class, "V");
@@ -360,6 +397,7 @@ public class IprofProfileResolverTest {
         });
     }
 
+    /** A mock of interface {@code type} whose {@code getName()} returns {@code name}. */
     private static <T> T proxy(Class<T> type, String name) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (instance, method, arguments) -> switch (method.getName()) {
             case "getName" -> name;
@@ -369,35 +407,12 @@ public class IprofProfileResolverTest {
         }));
     }
 
+    /**
+     * The value a mock returns for a method with return type {@code type}: zero or {@code false}
+     * for a primitive type, {@code null} otherwise.
+     */
     private static Object defaultValue(Class<?> type) {
-        if (!type.isPrimitive()) {
-            return null;
-        }
-        if (type == boolean.class) {
-            return false;
-        }
-        if (type == byte.class) {
-            return (byte) 0;
-        }
-        if (type == short.class) {
-            return (short) 0;
-        }
-        if (type == char.class) {
-            return (char) 0;
-        }
-        if (type == int.class) {
-            return 0;
-        }
-        if (type == long.class) {
-            return 0L;
-        }
-        if (type == float.class) {
-            return 0.0f;
-        }
-        if (type == double.class) {
-            return 0.0d;
-        }
-        return null;
+        return Map.of(boolean.class, false, byte.class, (byte) 0, short.class, (short) 0, char.class, (char) 0, int.class, 0, long.class, 0L, float.class, 0.0f, double.class, 0.0d).get(type);
     }
 
     @Test

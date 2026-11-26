@@ -47,32 +47,61 @@ import java.util.concurrent.CountDownLatch;
  * <li>Recursion into nested containers, a catch-handler unwind loop that runs only for malformed
  * records, fresh strings through {@code hashCode}/{@code equals}/{@code HashMap}, a
  * {@code switch} on strings, and {@code Number.doubleValue()} virtual dispatch.</li>
+ * <li>Short-lived threads that are joined and a daemon thread that is still running at exit, so
+ * the instrumented build must merge the counts of finished threads and snapshot those of live
+ * ones.</li>
  * </ul>
  *
- * Usage: {@code PgoWorkload <seed> <records>}. The output is a set of checksums that must be
- * identical for every build of the program.
+ * Usage: {@code PgoWorkload <seed> <records>}. The output is four lines of checksums and counts
+ * that must be identical for every build of the program. The last line is a list of
+ * {@code name=count} pairs that the gate passes to {@code PgoEffectsCheck}, which compares them
+ * with the counts the instrumented build recorded.
  */
 public final class PgoWorkload {
 
-    /** How many shapes of each kind were built; printed so that recorded profiles can be checked against them. */
+    /** Circles built by {@link #circlesOnly} and {@link #mixed}; printed for the profile check. */
     static long circles;
+    /** Squares built by {@link #mixed}; printed for the profile check. */
     static long squares;
+    /** Triangles built by {@link #mixed}; printed for the profile check. */
     static long triangles;
     /** Circles built by {@link #mixed}; {@link #circlesOnly} builds the others. */
     static long mixedCircles;
-    /** How often {@link #unitAreas} called {@link #areaOf}, and the simple class name of its receiver. */
+    /** How often {@link #unitAreas} called {@link #areaOf}. */
     static long unitAreaCalls;
+    /** The simple class name of the receiver {@link #unitAreas} passed to {@link #areaOf}. */
     static String unitReceiver;
-
-    /** Type tags in the high four bits of an encoded value; see {@link #encode}. */
+    /** Sum of the {@link #UNITS} values of the parsed strings, -1 for each unknown string. */
+    static long unitChecksum;
+    /** Rolling hash of the parsed strings. */
+    static long stringChecksum;
+    /** Sum of the parsed integers, each read back through a boxed {@link Number}. */
+    static long boxedChecksum;
+    /** How often {@link #profiledSwitch} took its first successor (values 0 to 6). */
+    static long switchZero;
+    /** How often {@link #profiledSwitch} took its second successor (values 7 and 8). */
+    static long switchOne;
+    /** How often {@link #profiledSwitch} took its default successor. */
+    static long switchTwo;
+    /** Number of malformed records {@link #parseRecord} skipped. */
+    static int malformed;
+    /** Number of records that followed a marker token. */
+    static int markers;
+    /** Type tag of an integer field; the type tags go in the high four bits of a header byte. */
     static final int T_INT = 1;
+    /** Type tag of a string field. */
     static final int T_STR = 2;
+    /** Type tag of a nested struct. */
     static final int T_STRUCT = 3;
+    /** Type tag the parser rejects; written as the last field of a malformed record. */
     static final int T_BAD = 4;
+    /** Type tag of a marker token, which the reader skips between records. */
     static final int T_MARK = 0xf;
-
+    /** String field values; several differ from a {@link #UNITS} key only in case. */
     static final String[] FIELDS = {"Count", "ms", "Bytes", "count", "Percent", "Seconds", "mS"};
+    /** Lower-case unit names to their codes; looked up first as written, then in lower case. */
     static final Map<String, Integer> UNITS = new HashMap<>();
+
     static {
         UNITS.put("count", 1);
         UNITS.put("ms", 2);
@@ -81,29 +110,34 @@ public final class PgoWorkload {
         UNITS.put("seconds", 5);
     }
 
-    static long unitChecksum;
-    static long stringChecksum;
-    static long boxedChecksum;
-    static long switchZero;
-    static long switchOne;
-    static long switchTwo;
-    static int malformed;
-    static int markers;
-
     // ---------------------------------------------------------------- receivers by context
 
+    /** The receiver type of the interface calls whose receiver profiles the test checks. */
     interface Shape {
+        /**
+         * A value computed from the shape's area; only its determinism matters.
+         *
+         * @return the value
+         */
         double area();
 
+        /**
+         * The shape's name, compared by {@link #countKinds}.
+         *
+         * @return the name in lower case
+         */
         String kind();
     }
 
     /**
      * Gives an area computation enough self time for the stack sampler to attribute samples to the
-     * implementation itself; hot-callee devirtualization only guards an interface call whose callee
-     * was sampled under the compilation root. Samples are taken at safepoint checks, so the loop must
-     * not be a counted one (counted loops carry no safepoint check): it runs about 16 iterations for
-     * any positive area.
+     * implementation itself; hot-callee devirtualization only guards an interface call whose
+     * callee was sampled under the compilation root. Samples are taken at safepoint checks, so the
+     * loop must not be a counted one (counted loops carry no safepoint check): it runs about 16
+     * iterations for any positive area.
+     *
+     * @param area the area
+     * @return a partial harmonic sum of {@code area} that is at least {@code 3.3 * area}
      */
     static double weigh(double area) {
         double total = 0;
@@ -115,9 +149,16 @@ public final class PgoWorkload {
         return total;
     }
 
+    /** A shape whose {@link #area} runs {@link #weigh}. */
     static final class Circle implements Shape {
+        /** The radius. */
         final double radius;
 
+        /**
+         * Creates a circle.
+         *
+         * @param radius the radius
+         */
         Circle(double radius) {
             this.radius = radius;
         }
@@ -133,9 +174,16 @@ public final class PgoWorkload {
         }
     }
 
+    /** A shape whose {@link #area} runs {@link #weigh}. */
     static final class Square implements Shape {
+        /** The side length. */
         final double side;
 
+        /**
+         * Creates a square.
+         *
+         * @param side the side length
+         */
         Square(double side) {
             this.side = side;
         }
@@ -151,9 +199,16 @@ public final class PgoWorkload {
         }
     }
 
+    /** A shape whose {@link #area} is a single expression, so it has little self time. */
     static final class Triangle implements Shape {
+        /** The base length; the height equals it. */
         final double base;
 
+        /**
+         * Creates a triangle.
+         *
+         * @param base the base length, which is also the height
+         */
         Triangle(double base) {
             this.base = base;
         }
@@ -170,20 +225,36 @@ public final class PgoWorkload {
     }
 
     /**
-     * Trivial wrappers around the interface calls. An image built with
-     * {@code -H:NeverInline=pgoworkload.PgoWorkload.areaOf} (and {@code kindOf}) compiles them
-     * standalone, so their receiver profiles are recorded under the one-frame context; an image
-     * built without that option inlines them during graph decoding, so the same call sites are
-     * queried under deeper contexts and must be served by the shortened-context fallback.
+     * Trivial wrapper around the interface call {@link Shape#area}. An image built with
+     * {@code -H:NeverInline=pgoworkload.PgoWorkload.areaOf} (and {@code kindOf}) compiles it
+     * standalone, so its receiver profile is recorded under the one-frame context; an image built
+     * without that option inlines it during graph decoding, so the same call site is queried under
+     * deeper contexts and must be served by the shortened-context fallback.
+     *
+     * @param shape the receiver
+     * @return {@code shape.area()}
      */
     static double areaOf(Shape shape) {
         return shape.area();
     }
 
+    /**
+     * Trivial wrapper around the interface call {@link Shape#kind}, for the same reason as
+     * {@link #areaOf}.
+     *
+     * @param shape the receiver
+     * @return {@code shape.kind()}
+     */
     static String kindOf(Shape shape) {
         return shape.kind();
     }
 
+    /**
+     * Sums {@link #areaOf} over {@code shapes}; the receiver distribution comes from the caller.
+     *
+     * @param shapes the shapes
+     * @return the sum
+     */
     static double sumAreas(Shape[] shapes) {
         double sum = 0;
         for (Shape shape : shapes) {
@@ -192,6 +263,13 @@ public final class PgoWorkload {
         return sum;
     }
 
+    /**
+     * Counts the shapes whose {@link #kindOf} is {@code kind}.
+     *
+     * @param shapes the shapes
+     * @param kind the name to count
+     * @return the count
+     */
     static int countKinds(Shape[] shapes, String kind) {
         int n = 0;
         for (Shape shape : shapes) {
@@ -202,7 +280,13 @@ public final class PgoWorkload {
         return n;
     }
 
-    /** Context A: all circles. */
+    /**
+     * Context A: all circles.
+     *
+     * @param n the number of shapes
+     * @param seed selects the radii
+     * @return the area sum plus the circle count
+     */
     static double circlesOnly(int n, long seed) {
         Shape[] shapes = new Shape[n];
         for (int i = 0; i < n; i++) {
@@ -212,7 +296,13 @@ public final class PgoWorkload {
         return sumAreas(shapes) + countKinds(shapes, "circle");
     }
 
-    /** Context B: 70% squares, 20% triangles, 10% circles (the residues 0-6, 7-8 and 9). */
+    /**
+     * Context B: 70% squares, 20% triangles, 10% circles (the residues 0-6, 7-8 and 9).
+     *
+     * @param n the number of shapes
+     * @param seed selects the residues
+     * @return the area sum plus the square and triangle counts, scaled apart
+     */
     static double mixed(int n, long seed) {
         Shape[] shapes = new Shape[n];
         for (int i = 0; i < n; i++) {
@@ -236,6 +326,9 @@ public final class PgoWorkload {
      * An interface call whose receiver is one type for every even record count and another for odd
      * ones; the array load keeps the type unknown to the static analysis. A profile trained on an
      * even count is monomorphic here, and an image built from it must still be right on an odd one.
+     *
+     * @param records the record count; its parity picks the receiver, its size the loop length
+     * @return the sum of the {@link #areaOf} results
      */
     static double unitAreas(int records) {
         Shape[] units = {new Square(1.5), new Circle(1.5)};
@@ -253,23 +346,41 @@ public final class PgoWorkload {
 
     // ---------------------------------------------------------------- the reader
 
-    /** Byte-oriented reader with the small-method chain and rare refill path of a binary decoder. */
+    /**
+     * Byte-oriented reader with the small-method chain and rare refill path of a binary decoder.
+     * A token starts with a header byte: the type tag in the high four bits and the length in the
+     * low four, where length {@code 0xe} means that a variable-length integer with the length
+     * follows.
+     */
     static final class Reader {
+        /** The whole input. */
         private final byte[] source;
+        /** Index in {@link #source} of the next byte to read. */
         private int position;
+        /** A window of {@link #source}; {@link #refill} moves it to {@link #position}. */
         private final byte[] buffer = new byte[64];
+        /** Index in {@link #source} of {@code buffer[0]}. */
         private int bufferStart;
+        /** Index in {@link #source} just past the last byte in {@link #buffer}. */
         private int bufferLimit;
+        /** How many containers the reader is in; marker tokens are skipped only at depth 0. */
         private int depth;
+        /** Whether the last {@link #nextToken} skipped a marker token. */
         private boolean onMarker;
+        /** Number of tokens {@link #nextToken} returned. */
         int tokens;
-        long sum;
 
+        /**
+         * Creates a reader positioned at the start of {@code source}.
+         *
+         * @param source the encoded records, as built by {@link PgoWorkload#encode}
+         */
         Reader(byte[] source) {
             this.source = source;
             refill();
         }
 
+        /** Copies the next {@link #buffer} length of input starting at {@link #position}. */
         private void refill() {
             bufferStart = position;
             int n = Math.min(buffer.length, source.length - position);
@@ -277,6 +388,7 @@ public final class PgoWorkload {
             bufferLimit = position + Math.max(n, 0);
         }
 
+        /** Returns the next byte as 0 to 255, or -1 at the end of the input; refills rarely. */
         private int readByte() {
             if (position >= bufferLimit) {
                 if (position >= source.length) {
@@ -287,6 +399,10 @@ public final class PgoWorkload {
             return buffer[position++ - bufferStart] & 0xff;
         }
 
+        /**
+         * Reads a variable-length integer: seven bits per byte, most significant group first, and
+         * the high bit set on the last byte.
+         */
         private int readVarUInt() {
             int value = 0;
             int b;
@@ -300,6 +416,10 @@ public final class PgoWorkload {
             return value;
         }
 
+        /**
+         * Reads a header; returns the type tag in bits 24 and up and the length below, or -1 at the
+         * end of the input.
+         */
         private int readHeader() {
             int b = readByte();
             if (b < 0) {
@@ -313,7 +433,12 @@ public final class PgoWorkload {
             return (type << 24) | length;
         }
 
-        /** The loop with the exit in a helper: skips marker tokens until positioned on a value. */
+        /**
+         * The loop with the exit in a helper: skips marker tokens until positioned on a value.
+         *
+         * @return the header of the value, as {@link #readHeader} returns it, or -1 at the end of
+         *         the input
+         */
         int nextToken() {
             onMarker = false;
             while (true) {
@@ -334,14 +459,25 @@ public final class PgoWorkload {
             return (header >>> 24) == 0xf;
         }
 
+        /**
+         * Whether the last {@link #nextToken} skipped a marker token.
+         *
+         * @return {@code true} if it did
+         */
         boolean wasOnMarker() {
             return onMarker;
         }
 
+        /** Enters a container. */
         void stepIn() {
             depth++;
         }
 
+        /**
+         * Leaves a container.
+         *
+         * @throws IllegalStateException if the reader is not in a container
+         */
         void stepOut() {
             if (depth <= 0) {
                 throw new IllegalStateException("not in a container");
@@ -349,10 +485,22 @@ public final class PgoWorkload {
             depth--;
         }
 
+        /**
+         * The container depth.
+         *
+         * @return how many containers the reader is in
+         */
         int depth() {
             return depth;
         }
 
+        /**
+         * Reads a big-endian unsigned integer.
+         *
+         * @param length the number of bytes
+         * @return the value
+         * @throws IllegalStateException if the input ends first
+         */
         long readInt(int length) {
             long value = 0;
             for (int i = 0; i < length; i++) {
@@ -365,6 +513,13 @@ public final class PgoWorkload {
             return value;
         }
 
+        /**
+         * Reads an ISO-8859-1 string, which yields a fresh {@link String} for every field.
+         *
+         * @param length the number of bytes
+         * @return the string
+         * @throws IllegalStateException if the input ends first
+         */
         String readString(int length) {
             byte[] bytes = new byte[length];
             for (int i = 0; i < length; i++) {
@@ -378,7 +533,14 @@ public final class PgoWorkload {
         }
     }
 
-    /** Builds a byte stream of nested records; every 97th record is malformed. */
+    /**
+     * Builds a byte stream of nested records; a marker token precedes every 50th record, and every
+     * 97th record is malformed.
+     *
+     * @param records the number of records
+     * @param seed the start state of the random generator that shapes the records
+     * @return the encoded stream
+     */
     static byte[] encode(int records, long seed) {
         List<Byte> out = new ArrayList<>();
         long state = seed;
@@ -397,6 +559,11 @@ public final class PgoWorkload {
         return bytes;
     }
 
+    /**
+     * Appends to {@code out} a struct of two to four fields chosen from the bits of {@code state}.
+     * Fields at {@code level} 2 and deeper are integers, so nesting stops there; when {@code bad}
+     * is set the last field gets the {@link #T_BAD} tag.
+     */
     private static void writeStruct(List<Byte> out, long state, int level, boolean bad) {
         int fields = 2 + (int) ((state >>> 8) % 3);
         /* Field values are kept non-negative so that length and kind arithmetic stays in range. */
@@ -427,6 +594,10 @@ public final class PgoWorkload {
         }
     }
 
+    /**
+     * Appends {@code value} to {@code out} in the encoding {@link Reader#readVarUInt} reads; values
+     * below {@code 1 << 14} only.
+     */
     private static void writeVarUInt(List<Byte> out, int value) {
         if (value < 0x80) {
             out.add((byte) (value | 0x80));
@@ -436,17 +607,35 @@ public final class PgoWorkload {
         }
     }
 
+    /** Thrown for a malformed record; it has no stack trace, so throwing it is cheap. */
     static final class Malformed extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
+        /**
+         * Creates the exception.
+         *
+         * @param message what is wrong with the record
+         */
         Malformed(String message) {
             super(message, null, false, false);
         }
     }
 
+    /**
+     * What the threads of {@link #exerciseThreadLifecycle} or {@link #exerciseLiveSnapshot}
+     * computed.
+     *
+     * @param checksum the sum of the values the threads computed
+     * @param trueCount how often the threads' branch took its first arm
+     * @param falseCount how often it took the other arm
+     */
     record ThreadLifecycleResult(long checksum, long trueCount, long falseCount) {
     }
 
+    /**
+     * Spins for 50 ms so that the stack sampler records samples from a short-lived thread before it
+     * is joined. The gate checks that the profile has a sample in this method.
+     */
     static void sampleJoinedThread() {
         long deadline = System.nanoTime() + 50_000_000L;
         while (System.nanoTime() < deadline) {
@@ -454,6 +643,13 @@ public final class PgoWorkload {
         }
     }
 
+    /**
+     * Spins for 100 ms so that the stack sampler records samples from a thread that is still alive
+     * at exit, then blocks on {@code neverReleased} until the program ends. The gate checks that
+     * the profile has a sample in this method.
+     *
+     * @param neverReleased a latch nobody counts down
+     */
     static void sampleLiveThread(CountDownLatch neverReleased) {
         long deadline = System.nanoTime() + 100_000_000L;
         while (System.nanoTime() < deadline) {
@@ -466,10 +662,25 @@ public final class PgoWorkload {
         }
     }
 
+    /**
+     * An interface call made only from the worker threads; its receiver profile must hold the
+     * receivers of every thread.
+     *
+     * @param shape the receiver
+     * @return the length of {@code shape.kind()}
+     */
     static int threadedReceiver(Shape shape) {
         return shape.kind().length();
     }
 
+    /**
+     * A branch taken only on the live daemon thread of {@link #exerciseLiveSnapshot}; the program
+     * counts its outcomes itself so that the recorded counts can be checked.
+     *
+     * @param value the tested value, 0 to 3
+     * @param counts incremented at index 0 when {@code value < 2}, at index 1 otherwise
+     * @return 11 or 13, by the arm taken
+     */
     static int liveSnapshotBranch(int value, long[] counts) {
         if (value < 2) {
             counts[0]++;
@@ -479,7 +690,11 @@ public final class PgoWorkload {
         return 13;
     }
 
-    /** Leaves a daemon thread alive so the teardown dump must snapshot its private recorder tables. */
+    /**
+     * Leaves a daemon thread alive so the teardown dump must snapshot its private recorder tables.
+     *
+     * @return the daemon thread's checksum and the outcomes of its {@link #liveSnapshotBranch}
+     */
     static ThreadLifecycleResult exerciseLiveSnapshot() {
         CountDownLatch recorded = new CountDownLatch(1);
         CountDownLatch neverReleased = new CountDownLatch(1);
@@ -505,6 +720,14 @@ public final class PgoWorkload {
         return new ThreadLifecycleResult(checksum[0], counts[0], counts[1]);
     }
 
+    /**
+     * A branch taken only on the short-lived threads of {@link #exerciseThreadLifecycle}; the
+     * program counts its outcomes itself so that the recorded counts can be checked.
+     *
+     * @param value the tested value, 0 to 3
+     * @param counts incremented at index 0 when {@code value == 0}, at index 1 otherwise
+     * @return 3 or 7, by the arm taken
+     */
     static int threadedBranch(int value, long[] counts) {
         if (value == 0) {
             counts[0]++;
@@ -514,7 +737,13 @@ public final class PgoWorkload {
         return 7;
     }
 
-    /** Exercises recorder allocation, live counting, exit-time merge, and short-lived thread teardown. */
+    /**
+     * Exercises recorder allocation, live counting, exit-time merge, and short-lived thread
+     * teardown.
+     *
+     * @param records the record count; sets the iterations per thread, at least 1000
+     * @return the threads' checksum and the outcomes of their {@link #threadedBranch}
+     */
     static ThreadLifecycleResult exerciseThreadLifecycle(int records) {
         int threadCount = 8;
         int iterations = Math.max(1_000, records / 100);
@@ -552,7 +781,12 @@ public final class PgoWorkload {
         return new ThreadLifecycleResult(checksum, trueCount, total - trueCount);
     }
 
-    /** A three-successor switch with an independently counted 70/20/10 distribution. */
+    /**
+     * A three-successor switch with an independently counted 70/20/10 distribution.
+     *
+     * @param value the switch value, 0 to 9
+     * @return 3, 5 or 7, by the successor taken
+     */
     static int profiledSwitch(int value) {
         return switch (value) {
             case 0, 1, 2, 3, 4, 5, 6 -> {
@@ -570,7 +804,14 @@ public final class PgoWorkload {
         };
     }
 
-    /** Parses one struct recursively, the way a log-entry parser walks a binary record. */
+    /**
+     * Parses one struct recursively, the way a log-entry parser walks a binary record.
+     *
+     * @param reader the reader, positioned on the struct's first field
+     * @param fieldCount the number of fields
+     * @return a checksum of the fields
+     * @throws Malformed if the input ends early or a field has an unknown type tag
+     */
     static long parseStruct(Reader reader, int fieldCount) {
         long sum = 0;
         for (int f = 0; f < fieldCount; f++) {
@@ -612,7 +853,13 @@ public final class PgoWorkload {
         return sum;
     }
 
-    /** Parses one record; on a malformed record unwinds the container depth like a log reader does. */
+    /**
+     * Parses one record; on a malformed record unwinds the container depth like a log reader does.
+     *
+     * @param reader the reader, positioned before the record
+     * @return the record's checksum, -1 for a malformed record, or {@link Long#MIN_VALUE} at the
+     *         end of the input
+     */
     static long parseRecord(Reader reader) {
         int header = reader.nextToken();
         if (header < 0) {
@@ -638,6 +885,11 @@ public final class PgoWorkload {
         }
     }
 
+    /**
+     * Runs every part of the workload once and prints the results.
+     *
+     * @param args the seed and the number of records
+     */
     public static void main(String[] args) {
         long seed = Long.parseLong(args[0]);
         int records = Integer.parseInt(args[1]);
@@ -686,6 +938,10 @@ public final class PgoWorkload {
     /**
      * Splits {@code line} at every {@code delimiter}; the gate checks its recorded call count
      * against the program's own {@code splitCalls}.
+     *
+     * @param line the text to split
+     * @param delimiter the separator
+     * @return the parts, including an empty last part when {@code line} ends with the separator
      */
     static ArrayList<String> splitFields(String line, char delimiter) {
         ArrayList<String> parts = new ArrayList<>();

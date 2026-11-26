@@ -44,7 +44,10 @@ import com.oracle.svm.hosted.pgo.IprofProfileMerger.WeightedProfile;
  */
 public class IprofProfileMergerTest {
 
-    /* Two files describing the same program with different id assignments. */
+    /**
+     * The first of two profiles of the same program. {@link #SECOND_RUN} gives the same types and
+     * methods other ids, and adds the type {@code com.example.Other} and the method {@code qux}.
+     */
     private static final String FIRST_RUN = "{\"version\":\"1.1.0\"," +
                     "\"types\":[{\"id\":4,\"name\":\"int\"},{\"id\":8,\"name\":\"void\"},{\"id\":100,\"name\":\"com.example.Foo\"},{\"id\":101,\"name\":\"com.example.Impl\"}]," +
                     "\"methods\":[{\"id\":1,\"name\":\"bar\",\"signature\":[100,8,4]},{\"id\":2,\"name\":\"baz\",\"signature\":[100,4]}]," +
@@ -52,7 +55,7 @@ public class IprofProfileMergerTest {
                     "\"callCountProfiles\":[{\"ctx\":\"2:0<1:30\",\"records\":[100]}]," +
                     "\"virtualInvokeProfiles\":[{\"ctx\":\"1:40\",\"records\":[101,7]}]," +
                     "\"samplingProfiles\":[{\"ctx\":\"2:5<1:30\",\"records\":[3]}]}";
-
+    /** The second profile of the program of {@link #FIRST_RUN}, with different ids. */
     private static final String SECOND_RUN = "{\"version\":\"1.1.0\"," +
                     "\"types\":[{\"id\":0,\"name\":\"com.example.Impl\"},{\"id\":1,\"name\":\"com.example.Foo\"},{\"id\":2,\"name\":\"void\"},{\"id\":3,\"name\":\"int\"},{\"id\":5,\"name\":\"com.example.Other\"}]," +
                     "\"methods\":[{\"id\":7,\"name\":\"baz\",\"signature\":[1,3]},{\"id\":8,\"name\":\"bar\",\"signature\":[1,2,3]},{\"id\":9,\"name\":\"qux\",\"signature\":[5,2]}]," +
@@ -65,10 +68,12 @@ public class IprofProfileMergerTest {
         return new IprofParser().parse(new StringReader(json));
     }
 
+    /** The id in {@code profile} of the method named {@code name}. */
     private static int methodId(ParsedIprofProfile profile, String name) {
         return profile.methodsById().values().stream().filter(m -> m.name().equals(name)).map(ProfileMethod::methodId).findFirst().orElseThrow();
     }
 
+    /** The id in {@code profile} of the type named {@code name}. */
     private static int typeId(ParsedIprofProfile profile, String name) {
         return profile.typeNamesById().entrySet().stream().filter(e -> e.getValue().equals(name)).map(Map.Entry::getKey).findFirst().orElseThrow();
     }
@@ -111,28 +116,19 @@ public class IprofProfileMergerTest {
         Assert.assertEquals(3 + 2 * 1, merged.samplingEntries().stream().filter(e -> e.context().size() == 2).findFirst().orElseThrow().count());
     }
 
+    /* The same run overlaps 1, different hot methods less, and a run without samples is undefined. */
     @Test
-    public void overlapIsOneForTheSameRunAndSmallerForDifferentHotMethods() throws IOException {
-        ParsedIprofProfile first = parse(FIRST_RUN);
-        ParsedIprofProfile second = parse(SECOND_RUN);
-        Assert.assertEquals(1.0, IprofProfileMerger.samplingOverlap(first, first), 1e-9);
-        /* FIRST_RUN: bar 3, baz 3 (one stack). SECOND_RUN: bar 1, baz 1, qux 4. Shared share per method: min(0.5, 1/6) * 2. */
-        Assert.assertEquals(2.0 / 6.0, IprofProfileMerger.samplingOverlap(first, second), 1e-9);
-        Assert.assertEquals(IprofProfileMerger.samplingOverlap(first, second), IprofProfileMerger.samplingOverlap(second, first), 1e-9);
-    }
-
-    @Test
-    public void overlapIsUndefinedWithoutSamplesAndTheMatrixIsSymmetric() throws IOException {
+    public void overlapMatrixComparesEveryPairOfRuns() throws IOException {
         ParsedIprofProfile first = parse(FIRST_RUN);
         ParsedIprofProfile second = parse(SECOND_RUN);
         /* FIRST_RUN without its samplingProfiles section. */
         ParsedIprofProfile noSamples = parse(FIRST_RUN.substring(0, FIRST_RUN.indexOf(",\"samplingProfiles\"")) + "}");
-        Assert.assertTrue(Double.isNaN(IprofProfileMerger.samplingOverlap(first, noSamples)));
 
         double[][] overlaps = IprofProfileMerger.samplingOverlaps(List.of(first, second, noSamples));
         Assert.assertEquals(1.0, overlaps[0][0], 1e-9);
         Assert.assertEquals(1.0, overlaps[1][1], 1e-9);
         Assert.assertTrue(Double.isNaN(overlaps[2][2]));
+        /* FIRST_RUN: bar 3, baz 3 (one stack). SECOND_RUN: bar 1, baz 1, qux 4. Shared share per method: min(0.5, 1/6) * 2. */
         Assert.assertEquals(2.0 / 6.0, overlaps[0][1], 1e-9);
         Assert.assertEquals(overlaps[0][1], overlaps[1][0], 0.0);
         Assert.assertTrue(Double.isNaN(overlaps[0][2]) && Double.isNaN(overlaps[2][1]));
@@ -174,16 +170,22 @@ public class IprofProfileMergerTest {
         IprofProfileMerger.merge(List.of(new WeightedProfile(parse(FIRST_RUN), 1.0), new WeightedProfile(parse(SECOND_RUN.replace("1.1.0", "1.0.0")), 1.0)));
     }
 
+    /** A count that fits in a {@code long} but does not after it is multiplied by its weight. */
     @Test(expected = IprofFormatException.class)
     public void rejectsWeightedCountOverflow() throws IOException {
         IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE), 2.0), new WeightedProfile(conditionalCountProfile(1), 1.0)));
     }
 
+    /** Two counts of the same successor that fit in a {@code long} but not their sum. */
     @Test(expected = IprofFormatException.class)
     public void rejectsMergedCountOverflow() throws IOException {
         IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE), 1.0), new WeightedProfile(conditionalCountProfile(1), 1.0)));
     }
 
+    /**
+     * Each merged successor count fits in a {@code long}, but the two successors of the branch do
+     * not when added up.
+     */
     @Test(expected = IprofFormatException.class)
     public void rejectsMergedTotalOverflowAcrossSuccessors() throws IOException {
         IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE, 0), 1.0), new WeightedProfile(conditionalCountProfile(0, Long.MAX_VALUE), 1.0)));
@@ -199,10 +201,18 @@ public class IprofProfileMergerTest {
         IprofProfileMerger.merge(List.of(new WeightedProfile(parse(twoCallCounts), 1.0), new WeightedProfile(parse(twoCallCounts), 1.0)));
     }
 
+    /**
+     * A profile with one IfNode branch whose first successor has the count {@code count} and whose
+     * second successor has count 0.
+     */
     private static ParsedIprofProfile conditionalCountProfile(long count) throws IOException {
         return conditionalCountProfile(count, 0);
     }
 
+    /**
+     * A profile with one IfNode branch whose two successors have the counts {@code first} and
+     * {@code second}.
+     */
     private static ParsedIprofProfile conditionalCountProfile(long first, long second) throws IOException {
         return parse("{\"version\":\"1.1.0\"," +
                         "\"types\":[{\"id\":0,\"name\":\"void\"},{\"id\":1,\"name\":\"com.example.Counter\"}]," +

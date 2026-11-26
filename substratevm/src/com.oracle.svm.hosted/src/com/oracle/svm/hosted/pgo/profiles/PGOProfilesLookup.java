@@ -123,6 +123,10 @@ public interface PGOProfilesLookup {
     /**
      * Reports how many profiled successor probabilities were actually matched to successors in the
      * current graph. Implementations may use this for per-entry application accounting.
+     *
+     * @param callingContext the context the conditional profile was looked up for
+     * @param profiledSuccessors the number of successors the profile has
+     * @param appliedSuccessors the number of them that were matched to successors in the graph
      */
     default void recordConditionalProfileApplication(@SuppressWarnings("unused") BytecodePosition callingContext,
                     @SuppressWarnings("unused") int profiledSuccessors, @SuppressWarnings("unused") int appliedSuccessors) {
@@ -133,6 +137,8 @@ public interface PGOProfilesLookup {
      * the site. The analysis is right for this image; the record is not: it was made by another
      * build, for example of an older version of the application, or comes from a merge with such a
      * profile. The receiver is dropped.
+     *
+     * @param events the number of calls recorded for the receiver
      */
     default void recordImpossibleReceiver(@SuppressWarnings("unused") long events) {
     }

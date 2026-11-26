@@ -42,6 +42,10 @@ import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
  */
 public class IprofParserTest {
 
+    /**
+     * The {@code types} and {@code methods} sections that the test profiles share. It ends with a
+     * comma so that another section can follow.
+     */
     private static final String TYPES_AND_METHODS = "\"types\":[" +
                     "{\"id\":4,\"name\":\"int\"}," +
                     "{\"id\":9,\"name\":\"java.lang.Object\"}," +
@@ -58,11 +62,18 @@ public class IprofParserTest {
         return new IprofParser().parse(new StringReader(json));
     }
 
+    /**
+     * A profile of version {@code version} whose {@code conditionalProfiles} section holds the
+     * entries {@code conditionalProfiles}.
+     */
     private static String conditionalProfileJson(String version, String conditionalProfiles) {
         return "{\"version\":\"" + version + "\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":[" + conditionalProfiles + "]}";
     }
 
-    /** A profile with only the given section, such as {@code samplingProfiles}, and its entries. */
+    /**
+     * A version 1.1.0 profile whose only profile section is {@code section}, such as
+     * {@code samplingProfiles}, holding the entries {@code entries}.
+     */
     private static String sectionJson(String section, String entries) {
         return "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"" + section + "\":[" + entries + "]}";
     }
@@ -183,6 +194,11 @@ public class IprofParserTest {
         assertRejected(() -> parse("{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"conditionalProfiles\":["), "Not valid JSON");
     }
 
+    /**
+     * Rejects record values that the consumer cannot use safely: a successor index outside the
+     * record count, a negative count, a successor BCI outside the {@code int} range, and counts of
+     * one context whose sum overflows a {@code long}.
+     */
     @Test
     public void rejectsUnsafeConditionalRecordValues() {
         assertRejected(() -> parse(conditionalProfileJson("1.1.0", "{\"ctx\":\"1001:9\",\"records\":[20,-1,1,53,1,1]}")), "successor index");
@@ -222,10 +238,20 @@ public class IprofParserTest {
         Assert.assertArrayEquals(new long[]{20, 0, 10, 53, 1, 1}, parsed.conditionalEntries().getFirst().records());
     }
 
+    /** A parse call that may throw, so that {@link #assertRejected} can run it. */
     private interface ThrowingParse {
+        /**
+         * Runs the parse.
+         *
+         * @throws IOException if the parse fails
+         */
         void run() throws IOException;
     }
 
+    /**
+     * Checks that {@code parse} throws an {@link IprofFormatException} whose message contains
+     * {@code expectedFragment}, and fails the test on success or on any other {@link IOException}.
+     */
     private static void assertRejected(ThrowingParse parse, String expectedFragment) {
         try {
             parse.run();

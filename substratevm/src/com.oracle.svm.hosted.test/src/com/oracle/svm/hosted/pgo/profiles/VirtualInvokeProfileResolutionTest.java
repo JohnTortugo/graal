@@ -52,6 +52,10 @@ import jdk.vm.ci.meta.ResolvedJavaMethod;
  */
 public class VirtualInvokeProfileResolutionTest {
 
+    /**
+     * The {@code types} and {@code methods} sections of the test profiles and an empty
+     * {@code conditionalProfiles} section. It ends with a comma so that another section can follow.
+     */
     private static final String TYPES_AND_METHODS = "\"types\":[" +
                     "{\"id\":4,\"name\":\"int\"}," +
                     "{\"id\":8,\"name\":\"void\"}," +
@@ -63,6 +67,10 @@ public class VirtualInvokeProfileResolutionTest {
                     "{\"id\":1001,\"name\":\"bar\",\"signature\":[100,8,4]}" +
                     "],\"conditionalProfiles\":[],";
 
+    /**
+     * Parses a profile whose {@code virtualInvokeProfiles} section holds the entries
+     * {@code virtualInvokeProfiles}.
+     */
     private static ParsedIprofProfile parse(String virtualInvokeProfiles) throws IOException {
         String json = "{\"version\":\"1.1.0\"," + TYPES_AND_METHODS + "\"virtualInvokeProfiles\":[" + virtualInvokeProfiles + "]}";
         return new IprofParser().parse(new StringReader(json));

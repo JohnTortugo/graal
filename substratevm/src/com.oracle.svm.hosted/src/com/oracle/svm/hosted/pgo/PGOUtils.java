@@ -72,6 +72,8 @@ public final class PGOUtils {
      * {@code 3} through {@link SubstrateOptions#Optimize}, which also applies {@code -O3}'s own side
      * effects, as {@code -O3} does. Any other level given before the PGO option, and any {@code -O}
      * given after it, is kept.
+     *
+     * @param values the hosted option values being parsed
      */
     static void raiseDefaultToO3(EconomicMap<OptionKey<?>, Object> values) {
         Object level = values.get(SubstrateOptions.Optimize);

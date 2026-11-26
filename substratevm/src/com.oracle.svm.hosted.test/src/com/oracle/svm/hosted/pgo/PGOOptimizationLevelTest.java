@@ -43,6 +43,7 @@ import jdk.graal.compiler.options.OptionValues;
  */
 public class PGOOptimizationLevelTest {
 
+    /** Sets {@code --pgo-instrument} or {@code --pgo} on the given option values, one per entry. */
     private static final List<Consumer<EconomicMap<OptionKey<?>, Object>>> PGO_OPTIONS = List.of(
                     values -> PGOInstrumentationFeature.Options.PGOInstrument.update(values, true),
                     values -> PGOProfileUseFeature.Options.PGOProfileUse.update(values, "app.iprof"));

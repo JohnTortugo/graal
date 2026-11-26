@@ -74,14 +74,26 @@ public final class IprofParser {
 
     /** Signals that an iprof stream is not well-formed or is an unsupported version. */
     public static final class IprofFormatException extends RuntimeException {
+        /** The serialization version of this exception class. */
         private static final long serialVersionUID = 1L;
 
+        /**
+         * Creates the exception.
+         *
+         * @param message what is wrong with the stream, naming the section or context when known
+         */
         public IprofFormatException(String message) {
             super(message);
         }
     }
 
-    /** A single {@code methodId:bci} frame of the calling context of a profile entry. */
+    /**
+     * A single {@code methodId:bci} frame of the calling context of a profile entry.
+     *
+     * @param methodId the id of the frame's method in the {@code methods} table of the file
+     * @param bci the bytecode index in that method: the call site of an outer frame, or the
+     *            profiled position of the innermost frame
+     */
     public record ContextFrame(int methodId, int bci) {
     }
 
@@ -89,17 +101,30 @@ public final class IprofParser {
      * One parsed {@code conditionalProfiles} entry: the calling context (innermost frame first) and
      * the raw {@code [successorBci, successorIndex, count]} triplets, one per successor of the
      * branch or switch, as {@link PGOApplyProfilesPhase} expects them.
+     *
+     * @param context the frames of the calling context, innermost first
+     * @param records the triplets, {@link PGOApplyProfilesPhase#CONDITIONAL_RECORD_SIZE} longs each
      */
     public record ConditionalEntry(List<ContextFrame> context, long[] records) {
     }
 
-    /** One context-sensitive method-entry count. The innermost frame is the method at BCI 0. */
+    /**
+     * One parsed {@code callCountProfiles} entry: a context-sensitive method-entry count. The
+     * innermost frame is the called method at BCI 0.
+     *
+     * @param context the frames of the calling context, innermost first
+     * @param count how often the method was entered in this context
+     */
     public record CallCountEntry(List<ContextFrame> context, long count) {
     }
 
     /**
      * One parsed {@code virtualInvokeProfiles} entry: the calling context of an indirect call and
      * its records as {@code [typeId, count, typeId, count, ...]} receiver-type pairs.
+     *
+     * @param context the frames of the calling context, innermost first; the innermost BCI is the
+     *            call site
+     * @param records the pairs, {@link #VIRTUAL_INVOKE_RECORD_SIZE} longs each
      */
     public record VirtualInvokeEntry(List<ContextFrame> context, long[] records) {
     }
@@ -107,6 +132,9 @@ public final class IprofParser {
     /**
      * One parsed {@code samplingProfiles} entry: a sampled call stack (innermost frame first, the
      * innermost BCI being the sampled position) and how often it was observed.
+     *
+     * @param context the frames of the sampled stack, innermost first
+     * @param count how many samples saw this stack
      */
     public record SamplingEntry(List<ContextFrame> context, long count) {
     }
@@ -114,6 +142,12 @@ public final class IprofParser {
     /**
      * One entry of the {@code methods} table: the method's id in the file, its name, and the type
      * ids of its declaring class, return type and parameters.
+     *
+     * @param methodId the id that contexts use for this method
+     * @param name the method's name
+     * @param declaringTypeId the {@code types} id of the declaring class
+     * @param returnTypeId the {@code types} id of the return type
+     * @param parameterTypeIds the {@code types} ids of the parameter types, in order
      */
     public record ProfileMethod(int methodId, String name, int declaringTypeId, int returnTypeId, int[] parameterTypeIds) {
     }
@@ -123,22 +157,43 @@ public final class IprofParser {
      * <p>
      * The counts of each section add up to at most {@link Long#MAX_VALUE}, a stack sample's count
      * taken once per frame of its stack; the constructor rejects a section whose counts do not. The
-     * parser and the merger reject negative counts, so every sum that the consumer forms from the
-     * counts of one section fits in a long too: the branch counts of the contexts that share a
-     * prefix, the calls of a method over its contexts, the receivers of a call site. Samples are
-     * counted once per frame because {@code SamplingHotness} adds a stack's count to the tree of
-     * every method on the stack. A real profile stays far below the limit (2^63 events at 10^9 per
-     * second take 292 years), so a section that reaches it comes from a damaged or hand-made file.
+     * parser rejects negative counts and the merger only scales and adds them, so every sum that
+     * the consumer forms from the counts of one section fits in a long too: the counts of one
+     * branch, the branch counts of the contexts that share a prefix, the calls of a method over its
+     * contexts, the receivers of a call site. Samples are counted once per frame because
+     * {@code SamplingHotness} adds a stack's count to the tree of every method on the stack. A real
+     * profile stays far below the limit (2^63 events at 10^9 per second take 292 years), so a
+     * section that reaches it comes from a damaged or hand-made file.
      */
     public static final class ParsedIprofProfile {
+        /** The iprof schema version, such as {@code 1.1.0}. */
         private final String version;
+        /** The {@code types} table: type name by id. */
         private final Map<Integer, String> typeNamesById;
+        /** The {@code methods} table: method by id. */
         private final Map<Integer, ProfileMethod> methodsById;
+        /** The {@code conditionalProfiles} entries, in file order. */
         private final List<ConditionalEntry> conditionalEntries;
+        /** The {@code callCountProfiles} entries, in file order. */
         private final List<CallCountEntry> callCountEntries;
+        /** The {@code virtualInvokeProfiles} entries, in file order. */
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
+        /** The {@code samplingProfiles} entries, in file order. */
         private final List<SamplingEntry> samplingEntries;
 
+        /**
+         * Creates the profile from parsed or merged sections, which it wraps without copying.
+         *
+         * @param version the iprof schema version
+         * @param typeNamesById the {@code types} table
+         * @param methodsById the {@code methods} table
+         * @param conditionalEntries the {@code conditionalProfiles} entries
+         * @param callCountEntries the {@code callCountProfiles} entries
+         * @param virtualInvokeEntries the {@code virtualInvokeProfiles} entries
+         * @param samplingEntries the {@code samplingProfiles} entries
+         * @throws IprofFormatException if the counts of a section add up to more than
+         *             {@link Long#MAX_VALUE}, as the class comment describes
+         */
         ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, ProfileMethod> methodsById,
                         List<ConditionalEntry> conditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
@@ -157,42 +212,81 @@ public final class IprofParser {
             this.samplingEntries = Collections.unmodifiableList(samplingEntries);
         }
 
+        /**
+         * The iprof schema version, such as {@code 1.1.0}.
+         *
+         * @return the version
+         */
         public String version() {
             return version;
         }
 
+        /**
+         * The {@code types} table.
+         *
+         * @return type name by type id; unmodifiable
+         */
         public Map<Integer, String> typeNamesById() {
             return typeNamesById;
         }
 
+        /**
+         * The {@code methods} table.
+         *
+         * @return method by method id; unmodifiable
+         */
         public Map<Integer, ProfileMethod> methodsById() {
             return methodsById;
         }
 
+        /**
+         * The {@code conditionalProfiles} entries.
+         *
+         * @return the entries; unmodifiable
+         */
         public List<ConditionalEntry> conditionalEntries() {
             return conditionalEntries;
         }
 
+        /**
+         * The {@code callCountProfiles} entries.
+         *
+         * @return the entries; unmodifiable
+         */
         public List<CallCountEntry> callCountEntries() {
             return callCountEntries;
         }
 
+        /**
+         * The {@code virtualInvokeProfiles} entries.
+         *
+         * @return the entries; unmodifiable
+         */
         public List<VirtualInvokeEntry> virtualInvokeEntries() {
             return virtualInvokeEntries;
         }
 
+        /**
+         * The {@code samplingProfiles} entries.
+         *
+         * @return the entries; unmodifiable
+         */
         public List<SamplingEntry> samplingEntries() {
             return samplingEntries;
         }
 
-        /** The counts of {@code records}, which are {@code recordSize} longs each, with the count at {@code countPosition}. */
+        /**
+         * The counts of {@code records}, which are {@code recordSize} longs each, with the count at
+         * {@code countPosition}.
+         */
         private static LongStream counts(long[] records, int recordSize, int countPosition) {
             return IntStream.iterate(countPosition, i -> i < records.length, i -> i + recordSize).mapToLong(i -> records[i]);
         }
 
         /**
-         * Rejects the section if {@code counts} overflow a long when added up. {@code how} says how
-         * the counts are taken, for the message; it is empty or starts with a comma.
+         * Rejects the iprof section named {@code section} if {@code counts} overflow a long when
+         * added up. {@code how} says how the counts are taken, for the message; it is empty or
+         * starts with a comma.
          */
         private static void checkOverflow(String section, String how, LongStream counts) {
             try {
@@ -248,6 +342,10 @@ public final class IprofParser {
         return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
     }
 
+    /**
+     * Parses the {@code types} section into type names by id. Rejects an empty name and a
+     * duplicate id.
+     */
     private static Map<Integer, String> parseTypes(List<Object> types) {
         Map<Integer, String> result = new HashMap<>(types.size());
         for (Object element : types) {
@@ -264,6 +362,12 @@ public final class IprofParser {
         return result;
     }
 
+    /**
+     * Parses the {@code methods} section into methods by id. A signature lists the type ids of
+     * the declaring class, the return type and then the parameters. The type ids are not checked
+     * against the {@code types} section here; {@code IprofProfileMerger} and
+     * {@code IprofProfileResolver} reject or skip undeclared ones. Rejects a duplicate method id.
+     */
     private static Map<Integer, ProfileMethod> parseMethods(List<Object> methods) {
         Map<Integer, ProfileMethod> result = new HashMap<>(methods.size());
         for (Object element : methods) {
@@ -293,28 +397,26 @@ public final class IprofParser {
      * non-array value, or any structurally invalid entry, is still rejected.
      */
     private static List<ConditionalEntry> optionalConditionalProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(IprofFormat.CONDITIONAL_PROFILES);
-        if (value == null) {
-            return Collections.emptyList();
+        List<Object> conditionalProfiles = optionalList(top, IprofFormat.CONDITIONAL_PROFILES);
+        List<ConditionalEntry> result = new ArrayList<>(conditionalProfiles.size());
+        for (Object element : conditionalProfiles) {
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.CONDITIONAL_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
+            List<ContextFrame> context = parseContext(ctx);
+            long[] records = parseConditionalRecords(rawRecords, ctx);
+            result.add(new ConditionalEntry(context, records));
         }
-        if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + IprofFormat.CONDITIONAL_PROFILES + "' must be a JSON array");
-        }
-        @SuppressWarnings("unchecked")
-        List<Object> conditionalProfiles = (List<Object>) value;
-        return parseConditionalProfiles(conditionalProfiles);
+        return result;
     }
 
+    /**
+     * Returns the parsed {@code callCountProfiles} entries, or an empty list when the section is
+     * absent. Each entry has exactly one record, a non-negative count, and a context whose
+     * innermost frame is at BCI 0.
+     */
     private static List<CallCountEntry> optionalCallCountProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(IprofFormat.CALL_COUNT_PROFILES);
-        if (value == null) {
-            return Collections.emptyList();
-        }
-        if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + IprofFormat.CALL_COUNT_PROFILES + "' must be a JSON array");
-        }
-        @SuppressWarnings("unchecked")
-        List<Object> callCountProfiles = (List<Object>) value;
+        List<Object> callCountProfiles = optionalList(top, IprofFormat.CALL_COUNT_PROFILES);
         List<CallCountEntry> result = new ArrayList<>(callCountProfiles.size());
         for (Object element : callCountProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.CALL_COUNT_PROFILES);
@@ -339,15 +441,7 @@ public final class IprofParser {
      * {@code types} section.
      */
     private static List<VirtualInvokeEntry> optionalVirtualInvokeProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
-        Object value = top.get(IprofFormat.VIRTUAL_INVOKE_PROFILES);
-        if (value == null) {
-            return Collections.emptyList();
-        }
-        if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + IprofFormat.VIRTUAL_INVOKE_PROFILES + "' must be a JSON array");
-        }
-        @SuppressWarnings("unchecked")
-        List<Object> virtualInvokeProfiles = (List<Object>) value;
+        List<Object> virtualInvokeProfiles = optionalList(top, IprofFormat.VIRTUAL_INVOKE_PROFILES);
         List<VirtualInvokeEntry> result = new ArrayList<>(virtualInvokeProfiles.size());
         for (Object element : virtualInvokeProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.VIRTUAL_INVOKE_PROFILES);
@@ -382,17 +476,12 @@ public final class IprofParser {
         return JavaKind.fromTypeString(MetaUtil.toInternalName(typeName)) != JavaKind.Object;
     }
 
-    /** Returns the parsed {@code samplingProfiles} entries; each has exactly one record, the sample count. */
+    /**
+     * Returns the parsed {@code samplingProfiles} entries, or an empty list when the section is
+     * absent. Each entry has exactly one record, a non-negative sample count.
+     */
     private static List<SamplingEntry> optionalSamplingProfiles(EconomicMap<String, Object> top) {
-        Object value = top.get(IprofFormat.SAMPLING_PROFILES);
-        if (value == null) {
-            return Collections.emptyList();
-        }
-        if (!(value instanceof List)) {
-            throw new IprofFormatException("Key '" + IprofFormat.SAMPLING_PROFILES + "' must be a JSON array");
-        }
-        @SuppressWarnings("unchecked")
-        List<Object> samplingProfiles = (List<Object>) value;
+        List<Object> samplingProfiles = optionalList(top, IprofFormat.SAMPLING_PROFILES);
         List<SamplingEntry> result = new ArrayList<>(samplingProfiles.size());
         for (Object element : samplingProfiles) {
             EconomicMap<String, Object> entry = asObject(element, IprofFormat.SAMPLING_PROFILES);
@@ -410,43 +499,32 @@ public final class IprofParser {
         return result;
     }
 
-    private static List<ConditionalEntry> parseConditionalProfiles(List<Object> conditionalProfiles) {
-        List<ConditionalEntry> result = new ArrayList<>(conditionalProfiles.size());
-        for (Object element : conditionalProfiles) {
-            EconomicMap<String, Object> entry = asObject(element, IprofFormat.CONDITIONAL_PROFILES);
-            String ctx = requireString(entry, IprofFormat.CTX);
-            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
-            List<ContextFrame> context = parseContext(ctx);
-            long[] records = parseConditionalRecords(rawRecords, ctx);
-            result.add(new ConditionalEntry(context, records));
-        }
-        return result;
-    }
-
     /**
      * Splits a context string of the form {@code methodId:bci<methodId:bci<...} into frames,
      * preserving the innermost-first order used by the profile and by
      * {@link PGOApplyProfilesPhase#createPointContext}: {@code 7:12<3:5} gives the frames
      * {@code (7, 12)} and {@code (3, 5)}.
+     *
+     * @param ctx the context string of a profile entry
+     * @return the frames, innermost first
+     * @throws IprofFormatException if {@code ctx} is empty or a frame is malformed
      */
     static List<ContextFrame> parseContext(String ctx) {
         if (ctx.isEmpty()) {
             throw new IprofFormatException("Empty context string");
         }
         List<ContextFrame> frames = new ArrayList<>();
-        int start = 0;
-        while (start <= ctx.length()) {
-            int separator = ctx.indexOf(IprofFormat.FRAME_SEPARATOR, start);
-            int end = separator < 0 ? ctx.length() : separator;
-            frames.add(parseFrame(ctx.substring(start, end), ctx));
-            if (separator < 0) {
-                break;
-            }
-            start = separator + 1;
+        /* The limit -1 keeps empty frames, such as the one after "7:12<", so that they are rejected. */
+        for (String frame : ctx.split(String.valueOf(IprofFormat.FRAME_SEPARATOR), -1)) {
+            frames.add(parseFrame(frame, ctx));
         }
         return frames;
     }
 
+    /**
+     * Parses one {@code methodId:bci} frame. {@code ctx} is the whole context string, for the
+     * error message.
+     */
     private static ContextFrame parseFrame(String frame, String ctx) {
         int colon = frame.indexOf(IprofFormat.METHOD_BCI_SEPARATOR);
         if (colon <= 0 || colon == frame.length() - 1) {
@@ -457,6 +535,13 @@ public final class IprofParser {
         return new ContextFrame(methodId, bci);
     }
 
+    /**
+     * Parses the records of a {@code conditionalProfiles} entry and checks each
+     * {@code [successorBci, successorIndex, count]} triplet: the successor BCI fits in an int, the
+     * successor index is below the number of triplets, and the count is non-negative. The
+     * {@link ParsedIprofProfile} constructor checks that the counts of the whole section fit in a
+     * long when added up. {@code ctx} is the entry's context, for the error message.
+     */
     private static long[] parseConditionalRecords(List<Object> rawRecords, String ctx) {
         if (rawRecords.isEmpty() || rawRecords.size() % PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE != 0) {
             throw new IprofFormatException("Conditional records length " + rawRecords.size() + " for context '" + ctx +
@@ -464,7 +549,6 @@ public final class IprofParser {
         }
         int recordCount = rawRecords.size() / PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE;
         long[] records = new long[rawRecords.size()];
-        long entryTotal = 0;
         for (int i = 0; i < rawRecords.size(); i++) {
             records[i] = asLong(rawRecords.get(i), IprofFormat.RECORDS);
         }
@@ -481,21 +565,11 @@ public final class IprofParser {
             if (count < 0) {
                 throw new IprofFormatException("Conditional context '" + ctx + "' has negative count " + count);
             }
-            /*
-             * PGOApplyProfilesPhase adds up the counts of an entry in a long to turn them into
-             * probabilities. A sum that does not fit would wrap around to a negative number and give
-             * wrong probabilities, so such an entry is rejected here. ParsedIprofProfile checks the
-             * whole section as well; this check names the entry.
-             */
-            try {
-                entryTotal = Math.addExact(entryTotal, count);
-            } catch (ArithmeticException exception) {
-                throw new IprofFormatException("Conditional context '" + ctx + "' event counts overflow a signed 64-bit integer");
-            }
         }
         return records;
     }
 
+    /** Parses an int, ignoring surrounding whitespace; {@code ctx} is for the error message. */
     private static int parseInt(String value, String ctx) {
         try {
             return Integer.parseInt(value.trim());
@@ -504,6 +578,7 @@ public final class IprofParser {
         }
     }
 
+    /** Parses a method id, which must not be negative; {@code ctx} is for the error message. */
     private static int parseNonNegativeInt(String value, String ctx) {
         int parsed = parseInt(value, ctx);
         if (parsed < 0) {
@@ -520,6 +595,11 @@ public final class IprofParser {
             throw new IprofFormatException("Expected JSON object in '" + owner + "'");
         }
         return (EconomicMap<String, Object>) value;
+    }
+
+    /** The array under {@code key}, or an empty list when {@code map} has no value for it. */
+    private static List<Object> optionalList(EconomicMap<String, Object> map, String key) {
+        return map.get(key) == null ? List.of() : requireList(map, key);
     }
 
     @SuppressWarnings("unchecked")

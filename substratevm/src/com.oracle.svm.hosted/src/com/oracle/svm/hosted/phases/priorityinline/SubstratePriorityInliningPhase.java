@@ -164,6 +164,7 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
         }
     }
 
+    /** The profiles to apply to expanded callees, or {@code null} without {@code --pgo}. */
     private final PGOProfilesLookup profilesLookup;
     private final RuntimeConfiguration runtimeConfig;
     private final HostedUniverse universe;
@@ -181,10 +182,28 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
         this.layeredBuild = ImageLayerBuildingSupport.buildingExtensionLayer();
     }
 
+    /**
+     * Creates a copy of {@code oldPhase} with another inlining provider and profiles. With
+     * {@code --pgo}, the profile use feature installs this copy in place of the original phase.
+     *
+     * @param oldPhase the phase to copy the canonicalizer, runtime configuration and universe from
+     * @param substrateInliningProvider the inlining provider of the copy
+     * @param profilesLookup the profiles to apply to expanded callees, or {@code null} for none
+     */
     public SubstratePriorityInliningPhase(SubstratePriorityInliningPhase oldPhase, SubstrateInliningProvider substrateInliningProvider, PGOProfilesLookup profilesLookup) {
         this(oldPhase.canonicalizer, HostedOptionValues.singleton().get(), oldPhase.runtimeConfig, oldPhase.universe, substrateInliningProvider, profilesLookup);
     }
 
+    /**
+     * Creates the phase with the default inlining provider.
+     *
+     * @param canonicalizer the canonicalizer run on inlined graphs
+     * @param options the option values of the phase
+     * @param runtimeConfig the runtime configuration
+     * @param universe the hosted universe
+     * @param profilesLookup the profiles to apply to expanded callees, or {@code null} without
+     *            {@code --pgo}
+     */
     public SubstratePriorityInliningPhase(CanonicalizerPhase canonicalizer, OptionValues options, RuntimeConfiguration runtimeConfig,
                     HostedUniverse universe, PGOProfilesLookup profilesLookup) {
         this(canonicalizer, options, runtimeConfig, universe, new SubstrateInliningProvider(universe, _ -> null), profilesLookup);
@@ -380,7 +399,8 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
          * a callee by the time spent under it, which favours long-running callees over frequently
          * dispatched ones. Guarding a hot call site on a rarely dispatched receiver makes every
          * dispatch pay for a failing guard, so only devirtualize when a frequency-based receiver
-         * profile backs the call site.
+         * profile backs the call site: the call target of {@code invoke} has a dynamic type
+         * profile.
          */
         private static boolean hasReceiverFrequencyProfile(Invoke invoke) {
             return invoke.callTarget() instanceof SubstrateMethodCallTargetNode target && target.hasDynamicTypeProfile();

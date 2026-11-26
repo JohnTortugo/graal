@@ -66,8 +66,11 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
     public record ConditionalDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, int duplicateContextEntries, int singleFrameEntries,
                     int inlinedContextEntries) {
         /**
-         * For example {@code iprof conditionalProfiles: 7222 entries, 7208 resolved (99.8%), 14
-         * unresolved, 0 duplicate-context; 2801 single-frame, 4407 inlined-context}.
+         * The line for the build output, for example {@code iprof conditionalProfiles: 7222
+         * entries, 7208 resolved (99.8%), 14 unresolved, 0 duplicate-context; 2801 single-frame,
+         * 4407 inlined-context}.
+         *
+         * @return the summary line
          */
         public String summary() {
             return String.format("iprof conditionalProfiles: %d entries, %d resolved (%.1f%%), %d unresolved, %d duplicate-context; %d single-frame, %d inlined-context",
@@ -92,9 +95,11 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
     public record VirtualInvokeDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, int duplicateContextEntries, int noReceiverInImageEntries,
                     long receiverRecords, long droppedReceiverRecords, long receiverEvents, long droppedReceiverEvents) {
         /**
-         * For example {@code iprof virtualInvokeProfiles: 1736 entries, 1726 resolved, 8 unresolved,
-         * 0 duplicate-context, 2 without a receiver type in the image; receiver records 2950 (12
-         * dropped), receiver events 81234 (40 dropped)}.
+         * The line for the build output, for example {@code iprof virtualInvokeProfiles: 1736
+         * entries, 1726 resolved, 8 unresolved, 0 duplicate-context, 2 without a receiver type in
+         * the image; receiver records 2950 (12 dropped), receiver events 81234 (40 dropped)}.
+         *
+         * @return the summary line
          */
         public String summary() {
             return String.format("iprof virtualInvokeProfiles: %d entries, %d resolved, %d unresolved, %d duplicate-context, %d without a receiver type in the image; " +
@@ -115,8 +120,8 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
      * @param samples the samples of all stacks
      * @param droppedSamples the samples of the dropped stacks
      * @param sampledMethods the distinct methods of the stacks that are used, in whole or in part
-     * @param unresolvableFrameSamples the samples of the stacks that stop at each unresolvable frame,
-     *            by its descriptor
+     * @param unresolvableFrameSamples the samples of the stacks that stop at each unresolvable
+     *            frame, by its descriptor
      */
     public record SamplingDiagnostics(int totalEntries, int resolvedEntries, int truncatedEntries, int unresolvedEntries, long samples, long droppedSamples,
                     int sampledMethods, Map<String, Long> unresolvableFrameSamples) {
@@ -124,9 +129,13 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
         private static final int REPORTED_UNRESOLVABLE_FRAMES = 8;
 
         /**
-         * For example {@code iprof samplingProfiles: 42 stacks, 41 fully resolved, 0 truncated at an
-         * unresolvable outer frame, 1 unresolved; samples 392 (4 dropped); 59 sampled methods; top
-         * unresolvable frames by samples: Lcom/example/Old;.run()V=4}.
+         * The line for the build output, for example {@code iprof samplingProfiles: 42 stacks, 41
+         * fully resolved, 0 truncated at an unresolvable outer frame, 1 unresolved; samples 392 (4
+         * dropped); 59 sampled methods; top unresolvable frames by samples:
+         * Lcom/example/Old;.run()V=4}. It names at most {@link #REPORTED_UNRESOLVABLE_FRAMES}
+         * frames, those with the most samples first.
+         *
+         * @return the summary line
          */
         public String summary() {
             StringBuilder frames = new StringBuilder();
@@ -148,7 +157,12 @@ public record PGODiagnostics(String version, ConditionalDiagnostics conditional,
      * @param resolvedCalls the calls counted by the resolved entries
      */
     public record CallCountDiagnostics(int totalEntries, int resolvedEntries, int unresolvedEntries, long resolvedCalls) {
-        /** For example {@code iprof callCountProfiles: 4424 entries, 4411 resolved, 13 unresolved; 918273 calls in the resolved entries}. */
+        /**
+         * The line for the build output, for example {@code iprof callCountProfiles: 4424 entries,
+         * 4411 resolved, 13 unresolved; 918273 calls in the resolved entries}.
+         *
+         * @return the summary line
+         */
         public String summary() {
             return String.format("iprof callCountProfiles: %d entries, %d resolved, %d unresolved; %d calls in the resolved entries", totalEntries, resolvedEntries, unresolvedEntries,
                             resolvedCalls);
