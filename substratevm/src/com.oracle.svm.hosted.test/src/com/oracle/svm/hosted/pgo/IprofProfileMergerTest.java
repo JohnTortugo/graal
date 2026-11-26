@@ -138,10 +138,12 @@ public class IprofProfileMergerTest {
         Assert.assertTrue(Double.isNaN(overlaps[0][2]) && Double.isNaN(overlaps[2][1]));
     }
 
+    /* One weight for all counts keeps their ratios, so a single profile is not scaled. */
     @Test
-    public void singleUnweightedProfileIsReturnedAsIs() throws IOException {
+    public void singleProfileIsReturnedAsIs() throws IOException {
         ParsedIprofProfile first = parse(FIRST_RUN);
         Assert.assertSame(first, IprofProfileMerger.merge(List.of(new WeightedProfile(first, 1.0))));
+        Assert.assertSame(first, IprofProfileMerger.merge(List.of(new WeightedProfile(first, 2.0))));
     }
 
     @SuppressWarnings("unused")
@@ -174,7 +176,7 @@ public class IprofProfileMergerTest {
 
     @Test(expected = IprofFormatException.class)
     public void rejectsWeightedCountOverflow() throws IOException {
-        IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE), 2.0)));
+        IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE), 2.0), new WeightedProfile(conditionalCountProfile(1), 1.0)));
     }
 
     @Test(expected = IprofFormatException.class)
@@ -187,14 +189,14 @@ public class IprofProfileMergerTest {
         IprofProfileMerger.merge(List.of(new WeightedProfile(conditionalCountProfile(Long.MAX_VALUE, 0), 1.0), new WeightedProfile(conditionalCountProfile(0, Long.MAX_VALUE), 1.0)));
     }
 
-    /* Each weighted count fits in a long, but the counts of the merged section do not when added up. */
+    /* Each merged count fits in a long, but the counts of the merged section do not when added up. */
     @Test(expected = IprofFormatException.class)
     public void rejectsMergedSectionWhoseCountsOverflowWhenAddedUp() throws IOException {
         String twoCallCounts = "{\"version\":\"1.1.0\"," +
                         "\"types\":[{\"id\":0,\"name\":\"void\"},{\"id\":1,\"name\":\"com.example.Counter\"}]," +
                         "\"methods\":[{\"id\":0,\"name\":\"run\",\"signature\":[1,0]},{\"id\":1,\"name\":\"step\",\"signature\":[1,0]}]," +
                         "\"callCountProfiles\":[{\"ctx\":\"0:0\",\"records\":[3000000000000000000]},{\"ctx\":\"1:0\",\"records\":[3000000000000000000]}]}";
-        IprofProfileMerger.merge(List.of(new WeightedProfile(parse(twoCallCounts), 2.0)));
+        IprofProfileMerger.merge(List.of(new WeightedProfile(parse(twoCallCounts), 1.0), new WeightedProfile(parse(twoCallCounts), 1.0)));
     }
 
     private static ParsedIprofProfile conditionalCountProfile(long count) throws IOException {

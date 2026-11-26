@@ -142,12 +142,11 @@ public final class IprofParser {
         ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, ProfileMethod> methodsById,
                         List<ConditionalEntry> conditionalEntries,
                         List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
-            checkTotal(IprofFormat.CONDITIONAL_PROFILES, "", conditionalEntries.stream().flatMapToLong(
+            checkOverflow(IprofFormat.CONDITIONAL_PROFILES, "", conditionalEntries.stream().flatMapToLong(
                             entry -> counts(entry.records(), PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE, PGOApplyProfilesPhase.CONDITIONAL_RECORD_COUNTER_POSITION)));
-            checkTotal(IprofFormat.CALL_COUNT_PROFILES, "", callCountEntries.stream().mapToLong(CallCountEntry::count));
-            /* A receiver record is [typeId, count]. */
-            checkTotal(IprofFormat.VIRTUAL_INVOKE_PROFILES, "", virtualInvokeEntries.stream().flatMapToLong(entry -> counts(entry.records(), VIRTUAL_INVOKE_RECORD_SIZE, 1)));
-            checkTotal(IprofFormat.SAMPLING_PROFILES, ", each taken once per frame of its stack,",
+            checkOverflow(IprofFormat.CALL_COUNT_PROFILES, "", callCountEntries.stream().mapToLong(CallCountEntry::count));
+            checkOverflow(IprofFormat.VIRTUAL_INVOKE_PROFILES, "", virtualInvokeEntries.stream().flatMapToLong(entry -> counts(entry.records(), VIRTUAL_INVOKE_RECORD_SIZE, 1)));
+            checkOverflow(IprofFormat.SAMPLING_PROFILES, ", each taken once per frame of its stack,",
                             samplingEntries.stream().mapToLong(entry -> Math.multiplyExact(entry.count(), entry.context().size())));
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
@@ -195,7 +194,7 @@ public final class IprofParser {
          * Rejects the section if {@code counts} overflow a long when added up. {@code how} says how
          * the counts are taken, for the message; it is empty or starts with a comma.
          */
-        private static void checkTotal(String section, String how, LongStream counts) {
+        private static void checkOverflow(String section, String how, LongStream counts) {
             try {
                 counts.reduce(0L, Math::addExact);
             } catch (ArithmeticException exception) {

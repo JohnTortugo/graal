@@ -51,10 +51,6 @@ import java.util.Map;
 public record PGODiagnostics(String version, ConditionalDiagnostics conditional, VirtualInvokeDiagnostics virtualInvoke, SamplingDiagnostics sampling,
                 CallCountDiagnostics callCount, int ambiguousImageMethods, int ambiguousImageTypes, List<String> droppedEntries) {
 
-    public PGODiagnostics {
-        droppedEntries = List.copyOf(droppedEntries);
-    }
-
     /**
      * The {@code conditionalProfiles} section.
      *

@@ -187,14 +187,16 @@ public final class PGOProfileUseFeature implements InternalFeature {
      * {@code llvm-profdata merge --weighted-input} and {@code gcov-tool merge -w} do for training
      * runs of different workloads or lengths. A directory stands for all .iprof files in it.
      *
+     * @param optionValue the value of {@code --pgo}
      * @return the merged profile, or {@code null} if the option names no .iprof file
      */
     private static ParsedIprofProfile parseProfile(String optionValue) {
-        List<IprofProfileMerger.WeightedProfile> inputs = new ArrayList<>();
+        List<IprofProfileMerger.WeightedProfile> profiles = new ArrayList<>();
         List<String> names = new ArrayList<>();
         for (String element : optionValue.split(",")) {
             String spec = element.strip();
             if (spec.isEmpty()) {
+                LogUtils.warning("An empty entry in %s adds no profile.", profileOption());
                 continue;
             }
             if (Files.isDirectory(Path.of(spec))) {
@@ -208,7 +210,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
                     LogUtils.warning("The directory %s in %s contains no .iprof files, so it adds no profile.", spec, profileOption());
                 }
                 for (Path iprof : iprofs) {
-                    inputs.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(iprof), DEFAULT_WEIGHT));
+                    profiles.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(iprof), DEFAULT_WEIGHT));
                     names.add(iprof.toString());
                 }
                 continue;
@@ -220,18 +222,18 @@ public final class PGOProfileUseFeature implements InternalFeature {
             if (!(Double.isFinite(profileSpec.weight()) && profileSpec.weight() > 0.0)) {
                 throw UserError.abort("The profile weight in %s must be a positive number: %s", profileOption(), spec);
             }
-            inputs.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(Path.of(profileSpec.path())), profileSpec.weight()));
+            profiles.add(new IprofProfileMerger.WeightedProfile(parseSingleProfile(Path.of(profileSpec.path())), profileSpec.weight()));
             names.add(profileSpec.path());
         }
-        if (inputs.isEmpty()) {
+        if (profiles.isEmpty()) {
             LogUtils.warning("%s names no .iprof file, so the image is built without a profile.", profileOption());
             return null;
         }
-        if (inputs.size() > 1) {
-            reportOverlaps(inputs, names);
+        if (profiles.size() > 1) {
+            reportOverlaps(profiles, names);
         }
         try {
-            return IprofProfileMerger.merge(inputs);
+            return IprofProfileMerger.merge(profiles);
         } catch (IprofFormatException e) {
             throw UserError.abort("The iprof files in %s cannot be merged: %s", profileOption(), e.getMessage());
         }
@@ -282,9 +284,9 @@ public final class PGOProfileUseFeature implements InternalFeature {
      * low overlap means the merged profile is a compromise. One line gives the lowest and the median
      * pair; with PGOPrintStatistics every input also gets its row of the matrix.
      */
-    private static void reportOverlaps(List<IprofProfileMerger.WeightedProfile> inputs, List<String> names) {
-        double[][] overlaps = IprofProfileMerger.samplingOverlaps(inputs.stream().map(IprofProfileMerger.WeightedProfile::profile).toList());
-        int count = inputs.size();
+    private static void reportOverlaps(List<IprofProfileMerger.WeightedProfile> profiles, List<String> names) {
+        double[][] overlaps = IprofProfileMerger.samplingOverlaps(profiles.stream().map(IprofProfileMerger.WeightedProfile::profile).toList());
+        int count = profiles.size();
         List<Double> pairs = new ArrayList<>();
         int lowestFirst = -1;
         int lowestSecond = -1;

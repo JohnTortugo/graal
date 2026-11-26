@@ -120,17 +120,26 @@ public final class IprofProfileResolver {
     /**
      * Resolves the parsed profile against the universe and builds the lookup table.
      *
+     * @param profile the parsed profile
+     * @param universe the image's types and methods, which the names in the profile are matched to
      * @param collectDroppedEntries whether to keep a readable context of every entry that is dropped,
      *            for {@code PGOPrintProfileQualityDetails}
-     * @return a fully constructed, immutable lookup.
+     * @return the lookup that serves the resolved entries
      */
     public static IprofProfilesLookup resolve(ParsedIprofProfile profile, HostedUniverse universe, boolean collectDroppedEntries) {
         Set<String> ambiguousMethods = new HashSet<>();
         Set<String> ambiguousTypes = new HashSet<>();
+        /*
+         * Two maps from a method name in the profile to an image method. The first keys every image
+         * method by its descriptor and serves all sections. The stack sampler names a frame as stack
+         * traces do, which for a substituted method is the substitution's name: Object.wait(long) is
+         * sampled as Ljava/lang/Object;.waitSubst(J)V. The second map holds the sampled names that
+         * the first lacks, and serves the stack samples only.
+         */
         Map<String, HostedMethod> methods = indexUniverseMethods(universe, ambiguousMethods);
         Map<String, HostedMethod> methodsByStackTraceName = indexStackTraceNames(universe, unresolvedSampleFrames(profile, methods.keySet(), ambiguousMethods));
-        return buildLookup(profile, methods, methodsByStackTraceName, indexUniverseTypes(universe, ambiguousTypes), ambiguousMethods.size(), ambiguousTypes.size(),
-                        collectDroppedEntries ? new ArrayList<>() : null);
+        Map<String, AnalysisType> types = indexUniverseTypes(universe, ambiguousTypes);
+        return buildLookup(profile, methods, methodsByStackTraceName, types, ambiguousMethods.size(), ambiguousTypes.size(), collectDroppedEntries ? new ArrayList<>() : null);
     }
 
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, AnalysisType> typesByDescriptor) {
@@ -203,7 +212,11 @@ public final class IprofProfileResolver {
                 addDropped(droppedEntries, "branch or switch", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
-            /* The first entry for a context wins. */
+            /*
+             * IprofWriter gives each method one id and writes each context once. A file it did not
+             * write, such as a hand-edited one, can still repeat a context or list a method under
+             * two ids; then the first entry for the context wins.
+             */
             if (table.putIfAbsent(key, entry.records()) != null) {
                 duplicates++;
                 addDropped(droppedEntries, "branch or switch, duplicate context", entry.context(), descriptorByMethodId, presentDescriptors);
@@ -335,6 +348,7 @@ public final class IprofProfileResolver {
                 addDropped(droppedEntries, "receiver profile, no recorded type in the image", entry.context(), descriptorByMethodId, presentDescriptors);
                 continue;
             }
+            /* As for branches, only a file that IprofWriter did not write repeats a context. */
             if (table.putIfAbsent(key, Map.copyOf(receivers)) != null) {
                 duplicates++;
                 addDropped(droppedEntries, "receiver profile, duplicate context", entry.context(), descriptorByMethodId, presentDescriptors);
@@ -406,9 +420,16 @@ public final class IprofProfileResolver {
     }
 
     /**
-     * Indexes image types by JVM descriptor so profile type names resolve to analysis types. As for
-     * methods, a name that two image types share names neither of them; such names are added to
-     * {@code ambiguous}.
+     * Indexes image types by JVM descriptor, such as {@code Ljava/lang/String;}, so that the
+     * receiver types of the {@code virtualInvokeProfiles} section resolve. The values are the
+     * {@link AnalysisType}s that the {@link HostedType}s wrap: the receiver table answers
+     * {@link PGOProfilesLookup#getVirtualInvokeProfile}, whose signature uses analysis types, and
+     * {@code PGOUtils} turns them back into hosted types when it builds the type profile of a call.
+     * As for methods, a name that two image types share names neither of them.
+     *
+     * @param universe the image's types
+     * @param ambiguous receives the descriptors that two image types share
+     * @return the image types by descriptor, without the ambiguous ones
      */
     private static Map<String, AnalysisType> indexUniverseTypes(HostedUniverse universe, Set<String> ambiguous) {
         Map<String, AnalysisType> typesByDescriptor = new HashMap<>();

@@ -153,16 +153,27 @@ public final class IprofProfileMerger {
                         Arrays.stream(method.parameterTypeIds()).mapToObj(id -> typeName(profile, id)).toList());
     }
 
-    public static ParsedIprofProfile merge(List<WeightedProfile> inputs) {
-        if (inputs.isEmpty()) {
+    /**
+     * Merges the profiles into one, each count scaled by the weight of its profile. A single
+     * profile is returned as it is: the compiler uses only ratios of counts, which one weight for
+     * all counts does not change.
+     *
+     * @param profiles the profiles to merge, at least one
+     * @return the merged profile
+     * @throws IprofFormatException if the profiles have different versions or refer to undeclared
+     *             ids, or if a scaled count, a merged count or the total of a merged section does
+     *             not fit in a long
+     */
+    public static ParsedIprofProfile merge(List<WeightedProfile> profiles) {
+        if (profiles.isEmpty()) {
             throw new IllegalArgumentException("At least one profile is required");
         }
-        if (inputs.size() == 1 && inputs.get(0).weight() == 1.0) {
-            return inputs.get(0).profile();
+        if (profiles.size() == 1) {
+            return profiles.get(0).profile();
         }
         IprofProfileMerger merger = new IprofProfileMerger();
-        for (WeightedProfile input : inputs) {
-            merger.addProfile(input.profile(), input.weight());
+        for (WeightedProfile weighted : profiles) {
+            merger.addProfile(weighted.profile(), weighted.weight());
         }
         return merger.mergedProfile();
     }
@@ -239,11 +250,6 @@ public final class IprofProfileMerger {
     }
 
     private static long[] toConditionalRecords(Map<Arm, Long> armCounts) {
-        /* Rejects merged arm counts whose sum does not fit in a long, as the parser does for one file. */
-        long entryTotal = 0;
-        for (long count : armCounts.values()) {
-            entryTotal = addCounts(entryTotal, count);
-        }
         long[] result = new long[armCounts.size() * PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE];
         int i = 0;
         for (Map.Entry<Arm, Long> entry : armCounts.entrySet()) {
