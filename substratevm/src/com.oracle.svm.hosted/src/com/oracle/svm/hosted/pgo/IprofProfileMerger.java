@@ -55,7 +55,7 @@ import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
  * weighs more; weights let the caller rebalance (a workload run for a quarter of the time of
  * another gets weight 4 to count the same).
  */
-public final class IprofProfileMerger {
+final class IprofProfileMerger {
 
     /**
      * One input of a merge: a parsed profile and the factor applied to all of its counts.
@@ -63,7 +63,7 @@ public final class IprofProfileMerger {
      * @param profile the parsed profile
      * @param weight the factor its counts are multiplied by; finite and positive
      */
-    public record WeightedProfile(ParsedIprofProfile profile, double weight) {
+    record WeightedProfile(ParsedIprofProfile profile, double weight) {
         /**
          * Checks the weight.
          *
@@ -71,7 +71,7 @@ public final class IprofProfileMerger {
          * @param weight the factor its counts are multiplied by
          * @throws IllegalArgumentException if {@code weight} is not finite or not positive
          */
-        public WeightedProfile {
+        WeightedProfile {
             if (!Double.isFinite(weight) || !(weight > 0.0)) {
                 throw new IllegalArgumentException("Profile weight must be finite and positive: " + weight);
             }
@@ -127,7 +127,7 @@ public final class IprofProfileMerger {
      *         {@code [i][j]} for profiles {@code i} and {@code j}; it is symmetric and its diagonal
      *         is 1, or {@link Double#NaN} for a profile without stack samples
      */
-    public static double[][] samplingOverlaps(List<ParsedIprofProfile> profiles) {
+    static double[][] samplingOverlaps(List<ParsedIprofProfile> profiles) {
         List<Map<MethodIdentity, Long>> samplesByMethod = profiles.stream().map(IprofProfileMerger::inclusiveSamplesByMethod).toList();
         double[][] result = new double[profiles.size()][profiles.size()];
         for (int i = 0; i < profiles.size(); i++) {
@@ -198,7 +198,7 @@ public final class IprofProfileMerger {
      *             ids, or if a scaled count, a merged count or the total of a merged section does
      *             not fit in a long
      */
-    public static ParsedIprofProfile merge(List<WeightedProfile> profiles) {
+    static ParsedIprofProfile merge(List<WeightedProfile> profiles) {
         if (profiles.isEmpty()) {
             throw new IllegalArgumentException("At least one profile is required");
         }

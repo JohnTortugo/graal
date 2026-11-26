@@ -59,7 +59,6 @@ import jdk.vm.ci.meta.MetaUtil;
  * profile sections are <em>optional</em> per the iprof schema: an absent section parses as an
  * empty list, and the profile then has no data of that kind. A section that is present must be a
  * JSON array whose entries are structurally valid.
- *
  * <p>
  * Supported schema versions are {@value IprofFormat#VERSION_1_0_0} and
  * {@value IprofFormat#VERSION_1_1_0}; the sections read here are encoded the same way in both. Any
@@ -82,7 +81,7 @@ public final class IprofParser {
          *
          * @param message what is wrong with the stream, naming the section or context when known
          */
-        public IprofFormatException(String message) {
+        IprofFormatException(String message) {
             super(message);
         }
     }
@@ -303,11 +302,11 @@ public final class IprofParser {
      * sections are skipped.
      *
      * @param reader a character stream positioned at the start of the JSON document; closed by the
-     *            caller.
-     * @return the parsed, immutable model.
+     *            caller
+     * @return the parsed, immutable model
      * @throws IprofFormatException if the stream is not valid JSON, is malformed or is an
-     *             unsupported version.
-     * @throws IOException if reading from {@code reader} fails.
+     *             unsupported version
+     * @throws IOException if reading from {@code reader} fails
      */
     @SuppressWarnings({"unchecked", "static-method"})
     public ParsedIprofProfile parse(Reader reader) throws IOException {
@@ -509,7 +508,7 @@ public final class IprofParser {
      * @return the frames, innermost first
      * @throws IprofFormatException if {@code ctx} is empty or a frame is malformed
      */
-    static List<ContextFrame> parseContext(String ctx) {
+    private static List<ContextFrame> parseContext(String ctx) {
         if (ctx.isEmpty()) {
             throw new IprofFormatException("Empty context string");
         }
@@ -586,8 +585,6 @@ public final class IprofParser {
         }
         return parsed;
     }
-
-    // --- JSON access helpers with strict typing -------------------------------------------------
 
     @SuppressWarnings("unchecked")
     private static EconomicMap<String, Object> asObject(Object value, String owner) {

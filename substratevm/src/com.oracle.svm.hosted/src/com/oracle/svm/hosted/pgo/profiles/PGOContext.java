@@ -41,7 +41,7 @@ import jdk.vm.ci.code.BytecodePosition;
  *
  * @param frames the frames, innermost first; copied, so the context does not change
  */
-public record PGOContext(List<Frame> frames) {
+record PGOContext(List<Frame> frames) {
 
     /**
      * One frame of a context: a method, named by its descriptor, and a bytecode index in it.
@@ -50,7 +50,7 @@ public record PGOContext(List<Frame> frames) {
      * @param bci the bytecode index in that method: the call site of an outer frame, or the
      *            profiled position of the innermost frame
      */
-    public record Frame(String methodDescriptor, int bci) {
+    record Frame(String methodDescriptor, int bci) {
         @Override
         public String toString() {
             return methodDescriptor + ":" + bci;
@@ -62,7 +62,7 @@ public record PGOContext(List<Frame> frames) {
      *
      * @param frames the frames, innermost first
      */
-    public PGOContext {
+    PGOContext {
         frames = List.copyOf(frames);
     }
 
@@ -72,7 +72,7 @@ public record PGOContext(List<Frame> frames) {
      * @param position the queried position, with its callers up to the compilation root
      * @return one frame per position from {@code position} outward
      */
-    public static PGOContext of(BytecodePosition position) {
+    static PGOContext of(BytecodePosition position) {
         List<Frame> frames = new ArrayList<>();
         for (BytecodePosition current = position; current != null; current = current.getCaller()) {
             frames.add(new Frame(ProfilingUtilities.methodDescriptor(current.getMethod()), current.getBCI()));
@@ -85,7 +85,7 @@ public record PGOContext(List<Frame> frames) {
      *
      * @return the number of frames
      */
-    public int depth() {
+    int depth() {
         return frames.size();
     }
 
@@ -95,7 +95,7 @@ public record PGOContext(List<Frame> frames) {
      * @param depth how many frames to keep, from 0 to {@link #depth()}
      * @return a context of the innermost {@code depth} frames
      */
-    public PGOContext prefix(int depth) {
+    PGOContext prefix(int depth) {
         return new PGOContext(frames.subList(0, depth));
     }
 

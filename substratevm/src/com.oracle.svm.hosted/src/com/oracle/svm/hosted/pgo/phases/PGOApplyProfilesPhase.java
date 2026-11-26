@@ -600,7 +600,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
      *         such type has {@code EXTREMELY_SLOW_PATH_PROBABILITY} and the other probabilities are
      *         scaled down so that all still sum to one
      */
-    static JavaTypeProfile withoutZeroProbabilities(JavaTypeProfile profile) {
+    private static JavaTypeProfile withoutZeroProbabilities(JavaTypeProfile profile) {
         JavaTypeProfile.ProfiledType[] types = profile.getTypes();
         int zeros = 0;
         for (JavaTypeProfile.ProfiledType type : types) {

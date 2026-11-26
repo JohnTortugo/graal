@@ -204,7 +204,7 @@ public final class SamplingHotness {
      * @param method the compilation root
      * @return the root of the method's tree, or {@code null} if the method was never sampled
      */
-    public PrefixTree.Cursor cursorFor(HostedMethod method) {
+    PrefixTree.Cursor cursorFor(HostedMethod method) {
         PrefixTree.Node node = methodRootedTree.entryPoints().get(method.getWrapped());
         (node == null ? unsampledRoots : sampledRoots).add(method.getWrapped());
         return node;
@@ -216,7 +216,7 @@ public final class SamplingHotness {
      * @param method the method
      * @return {@code true} if the method has a tree
      */
-    public boolean isSampled(HostedMethod method) {
+    private boolean isSampled(HostedMethod method) {
         return methodRootedTree.hasMethod(method);
     }
 
@@ -226,7 +226,7 @@ public final class SamplingHotness {
      * @param method the method
      * @return the fraction in [0, 1] of all non-idle samples whose innermost frame lies in it
      */
-    public double selfTimeShare(HostedMethod method) {
+    private double selfTimeShare(HostedMethod method) {
         if (nonIdleSamples == 0) {
             return 0.0;
         }

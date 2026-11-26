@@ -86,40 +86,40 @@ import jdk.graal.compiler.phases.util.Providers;
  * before the inliner runs and to every callee the priority inliner expands.
  */
 @AutomaticallyRegisteredFeature
-public final class PGOProfileUseFeature implements InternalFeature {
+final class PGOProfileUseFeature implements InternalFeature {
 
     /** Options of profile use; all but {@code --pgo} turn parts of it off or add output. */
-    public static final class Options {
+    static final class Options {
         // @formatter:off
         /** The iprof files to use; setting it enables this feature. */
         @APIOption(name = "pgo")//
         @Option(help = "Optimize the image with profiles recorded by a --pgo-instrument image: one .iprof file, a directory of .iprof files, " +
                        "or a comma-separated list of files, each with an optional :weight. " +
                        "Raises the default optimization level -O2 to -O3; an -O given after this option wins.")//
-        public static final HostedOptionKey<String> PGOProfileUse = new ProfilePathOption();
+        static final HostedOptionKey<String> PGOProfileUse = new ProfilePathOption();
 
         /** Off to measure what the context fallback adds to branch and switch profiles. */
         @Option(help = "When a branch or switch has no profile under its exact inlining context, add up the profiles recorded for the same site " +
                        "under longer contexts that contain it as their inner part. If there are none, drop the outermost caller and repeat, " +
                        "down to the site's own method.")//
-        public static final HostedOptionKey<Boolean> PGOConditionalContextFallback = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOConditionalContextFallback = new HostedOptionKey<>(true);
 
         /** Off to measure the fallback, as the {@code pgo-shallow-no-fallback} gate run does. */
         @Option(help = "When an indirect call has no receiver profile under its exact inlining context, drop the outermost caller and repeat " +
                        "until a context recorded for the same call matches.")//
-        public static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
 
         /** Off to measure what {@code callCountProfiles} add to the inliner's hotness. */
         @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root.")//
-        public static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
 
         /** Off to measure stack samples, as the {@code pgo-samples-disabled} gate run does. */
         @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles and self time.")//
-        public static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
 
         /** The {@code pgo end-to-end} gate task turns this on and checks the printed numbers. */
         @Option(help = "Print detailed statistics on how the profile was resolved and applied. By default one summary line is printed.")//
-        public static final HostedOptionKey<Boolean> PGOPrintStatistics = new HostedOptionKey<>(false);
+        static final HostedOptionKey<Boolean> PGOPrintStatistics = new HostedOptionKey<>(false);
         // @formatter:on
 
         /**
@@ -172,7 +172,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
      *
      * @return {@code true} if the image is built with a profile
      */
-    public static boolean enabled() {
+    static boolean enabled() {
         String path = profilePath();
         return path != null && !path.isEmpty();
     }
@@ -182,7 +182,7 @@ public final class PGOProfileUseFeature implements InternalFeature {
      *
      * @return the value of {@code PGOPrintStatistics}
      */
-    public static boolean printStatistics() {
+    private static boolean printStatistics() {
         return Options.PGOPrintStatistics.getValue();
     }
 

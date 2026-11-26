@@ -44,9 +44,8 @@ import java.util.Map;
  * @param ambiguousImageMethods how many method descriptors name more than one image method
  * @param ambiguousImageTypes how many type descriptors name more than one image type
  * @param droppedEntries the entries the image cannot use, in whole or, for a stack cut at a missing
- *            frame, in part, such as
- *            {@code receiver type com.example.Old not found in the image: Lcom/example/Foo;.bar()V:9};
- *            empty unless the resolver was asked to collect them
+ *            frame, in part, such as {@code receiver type com.example.Old not found in the image:
+ *            Lcom/example/Foo;.bar()V:9}; empty unless the resolver was asked to collect them
  */
 public record PGODiagnostics(String version, ConditionalDiagnostics conditional, VirtualInvokeDiagnostics virtualInvoke, SamplingDiagnostics sampling,
                 CallCountDiagnostics callCount, int ambiguousImageMethods, int ambiguousImageTypes, List<String> droppedEntries) {

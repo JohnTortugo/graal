@@ -73,7 +73,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * Sum of the conditional records of every context that starts with the key, innermost frame
      * first: {@code foo:12} is all executions of that branch, {@code foo:12 < a:5} all executions
      * inlined into {@code a} at bci 5, whatever the outer callers (see
-     * {@link IprofProfileResolver#conditionalPrefixSums}).
+     * {@code IprofProfileResolver.conditionalPrefixSums}).
      */
     private volatile Map<PGOContext, long[]> conditionalPrefixSums;
     /** The stack samples ({@code samplingProfiles}): each resolved stack and its count. */
@@ -168,7 +168,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * @param callCountsByContext the call count of each call edge by its context
      * @param diagnostics what the resolver found when it matched the profile to the image
      */
-    public IprofProfilesLookup(Map<PGOContext, long[]> conditionalData, Map<PGOContext, long[]> conditionalPrefixSums, Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData,
+    IprofProfilesLookup(Map<PGOContext, long[]> conditionalData, Map<PGOContext, long[]> conditionalPrefixSums, Map<PGOContext, Map<AnalysisType, Long>> virtualInvokeData,
                     Map<NodeSourcePosition, Long> sampleCounts, Map<String, Long> callCountsByMethod, Map<PGOContext, Long> callCountsByContext, PGODiagnostics diagnostics) {
         this.conditionalData = Map.copyOf(conditionalData);
         this.conditionalPrefixSums = Map.copyOf(conditionalPrefixSums);
@@ -260,8 +260,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         }
         return IprofFormat.CONDITIONAL_PROFILES.equals(category) && !conditionalData.isEmpty();
     }
-
-    // --- Branch and switch profiles (conditionalProfiles) --------------------------------------
 
     /**
      * {@inheritDoc}
@@ -442,8 +440,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return conditionalData.keySet().stream().map(Object::toString).sorted().limit(limit).toList();
     }
 
-    // --- Call counts (callCountProfiles) -------------------------------------------------------
-
     /**
      * The call count of one call edge: how often the innermost method of {@code callingContext}
      * was called from that chain of callers. Only exact contexts match; there is no fallback.
@@ -451,7 +447,7 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
      * @param callingContext the callee and its callers, innermost first
      * @return the count, or empty if the profile has none for this context or call counts are off
      */
-    public Optional<Long> getContextCallCount(BytecodePosition callingContext) {
+    Optional<Long> getContextCallCount(BytecodePosition callingContext) {
         if (!useCallCounts || callingContext == null) {
             return Optional.empty();
         }
@@ -532,8 +528,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
     public long methodCallCountMisses() {
         return methodCallCountMisses.get();
     }
-
-    // --- Receiver profiles (virtualInvokeProfiles) ---------------------------------------------
 
     /**
      * {@inheritDoc}
@@ -663,8 +657,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         return impossibleReceiverEvents.get();
     }
 
-    // --- Stack samples (samplingProfiles) ------------------------------------------------------
-
     /**
      * {@inheritDoc}
      * <p>
@@ -675,8 +667,6 @@ public final class IprofProfilesLookup implements PGOProfilesLookup {
         Map<NodeSourcePosition, Long> samples = sampleCounts;
         return !useStackSamples || samples.isEmpty() ? Optional.empty() : Optional.of(samples);
     }
-
-    // --- Profiles this lookup does not serve: answered as absent ------------------------------
 
     @Override
     public Optional<Map<AnalysisMethod, Long>> getVirtualInvokeMethodProfile(BytecodePosition callingContext) {

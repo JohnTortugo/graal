@@ -53,27 +53,27 @@ public final class ProfiledInliningProvider extends SubstrateInliningProvider {
     private final IprofProfilesLookup profilesLookup;
 
     /** Options that turn single uses of the profile in the inliner and later phases on or off. */
-    public static final class Options {
+    static final class Options {
         // @formatter:off
         /** The factor that {@link ProfiledInliningProvider#hotBonusWhileInlining} returns. */
         @Option(help = "Local-benefit multiplier, scaled by root-relative hotness, applied to hot call-tree nodes while inlining. 0 disables.")//
-        public static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
+        static final HostedOptionKey<Integer> PGOHotInliningBonus = new HostedOptionKey<>(1);
 
         /** What {@link ProfiledInliningProvider#shouldApplyProfilesWhileExpanding} returns. */
         @Option(help = "Apply profiles to callee graphs expanded under a hot compilation root.")//
-        public static final HostedOptionKey<Boolean> PGOApplyProfilesWhileExpanding = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOApplyProfilesWhileExpanding = new HostedOptionKey<>(true);
 
         /** Off to measure sampled callee profiles, as the pgo-receivers-disabled gate run does. */
         @Option(help = "Let the inliner prefer sampled callee method profiles at indirect calls over analysis type profiles.")//
-        public static final HostedOptionKey<Boolean> PGOSamplingMethodProfiles = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOSamplingMethodProfiles = new HostedOptionKey<>(true);
 
         /** Read by {@link SamplingHotness#providerFor}. */
         @Option(help = "Report sampled compilation roots as hot callers (enables hot-callee devirtualization and hot-caller profile application).")//
-        public static final HostedOptionKey<Boolean> PGOSamplingHotCaller = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOSamplingHotCaller = new HostedOptionKey<>(true);
 
         /** Read by {@link SamplingHotness#providerFor}. */
         @Option(help = "Expose sampled self time to the compiler, which gives hot code larger budgets in duplication and loop unrolling.")//
-        public static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
+        static final HostedOptionKey<Boolean> PGOSamplingSelfTime = new HostedOptionKey<>(true);
         // @formatter:on
     }
 

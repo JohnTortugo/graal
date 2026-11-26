@@ -60,12 +60,12 @@ import jdk.vm.ci.meta.MetaUtil;
  * Resolves the entries of a {@link ParsedIprofProfile} against a {@link HostedUniverse}: its
  * branch and switch, receiver, call-count and stack-sample entries. It produces the immutable
  * tables that {@link IprofProfilesLookup} serves to the compiler.
- *
  * <p>
  * The core idea is a single canonical method-identity string in JVM-descriptor form, such as
  * {@code Ljava/lang/String;.charAt(I)C}, computed the same way from two sources:
  * <ul>
- * <li>from the iprof {@code methods}/{@code types} tables ({@link #descriptorForProfileMethod}), and
+ * <li>from the iprof {@code methods}/{@code types} tables
+ * ({@link #descriptorForProfileMethod}), and
  * <li>from a resolved method at query time and during universe indexing
  * ({@link ProfilingUtilities#methodDescriptor}, which the instrumented build also uses to record
  * the contexts).
@@ -88,9 +88,9 @@ public final class IprofProfileResolver {
      *
      * @param method the entry of the profile's {@code methods} table
      * @param typeNamesById the profile's {@code types} table: type names by type id
-     * @return the descriptor, or {@code null} if a referenced type id is missing.
+     * @return the descriptor, or {@code null} if a referenced type id is missing
      */
-    public static String descriptorForProfileMethod(ProfileMethod method, Map<Integer, String> typeNamesById) {
+    static String descriptorForProfileMethod(ProfileMethod method, Map<Integer, String> typeNamesById) {
         String declaring = descriptorForTypeId(method.declaringTypeId(), typeNamesById);
         String returnType = descriptorForTypeId(method.returnTypeId(), typeNamesById);
         if (declaring == null || returnType == null) {
@@ -164,17 +164,17 @@ public final class IprofProfileResolver {
      * indexed by descriptor. This is the universe-independent core of {@link #resolve} and is
      * directly unit-testable.
      *
-     * @param profile the parsed profile.
+     * @param profile the parsed profile
      * @param methodsByDescriptor methods available in the image, keyed by their canonical
-     *            descriptor (see {@link ProfilingUtilities#methodDescriptor}).
+     *            descriptor (see {@link ProfilingUtilities#methodDescriptor})
      * @param methodsByStackTraceName image methods whose frames the sampler names differently,
      *            keyed by that name (see {@link #indexStackTraceNames}); used for stack samples
-     *            only.
-     * @param typesByDescriptor types available in the image, keyed by their descriptor.
-     * @param ambiguousMethodCount how many method descriptors name more than one image method.
-     * @param ambiguousTypeCount how many type descriptors name more than one image type.
-     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry.
-     * @return the lookup that serves the resolved entries, with its diagnostics.
+     *            only
+     * @param typesByDescriptor types available in the image, keyed by their descriptor
+     * @param ambiguousMethodCount how many method descriptors name more than one image method
+     * @param ambiguousTypeCount how many type descriptors name more than one image type
+     * @param droppedEntries if not {@code null}, receives a readable context of every dropped entry
+     * @return the lookup that serves the resolved entries, with its diagnostics
      */
     static IprofProfilesLookup buildLookup(ParsedIprofProfile profile, Map<String, HostedMethod> methodsByDescriptor, Map<String, HostedMethod> methodsByStackTraceName,
                     Map<String, AnalysisType> typesByDescriptor, int ambiguousMethodCount, int ambiguousTypeCount, List<String> droppedEntries) {
@@ -271,7 +271,7 @@ public final class IprofProfileResolver {
      * @param table the records of each resolved context
      * @return the summed records of each context prefix
      */
-    static Map<PGOContext, long[]> conditionalPrefixSums(Map<PGOContext, long[]> table) {
+    private static Map<PGOContext, long[]> conditionalPrefixSums(Map<PGOContext, long[]> table) {
         Map<PGOContext, Map<Arm, Long>> sums = new HashMap<>();
         for (Map.Entry<PGOContext, long[]> entry : table.entrySet()) {
             PGOContext context = entry.getKey();
