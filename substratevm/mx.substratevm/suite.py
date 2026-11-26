@@ -1223,7 +1223,6 @@ suite = {
                     "jdk.internal.module",
                 ],
                 "jdk.internal.vm.ci": [
-                    "jdk.vm.ci.code",
                     "jdk.vm.ci.meta",
                     "jdk.vm.ci.meta.annotation",
                 ]

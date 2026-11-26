@@ -37,16 +37,14 @@ import jdk.graal.compiler.options.OptionKey;
 import jdk.graal.compiler.options.OptionValues;
 
 /**
- * {@code --pgo-instrument} and {@code --pgo} raise the default optimization level to {@code -O3}.
- * The builder sets {@code -O} to its default before it parses the command line, so these tests do
- * the same, then apply the options in command-line order.
+ * {@code --pgo-instrument} raises the default optimization level to {@code -O3}. The builder sets
+ * {@code -O} to its default before it parses the command line, so these tests do the same, then
+ * apply the options in command-line order.
  */
 public class PGOOptimizationLevelTest {
 
-    /** Sets {@code --pgo-instrument} or {@code --pgo} on the given option values, one per entry. */
     private static final List<Consumer<EconomicMap<OptionKey<?>, Object>>> PGO_OPTIONS = List.of(
-                    values -> PGOInstrumentationFeature.Options.PGOInstrument.update(values, true),
-                    values -> PGOProfileUseFeature.Options.PGOProfileUse.update(values, "app.iprof"));
+                    values -> PGOInstrumentationFeature.Options.PGOInstrument.update(values, true));
 
     private static EconomicMap<OptionKey<?>, Object> builderDefaults() {
         EconomicMap<OptionKey<?>, Object> values = OptionValues.newOptionMap();
@@ -91,7 +89,6 @@ public class PGOOptimizationLevelTest {
     public void optionsThatEnableNoPGOLeaveTheLevel() {
         EconomicMap<OptionKey<?>, Object> values = builderDefaults();
         PGOInstrumentationFeature.Options.PGOInstrument.update(values, false);
-        PGOProfileUseFeature.Options.PGOProfileUse.update(values, "");
         Assert.assertEquals(SubstrateOptions.Optimize.getDefaultValue(), values.get(SubstrateOptions.Optimize));
     }
 }
