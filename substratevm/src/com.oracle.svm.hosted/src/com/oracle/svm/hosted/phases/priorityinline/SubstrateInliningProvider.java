@@ -134,13 +134,29 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
         return calleeCursor != null;
     }
 
-    public double compilationRootRelativeHotness(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
+    public record SamplingContext(double rootRelativeHotness, long samples) {
+        static final SamplingContext COLD = new SamplingContext(0.0, 0);
+    }
+
+    public SamplingContext compilationRootSamplingContext(HostedMethod compilationRoot, NodeSourcePosition callPosition, ResolvedJavaMethod dispatchedMethod) {
         PrefixTree.Cursor compilationRootContext = methodContextProvider.apply(compilationRoot);
         if (compilationRootContext == null) {
-            // Cold compilation unit.
-            return 0;
+            return SamplingContext.COLD;
         }
-        return compilationRootContext.ratio(callPosition, dispatchedMethod);
+        PrefixTree.Cursor calleeContext = compilationRootContext.findForMethod(callPosition, dispatchedMethod);
+        if (calleeContext == null) {
+            return SamplingContext.COLD;
+        }
+        long rootSamples = compilationRootContext.getSubtreeCount();
+        long calleeSamples = calleeContext.getSubtreeCount();
+        return createSamplingContext(rootSamples, calleeSamples);
+    }
+
+    static SamplingContext createSamplingContext(long rootSamples, long calleeSamples) {
+        if (rootSamples <= 0 || calleeSamples <= 0) {
+            return SamplingContext.COLD;
+        }
+        return new SamplingContext((double) calleeSamples / rootSamples, calleeSamples);
     }
 
     public JavaMethodProfile samplingMethodProfiles(Map<CallTreeNode, PrefixTree.Cursor> nodeContextMap, HostedMethod root, CallTreeNode caller, CallTargetNode callee) {
@@ -191,6 +207,61 @@ public class SubstrateInliningProvider extends DefaultInliningProvider {
     /// @param options the options being used during inlining
     protected int hotBonusWhileInlining(OptionValues options) {
         return 0;
+    }
+
+    /// Gets the extra multiplier for a call-site context whose sample share and sample count pass
+    /// the hot-context thresholds (`ProfiledInliningProvider.isHotContext`); 0 otherwise.
+    protected int selectedContextBonusWhileInlining(@SuppressWarnings("unused") OptionValues options, @SuppressWarnings("unused") double hotness,
+                    @SuppressWarnings("unused") long samples) {
+        return 0;
+    }
+
+    /// Gets the extra priority for a call-site context whose sample share and sample count pass the
+    /// hot-context thresholds (`ProfiledInliningProvider.isHotContext`); 0 otherwise.
+    protected int selectedContextBonusWhileExpanding(@SuppressWarnings("unused") OptionValues options, @SuppressWarnings("unused") double hotness,
+                    @SuppressWarnings("unused") long samples) {
+        return 0;
+    }
+
+    /// Gets the largest callee bytecode size that escape-aware inlining forces inline; 0 disables it.
+    public int escapeInlineMaxCodeSize(@SuppressWarnings("unused") OptionValues options) {
+        return 0;
+    }
+
+    /// Gets the benefit multiplier for every call in a compilation root that the sampling profile
+    /// shows to be hot; 1 disables the boost.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootInliningBoost(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
+    /// Relative block frequency (to the callee entry) below which a callee block counts as cold
+    /// for the cold-code discount in hot roots.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootColdBlockFrequency(@SuppressWarnings("unused") OptionValues options) {
+        return 0.01;
+    }
+
+    /// Largest benefit multiplier the cold-code discount may apply in a hot root; 1 disables it.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootMaxColdCodeDiscount(@SuppressWarnings("unused") OptionValues options) {
+        return 1.0;
+    }
+
+    /// Gets the inclusive sample share a compilation root needs to count as hot.
+    ///
+    /// @param options the options being used during inlining
+    public double hotRootMinInclusiveShare(@SuppressWarnings("unused") OptionValues options) {
+        return Double.MAX_VALUE;
+    }
+
+    /// Gets the fraction, from 0 to 1, of all samples with {@code root} on the stack; 0 without a
+    /// profile.
+    public double inclusiveTimeShare(@SuppressWarnings("unused") HostedMethod root) {
+        return 0.0;
     }
 
 }

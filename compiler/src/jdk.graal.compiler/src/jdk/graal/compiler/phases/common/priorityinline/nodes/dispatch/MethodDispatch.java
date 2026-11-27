@@ -98,7 +98,7 @@ public final class MethodDispatch extends Dispatch {
     }
 
     @Override
-    protected AbstractJavaProfile<?, ?> profile() {
+    public AbstractJavaProfile<?, ?> profile() {
         return profile;
     }
 

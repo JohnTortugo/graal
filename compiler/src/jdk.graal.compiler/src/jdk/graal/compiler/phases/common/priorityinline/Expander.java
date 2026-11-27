@@ -236,6 +236,16 @@ public class Expander {
 
         public abstract boolean shouldExpand(CutoffNode node);
 
+        /**
+         * Whether a consumed execution profile marks this call as one that must be inlined. Unlike
+         * {@link #shouldExpand}, a positive answer also bypasses the inlining cost model, so an
+         * implementation must keep the set of such calls small: forcing low-value expansions only
+         * displaces higher-value ones within the same budget.
+         */
+        public boolean profileForcesInline(@SuppressWarnings("unused") CallTreeNode node) {
+            return false;
+        }
+
         public abstract boolean shouldBeIndirect(CutoffNode node);
 
         public abstract boolean isExpandedOften(CallTreeNode node);

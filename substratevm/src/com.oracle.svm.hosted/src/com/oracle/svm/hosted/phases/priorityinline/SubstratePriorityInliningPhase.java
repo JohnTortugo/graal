@@ -24,14 +24,22 @@
  */
 package com.oracle.svm.hosted.phases.priorityinline;
 
+import static jdk.graal.compiler.nodes.extended.BranchProbabilityNode.EXTREMELY_SLOW_PATH_PROBABILITY;
 import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase.Options.UseGraphCache;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -48,6 +56,7 @@ import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.PGOInstrumentationFeature;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
+import com.oracle.svm.hosted.pgo.profiles.ProfiledInliningProvider;
 import com.oracle.svm.hosted.phases.OOMEExceptionEdgePolicy;
 import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.shared.option.HostedOptionValues;
@@ -63,9 +72,16 @@ import jdk.graal.compiler.nodes.CallTargetNode;
 import jdk.graal.compiler.nodes.GraphDecoder.DecodeContext;
 import jdk.graal.compiler.nodes.IndirectCallTargetNode;
 import jdk.graal.compiler.nodes.Invoke;
+import jdk.graal.compiler.nodes.NodeView;
+import jdk.graal.compiler.nodes.ParameterNode;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.ValuePhiNode;
 import jdk.graal.compiler.nodes.java.MethodCallTargetNode;
+import jdk.graal.compiler.nodes.java.NewInstanceNode;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
+import jdk.graal.compiler.nodes.util.GraphUtil;
+import jdk.graal.compiler.nodes.virtual.AllocatedObjectNode;
 import jdk.graal.compiler.options.EnumOptionKey;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionKey;
@@ -73,6 +89,7 @@ import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.phases.common.BoxNodeIdentityPhase;
 import jdk.graal.compiler.phases.common.CanonicalizerPhase;
+import jdk.graal.compiler.phases.common.inlining.InliningUtil;
 import jdk.graal.compiler.phases.common.priorityinline.CallTree;
 import jdk.graal.compiler.phases.common.priorityinline.Expander;
 import jdk.graal.compiler.phases.common.priorityinline.GraphCache;
@@ -95,10 +112,30 @@ import jdk.vm.ci.meta.JavaTypeProfile;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 import jdk.vm.ci.meta.ResolvedJavaType;
 import jdk.vm.ci.meta.SpeculationLog;
+import jdk.vm.ci.meta.TriState;
 
 public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
     public static final String SUBSTRATE_PRIORITY_INLINING_PHASE = SubstratePriorityInliningPhase.class.getSimpleName();
+
+    /** Receiver-type specialization statistics, reported after compilation by the PGO feature. */
+    private static final AtomicLong RECEIVER_SPECIALIZATION_CANDIDATES = new AtomicLong();
+    private static final AtomicLong RECEIVER_SPECIALIZATION_CREATED = new AtomicLong();
+    private static final AtomicLong RECEIVER_SPECIALIZATION_NO_DOMINANT = new AtomicLong();
+    private static final AtomicLong RECEIVER_SPECIALIZATION_DISAGREE = new AtomicLong();
+
+    private static final int EXACT_RECEIVER_SET_LIMIT = 4;
+    private static final AtomicLong EXACT_RECEIVER_SET_REFINED = new AtomicLong();
+    private static final AtomicLong EXACT_RECEIVER_SET_FALLBACKS_REMOVED = new AtomicLong();
+
+    public static String exactReceiverSetStatistics() {
+        return String.format("inline caches refined=%d, fallbacks removed=%d", EXACT_RECEIVER_SET_REFINED.get(), EXACT_RECEIVER_SET_FALLBACKS_REMOVED.get());
+    }
+
+    public static String receiverSpecializationStatistics() {
+        return String.format("candidates=%d, guarded=%d, no dominant type=%d, sites disagree=%d", RECEIVER_SPECIALIZATION_CANDIDATES.get(), RECEIVER_SPECIALIZATION_CREATED.get(),
+                        RECEIVER_SPECIALIZATION_NO_DOMINANT.get(), RECEIVER_SPECIALIZATION_DISAGREE.get());
+    }
 
     public static class Options {
         //@formatter:off
@@ -511,8 +548,8 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private void setHotness(CallTreeNode caller, Invoke invoke, ResolvedJavaMethod targetMethod, CallTreeNode substrateCutoffNode, SamplingCallTreeState samplingCallTreeState) {
             StructuredGraph rootGraph = caller.callTree().root().getReadonlySubgraph();
-            double hotness = getInliningProvider().compilationRootRelativeHotness((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
-            samplingCallTreeState.setHotness(substrateCutoffNode, hotness);
+            SubstrateInliningProvider.SamplingContext context = getInliningProvider().compilationRootSamplingContext((HostedMethod) rootGraph.method(), concatPositions(invoke, caller), targetMethod);
+            samplingCallTreeState.setSamplingContext(substrateCutoffNode, context);
         }
 
         /**
@@ -565,14 +602,423 @@ public class SubstratePriorityInliningPhase extends PriorityInliningPhase {
 
         private static void setHotnessForExpandedNode(CutoffNode cutoffNode, CallTreeNode expanded) {
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(cutoffNode.callTree());
-            samplingCallTreeState.setHotness(expanded, samplingCallTreeState.hotness(cutoffNode));
+            samplingCallTreeState.setSamplingContext(expanded, samplingCallTreeState.samplingContext(cutoffNode));
         }
 
         @Override
         public CallTreeNode expandCutoffNode(CutoffNode cutoffNode) {
             CallTreeNode expanded = super.expandCutoffNode(cutoffNode);
             setHotnessForExpandedNode(cutoffNode, expanded);
+            if (cutoffNode.parent() instanceof InlineCacheNode parentCache && parentCache.isDirectCallSpecialization()) {
+                InliningUtil.logInliningDecision(cutoffNode.getDebug(), "expanded specialization child %s of %s to %s", cutoffNode, parentCache, expanded);
+            }
+            CallTreeNode specialized = specializeForDominantReceiverType(cutoffNode, expanded);
+            if (specialized != expanded) {
+                setHotnessForExpandedNode(cutoffNode, specialized);
+                for (CallTreeNode child : ((InlineCacheNode) specialized).children()) {
+                    setHotnessForExpandedNode(cutoffNode, child);
+                }
+                /* The graph reference and the children moved to the specialized child. */
+                expanded.safeDelete();
+                return specialized;
+            }
             return expanded;
+        }
+
+        /**
+         * Exact receiver sets. After inlining, a receiver is often a merge of allocations and
+         * constants whose exact types are all known, even though its stamp only says the common
+         * supertype. Inline-cache cases for other types are then impossible and are removed, and a
+         * case that stands for exactly one possible type uses a type check instead of a method
+         * check. When every possible type is covered, the fallback call goes too: the cascade ends
+         * in an unreachable dead end instead of an indirect call, so the receiver no longer escapes
+         * there and the type checks are plain floating instanceof tests that loop optimizations can
+         * hoist.
+         */
+        @Override
+        public void refineInlineCacheChildren(InlineCacheNode cache) {
+            Invoke invoke = cache.invoke();
+            if (invoke == null || !invoke.asNode().isAlive() || invoke.callTarget().arguments().isEmpty() || invoke.getTargetMethod() == null ||
+                            !ProfiledInliningProvider.Options.PGOExactReceiverSets.getValue(root.getOptions())) {
+                return;
+            }
+            ValueNode receiver = invoke.callTarget().arguments().get(0);
+            if (!(receiver.stamp(NodeView.DEFAULT) instanceof ObjectStamp receiverStamp) || !receiverStamp.nonNull() || receiverStamp.isExactType()) {
+                return;
+            }
+            Set<ResolvedJavaType> types = exactReceiverTypes(receiver);
+            if (types == null || types.isEmpty() || types.size() > EXACT_RECEIVER_SET_LIMIT) {
+                if (cache.getDebug().isLogEnabled()) {
+                    InliningUtil.logInliningDecision(cache.getDebug(), "exact receiver set unknown for %s: receiver %s sources %s", cache, receiver, describeSources(receiver));
+                }
+                return;
+            }
+            ResolvedJavaMethod target = invoke.getTargetMethod();
+            ResolvedJavaType contextType = invoke.getContextType();
+            Map<ResolvedJavaMethod, List<ResolvedJavaType>> typesByMethod = new HashMap<>();
+            for (ResolvedJavaType type : types) {
+                ResolvedJavaMethod resolved = type.resolveConcreteMethod(target, contextType);
+                if (resolved == null) {
+                    return;
+                }
+                typesByMethod.computeIfAbsent(resolved, _ -> new ArrayList<>()).add(type);
+            }
+            if (cache.parent() == null && !keepsAnyChild(cache, types, typesByMethod)) {
+                /*
+                 * A cache re-created for the postponed cases of a partly inlined cache has no
+                 * parent, so no case can be added for a possible type. Dropping every case would
+                 * leave it without a case or a fallback, which the inliner does not allow.
+                 */
+                return;
+            }
+            Set<ResolvedJavaType> covered = new HashSet<>();
+            GenericNode fallback = null;
+            boolean changed = false;
+            for (CallTreeNode child : cache.children().snapshot()) {
+                if (child instanceof GenericNode generic) {
+                    fallback = generic;
+                    continue;
+                }
+                ResolvedJavaType dispatchedType;
+                ResolvedJavaMethod dispatchedMethod;
+                if (child instanceof SubgraphNode subgraph) {
+                    dispatchedType = subgraph.getDispatchedType();
+                    dispatchedMethod = subgraph.getDispatchedMethod();
+                } else if (child instanceof CutoffNode cutoff) {
+                    dispatchedType = cutoff.getDispatchedType();
+                    dispatchedMethod = cutoff.targetMethod();
+                } else {
+                    return;
+                }
+                if (dispatchedType != null) {
+                    if (types.contains(dispatchedType)) {
+                        covered.add(dispatchedType);
+                    } else {
+                        removeInlineCacheChild(cache, child);
+                        changed = true;
+                    }
+                    continue;
+                }
+                List<ResolvedJavaType> typesOfMethod = typesByMethod.get(dispatchedMethod);
+                if (typesOfMethod == null) {
+                    removeInlineCacheChild(cache, child);
+                    changed = true;
+                } else if (typesOfMethod.size() == 1) {
+                    /* One possible type for this method: a type check replaces the method check. */
+                    ResolvedJavaType type = typesOfMethod.get(0);
+                    if (child instanceof SubgraphNode subgraph && !subgraph.isIntrinsic()) {
+                        SubgraphNode specialized = subgraph.specializeForReceiverType(type, subgraph.getFrequency());
+                        subgraph.replaceAtPredecessor(specialized);
+                        subgraph.safeDelete();
+                    } else if (child instanceof CutoffNode cutoff && cache.parent() != null) {
+                        CallTreeNode replacement = createChild(cache.parent(), invoke, dispatchedMethod, type, type, cutoff.getFrequency());
+                        cutoff.replaceAtPredecessor(replacement);
+                        cutoff.safeDelete();
+                    } else {
+                        covered.add(type);
+                        continue;
+                    }
+                    covered.add(type);
+                    changed = true;
+                } else {
+                    covered.addAll(typesOfMethod);
+                }
+            }
+            if (cache.parent() != null) {
+                /* A possible type without a case would end in the fallback; give it a case. */
+                for (ResolvedJavaType type : types) {
+                    if (!covered.contains(type)) {
+                        ResolvedJavaMethod method = type.resolveConcreteMethod(target, contextType);
+                        cache.addChild(createChild(cache.parent(), invoke, method, type, type, cache.getFrequency() / types.size()));
+                        covered.add(type);
+                        changed = true;
+                    }
+                }
+            }
+            if (fallback != null && covered.containsAll(types)) {
+                removeInlineCacheChild(cache, fallback);
+                EXACT_RECEIVER_SET_FALLBACKS_REMOVED.incrementAndGet();
+                changed = true;
+            }
+            if (changed) {
+                /* Added cases may push the case frequencies above the call's; scale them back. */
+                double caseFrequency = 0.0;
+                for (CallTreeNode child : cache.children()) {
+                    if (!(child instanceof GenericNode)) {
+                        caseFrequency += child.getFrequency();
+                    }
+                }
+                double available = cache.getFrequency() * (fallback != null && fallback.isAlive() ? 1.0 - EXTREMELY_SLOW_PATH_PROBABILITY : 1.0);
+                if (caseFrequency > available && caseFrequency > 0.0) {
+                    for (CallTreeNode child : cache.children()) {
+                        if (!(child instanceof GenericNode)) {
+                            child.setFrequency(child.getFrequency() * available / caseFrequency);
+                        }
+                    }
+                }
+                /*
+                 * The profile must name every type a remaining child was created for (the dispatch
+                 * code looks children up by their original dispatched type) plus the possible types.
+                 */
+                Set<ResolvedJavaType> profileTypes = new LinkedHashSet<>(types);
+                for (CallTreeNode child : cache.children()) {
+                    ResolvedJavaType original = child instanceof SubgraphNode subgraph ? subgraph.getOriginalDispatchedType()
+                                    : child instanceof CutoffNode cutoff ? cutoff.getOriginalDispatchedType() : null;
+                    if (original != null) {
+                        profileTypes.add(original);
+                    }
+                }
+                boolean keepNotRecorded = fallback != null && fallback.isAlive();
+                if (cache.getProfile() instanceof JavaMethodProfile oldMethods) {
+                    Set<ResolvedJavaMethod> methods = new LinkedHashSet<>(typesByMethod.keySet());
+                    for (CallTreeNode child : cache.children()) {
+                        ResolvedJavaMethod method = child instanceof SubgraphNode subgraph ? subgraph.getDispatchedMethod() : child instanceof CutoffNode cutoff ? cutoff.targetMethod() : null;
+                        if (method != null) {
+                            methods.add(method);
+                        }
+                    }
+                    cache.setMethodProfile(exactMethodProfile(methods, oldMethods, keepNotRecorded));
+                } else {
+                    cache.setReceiverTypeProfile(exactReceiverProfile(profileTypes, cache.getProfile(), keepNotRecorded));
+                }
+                EXACT_RECEIVER_SET_REFINED.incrementAndGet();
+                InliningUtil.logInliningDecision(cache.getDebug(), "exact receiver set %s refined %s to %s", types, cache, cache.children());
+            }
+        }
+
+        private static JavaMethodProfile exactMethodProfile(Set<ResolvedJavaMethod> methods, JavaMethodProfile old, boolean keepNotRecorded) {
+            double notRecorded = keepNotRecorded ? Math.max(old.getNotRecordedProbability(), EXTREMELY_SLOW_PATH_PROBABILITY) : 0.0;
+            JavaMethodProfile.ProfiledMethod[] items = new JavaMethodProfile.ProfiledMethod[methods.size()];
+            double sum = 0.0;
+            int i = 0;
+            for (ResolvedJavaMethod method : methods) {
+                double probability = EXTREMELY_SLOW_PATH_PROBABILITY;
+                for (JavaMethodProfile.ProfiledMethod item : old.getMethods()) {
+                    if (item.getMethod().equals(method)) {
+                        probability = Math.max(probability, item.getProbability());
+                    }
+                }
+                items[i++] = new JavaMethodProfile.ProfiledMethod(method, probability);
+                sum += probability;
+            }
+            double scale = (1.0 - notRecorded) / sum;
+            for (int j = 0; j < items.length; j++) {
+                items[j] = new JavaMethodProfile.ProfiledMethod(items[j].getMethod(), items[j].getProbability() * scale);
+            }
+            Arrays.sort(items);
+            return new JavaMethodProfile(notRecorded, items);
+        }
+
+        /**
+         * A type profile over exactly the possible receiver types, weighted by the old profile where
+         * it knows them.
+         */
+        private static JavaTypeProfile exactReceiverProfile(Set<ResolvedJavaType> types, AbstractJavaProfile<?, ?> old, boolean keepNotRecorded) {
+            double notRecorded = 0.0;
+            if (keepNotRecorded) {
+                notRecorded = Math.max(old == null ? 0.0 : old.getNotRecordedProbability(), EXTREMELY_SLOW_PATH_PROBABILITY);
+            }
+            JavaTypeProfile.ProfiledType[] items = new JavaTypeProfile.ProfiledType[types.size()];
+            double sum = 0.0;
+            int i = 0;
+            for (ResolvedJavaType type : types) {
+                double probability = EXTREMELY_SLOW_PATH_PROBABILITY;
+                if (old instanceof JavaTypeProfile oldTypes) {
+                    for (JavaTypeProfile.ProfiledType item : oldTypes.getTypes()) {
+                        if (item.getType().equals(type)) {
+                            probability = Math.max(probability, item.getProbability());
+                        }
+                    }
+                }
+                items[i++] = new JavaTypeProfile.ProfiledType(type, probability);
+                sum += probability;
+            }
+            double scale = (1.0 - notRecorded) / sum;
+            for (int j = 0; j < items.length; j++) {
+                items[j] = new JavaTypeProfile.ProfiledType(items[j].getType(), items[j].getProbability() * scale);
+            }
+            Arrays.sort(items);
+            return new JavaTypeProfile(TriState.FALSE, notRecorded, items);
+        }
+
+        private static String describeSources(ValueNode receiver) {
+            StringBuilder sb = new StringBuilder();
+            Set<ValueNode> seen = new HashSet<>();
+            ArrayDeque<ValueNode> work = new ArrayDeque<>();
+            work.add(receiver);
+            while (!work.isEmpty() && sb.length() < 400) {
+                ValueNode value = GraphUtil.unproxify(work.poll());
+                if (!seen.add(value)) {
+                    continue;
+                }
+                if (value instanceof ValuePhiNode phi) {
+                    for (ValueNode input : phi.values()) {
+                        work.add(input);
+                    }
+                } else {
+                    sb.append(value).append(':').append(value.stamp(NodeView.DEFAULT)).append(' ');
+                }
+            }
+            return sb.toString();
+        }
+
+        private static void removeInlineCacheChild(InlineCacheNode cache, CallTreeNode child) {
+            cache.children().remove(child);
+            child.safeRecursiveDelete();
+        }
+
+        /**
+         * Whether {@link #refineInlineCacheChildren} keeps at least one child of {@code cache}: the
+         * fallback, a case for a possible type, or a child it does not know how to refine.
+         */
+        private static boolean keepsAnyChild(InlineCacheNode cache, Set<ResolvedJavaType> types, Map<ResolvedJavaMethod, List<ResolvedJavaType>> typesByMethod) {
+            for (CallTreeNode child : cache.children()) {
+                ResolvedJavaType dispatchedType;
+                ResolvedJavaMethod dispatchedMethod;
+                if (child instanceof SubgraphNode subgraph) {
+                    dispatchedType = subgraph.getDispatchedType();
+                    dispatchedMethod = subgraph.getDispatchedMethod();
+                } else if (child instanceof CutoffNode cutoff) {
+                    dispatchedType = cutoff.getDispatchedType();
+                    dispatchedMethod = cutoff.targetMethod();
+                } else {
+                    return true;
+                }
+                if (dispatchedType != null ? types.contains(dispatchedType) : typesByMethod.containsKey(dispatchedMethod)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The exact types a value can have, when every source is an allocation, a non-null constant
+         * or a value with an exact stamp (through merges and proxies); {@code null} when unknown.
+         */
+        private static Set<ResolvedJavaType> exactReceiverTypes(ValueNode receiver) {
+            Set<ResolvedJavaType> types = new HashSet<>();
+            Set<ValueNode> seen = new HashSet<>();
+            ArrayDeque<ValueNode> work = new ArrayDeque<>();
+            work.add(receiver);
+            while (!work.isEmpty()) {
+                ValueNode value = work.poll();
+                if (!seen.add(value)) {
+                    continue;
+                }
+                if (value.stamp(NodeView.DEFAULT) instanceof ObjectStamp stamp && stamp.nonNull() && stamp.isExactType() && stamp.type() != null) {
+                    types.add(stamp.type());
+                    continue;
+                }
+                ValueNode unproxied = GraphUtil.unproxify(value);
+                if (unproxied != value) {
+                    work.add(unproxied);
+                } else if (value instanceof ValuePhiNode phi) {
+                    if (phi.valueCount() == 0) {
+                        return null;
+                    }
+                    for (ValueNode input : phi.values()) {
+                        work.add(input);
+                    }
+                } else if (value instanceof NewInstanceNode newInstance) {
+                    types.add(newInstance.instanceClass());
+                } else if (value instanceof AllocatedObjectNode allocated) {
+                    types.add(allocated.getVirtualObject().type());
+                } else {
+                    return null;
+                }
+                if (types.size() > EXACT_RECEIVER_SET_LIMIT) {
+                    return null;
+                }
+            }
+            return types;
+        }
+
+        /**
+         * Receiver-type specialization of a direct call (PGO). The callee has a single target, so it
+         * would be inlined with no information about the receiver type. When every virtual call on
+         * {@code this} inside the callee was profiled with one dominant receiver type {@code T}, the
+         * inlined body is wrapped in a type guard: for receivers of type {@code T} the body is
+         * inlined with {@code this} of exact type {@code T}, so the inner calls resolve statically
+         * and values derived from {@code this} keep exact types (escape analysis can then scalar
+         * replace them); every other receiver takes a plain direct call of the callee. The guard
+         * replaces one type switch per inner call site, each with its own fallback, by one check at
+         * the entry.
+         */
+        private CallTreeNode specializeForDominantReceiverType(CutoffNode cutoffNode, CallTreeNode expanded) {
+            if (profilesLookup == null || !(expanded instanceof SubgraphNode subgraph) || subgraph.isIntrinsic() || !ProfiledInliningProvider.Options.PGOReceiverSpecialization.getValue(root
+                            .getOptions())) {
+                return expanded;
+            }
+            Invoke invoke = cutoffNode.invoke();
+            ResolvedJavaMethod target = cutoffNode.targetMethod();
+            if (cutoffNode.getDispatchedType() != null || target == null || target.isStatic() || invoke == null || invoke.callTarget().arguments().isEmpty()) {
+                return expanded;
+            }
+            if (!(invoke.callTarget() instanceof MethodCallTargetNode callTarget) || !callTarget.invokeKind().isDirect()) {
+                return expanded;
+            }
+            if (invoke.callTarget().arguments().get(0).stamp(NodeView.DEFAULT) instanceof ObjectStamp receiverStamp && receiverStamp.isExactType()) {
+                return expanded;
+            }
+            double minProbability = ProfiledInliningProvider.Options.PGOReceiverSpecializationMinProbability.getValue(root.getOptions());
+            ResolvedJavaType dominant = null;
+            double probability = 1.0;
+            int sitesOnThis = 0;
+            for (CallTreeNode child : subgraph.children()) {
+                if (!(child instanceof InlineCacheNode inner) || inner.invoke() == null || inner.invoke().callTarget().arguments().isEmpty()) {
+                    continue;
+                }
+                if (!(inner.invoke().callTarget() instanceof SubstrateMethodCallTargetNode innerTarget) || !innerTarget.hasDynamicTypeProfile()) {
+                    continue;
+                }
+                if (!(GraphUtil.unproxify(inner.invoke().callTarget().arguments().get(0)) instanceof ParameterNode receiver) || receiver.index() != 0) {
+                    continue;
+                }
+                sitesOnThis++;
+                JavaTypeProfile.ProfiledType best = null;
+                for (JavaTypeProfile.ProfiledType type : innerTarget.getTypeProfile().getTypes()) {
+                    if (best == null || type.getProbability() > best.getProbability()) {
+                        best = type;
+                    }
+                }
+                if (best == null || best.getProbability() < minProbability) {
+                    /* `this` is one object: a polymorphic inner site means no type dominates. */
+                    RECEIVER_SPECIALIZATION_NO_DOMINANT.incrementAndGet();
+                    InliningUtil.logInliningDecision(cutoffNode.getDebug(), "no receiver specialization of %s (%s): %s has no dominant type in %s", cutoffNode, target.format("%h.%n"),
+                                    inner.invoke().callTarget().targetMethod().format("%h.%n"), innerTarget.getTypeProfile());
+                    return expanded;
+                }
+                if (dominant == null) {
+                    dominant = best.getType();
+                } else if (!dominant.equals(best.getType())) {
+                    RECEIVER_SPECIALIZATION_DISAGREE.incrementAndGet();
+                    return expanded;
+                }
+                probability = Math.min(probability, best.getProbability());
+            }
+            if (sitesOnThis == 0) {
+                return expanded;
+            }
+            RECEIVER_SPECIALIZATION_CANDIDATES.incrementAndGet();
+            if (dominant.resolveConcreteMethod(target, invoke.getContextType()) == null) {
+                return expanded;
+            }
+            probability = Math.min(probability, 1.0 - EXTREMELY_SLOW_PATH_PROBABILITY);
+            JavaTypeProfile profile = new JavaTypeProfile(TriState.FALSE, 1.0 - probability, new JavaTypeProfile.ProfiledType[]{new JavaTypeProfile.ProfiledType(dominant, probability)});
+            double frequency = cutoffNode.getFrequency();
+            InlineCacheNode cache = add(new InlineCacheNode(cutoffNode.compilationRootPosition(), invoke, target, frequency, profile, 1));
+            cache.markDirectCallSpecialization();
+            /*
+             * Reuse the parsed body and its children as the guarded case, so the specialization
+             * costs no extra expansion round. The other receivers call the method.
+             */
+            cache.addChild(subgraph.specializeForReceiverType(dominant, probability * frequency));
+            cache.addChild(createGenericChild(cutoffNode.parent(), invoke, (1.0 - probability) * frequency, DontInlineCause.Indirect));
+            RECEIVER_SPECIALIZATION_CREATED.incrementAndGet();
+            InliningUtil.logInliningDecision(cutoffNode.getDebug(), "receiver specialization of %s (%s) for %s (%d sites on this, p=%.6f): %s with children %s at %s", cutoffNode, target.format(
+                            "%h.%n"),
+                            dominant.toJavaName(false), sitesOnThis, probability, cache, cache.children(), cutoffNode.compilationRootPosition());
+            return cache;
         }
 
         @Override

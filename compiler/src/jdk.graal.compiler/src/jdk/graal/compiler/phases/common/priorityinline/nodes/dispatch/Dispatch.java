@@ -54,7 +54,7 @@ public abstract class Dispatch {
 
     public abstract AbstractJavaProfile<?, ?> createProfileForEmpty();
 
-    protected abstract AbstractJavaProfile<?, ?> profile();
+    public abstract AbstractJavaProfile<?, ?> profile();
 
     protected abstract AbstractProfiledItem<?>[] getProfiledItems(AbstractJavaProfile<?, ?> javaProfile);
 

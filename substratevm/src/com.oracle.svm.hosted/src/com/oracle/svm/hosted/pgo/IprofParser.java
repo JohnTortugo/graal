@@ -52,8 +52,10 @@ import jdk.vm.ci.meta.MetaUtil;
  * {@code HostedUniverse} later (see {@code IprofProfileResolver}).
  * <p>
  * It reads the {@code conditionalProfiles}, {@code callCountProfiles},
- * {@code virtualInvokeProfiles} and {@code samplingProfiles} sections. Other sections, such as
- * {@code monitorProfiles}, are skipped without being validated, because nothing reads them.
+ * {@code virtualInvokeProfiles}, {@code samplingProfiles} and {@code monitorProfiles} sections.
+ * Other sections are skipped without being validated. Monitor records count, over the whole run,
+ * how often a monitor of each type was entered; {@code --pgo-monitor-fields} reads them. Their one
+ * entry has the fixed context {@code 0:0}, which is validated but otherwise unused.
  * <p>
  * {@code version}, {@code types} and {@code methods} are required and strictly validated. The
  * profile sections are <em>optional</em> per the iprof schema: an absent section parses as an
@@ -139,6 +141,15 @@ public final class IprofParser {
     }
 
     /**
+     * One parsed {@code monitorProfiles} entry.
+     *
+     * @param records the {@code [typeId, count]} pairs: per type, how many monitor enters locked an
+     *            object of that type, over the whole program
+     */
+    record MonitorEntry(long[] records) {
+    }
+
+    /**
      * One entry of the {@code methods} table: the method's id in the file, its name, and the type
      * ids of its declaring class, return type and parameters.
      *
@@ -159,10 +170,10 @@ public final class IprofParser {
      * parser rejects negative counts and the merger only scales and adds them, so every sum that
      * the consumer forms from the counts of one section fits in a long too: the counts of one
      * branch, the branch counts of the contexts that share a prefix, the calls of a method over its
-     * contexts, the receivers of a call site. Samples are counted once per frame because
-     * {@code SamplingHotness} adds a stack's count to the tree of every method on the stack. A real
-     * profile stays far below the limit (2^63 events at 10^9 per second take 292 years), so a
-     * section that reaches it comes from a damaged or hand-made file.
+     * contexts, the receivers of a call site, the monitor events of all types. Samples are counted
+     * once per frame because {@code SamplingHotness} adds a stack's count to the tree of every
+     * method on the stack. A real profile stays far below the limit (2^63 events at 10^9 per second
+     * take 292 years), so a section that reaches it comes from a damaged or hand-made file.
      */
     public static final class ParsedIprofProfile {
         /** The iprof schema version, such as {@code 1.1.0}. */
@@ -179,6 +190,10 @@ public final class IprofParser {
         private final List<VirtualInvokeEntry> virtualInvokeEntries;
         /** The {@code samplingProfiles} entries, in file order. */
         private final List<SamplingEntry> samplingEntries;
+        /** The {@code monitorProfiles} entries: at most one, at the global context. */
+        private final List<MonitorEntry> monitorEntries;
+        /** Whether the file has a {@code monitorProfiles} section, which may be empty. */
+        private final boolean monitorProfilesRecorded;
 
         /**
          * Creates the profile from parsed or merged sections, which it wraps without copying.
@@ -190,18 +205,22 @@ public final class IprofParser {
          * @param callCountEntries the {@code callCountProfiles} entries
          * @param virtualInvokeEntries the {@code virtualInvokeProfiles} entries
          * @param samplingEntries the {@code samplingProfiles} entries
+         * @param monitorEntries the {@code monitorProfiles} entries
+         * @param monitorProfilesRecorded whether the file has a {@code monitorProfiles} section
          * @throws IprofFormatException if the counts of a section add up to more than
          *             {@link Long#MAX_VALUE}, as the class comment describes
          */
         ParsedIprofProfile(String version, Map<Integer, String> typeNamesById, Map<Integer, ProfileMethod> methodsById,
                         List<ConditionalEntry> conditionalEntries,
-                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries) {
+                        List<CallCountEntry> callCountEntries, List<VirtualInvokeEntry> virtualInvokeEntries, List<SamplingEntry> samplingEntries,
+                        List<MonitorEntry> monitorEntries, boolean monitorProfilesRecorded) {
             checkOverflow(IprofFormat.CONDITIONAL_PROFILES, "", conditionalEntries.stream().flatMapToLong(
                             entry -> counts(entry.records(), PGOApplyProfilesPhase.CONDITIONAL_RECORD_SIZE, PGOApplyProfilesPhase.CONDITIONAL_RECORD_COUNTER_POSITION)));
             checkOverflow(IprofFormat.CALL_COUNT_PROFILES, "", callCountEntries.stream().mapToLong(CallCountEntry::count));
             checkOverflow(IprofFormat.VIRTUAL_INVOKE_PROFILES, "", virtualInvokeEntries.stream().flatMapToLong(entry -> counts(entry.records(), VIRTUAL_INVOKE_RECORD_SIZE, 1)));
             checkOverflow(IprofFormat.SAMPLING_PROFILES, ", each taken once per frame of its stack,",
                             samplingEntries.stream().mapToLong(entry -> Math.multiplyExact(entry.count(), entry.context().size())));
+            checkOverflow(IprofFormat.MONITOR_PROFILES, "", monitorEntries.stream().flatMapToLong(entry -> counts(entry.records(), VIRTUAL_INVOKE_RECORD_SIZE, 1)));
             this.version = version;
             this.typeNamesById = Collections.unmodifiableMap(typeNamesById);
             this.methodsById = Collections.unmodifiableMap(methodsById);
@@ -209,6 +228,8 @@ public final class IprofParser {
             this.callCountEntries = Collections.unmodifiableList(callCountEntries);
             this.virtualInvokeEntries = Collections.unmodifiableList(virtualInvokeEntries);
             this.samplingEntries = Collections.unmodifiableList(samplingEntries);
+            this.monitorEntries = Collections.unmodifiableList(monitorEntries);
+            this.monitorProfilesRecorded = monitorProfilesRecorded;
         }
 
         /**
@@ -275,6 +296,24 @@ public final class IprofParser {
         }
 
         /**
+         * The {@code monitorProfiles} entries.
+         *
+         * @return the entries; unmodifiable
+         */
+        List<MonitorEntry> monitorEntries() {
+            return monitorEntries;
+        }
+
+        /**
+         * Whether the file has a {@code monitorProfiles} section, which may be empty.
+         *
+         * @return {@code true} if the section is present
+         */
+        boolean monitorProfilesRecorded() {
+            return monitorProfilesRecorded;
+        }
+
+        /**
          * The counts of {@code records}, which are {@code recordSize} longs each, with the count at
          * {@code countPosition}.
          */
@@ -337,8 +376,11 @@ public final class IprofParser {
         List<CallCountEntry> callCountEntries = optionalCallCountProfiles(top);
         List<VirtualInvokeEntry> virtualInvokeEntries = optionalVirtualInvokeProfiles(top, typeNamesById);
         List<SamplingEntry> samplingEntries = optionalSamplingProfiles(top);
+        boolean monitorProfilesRecorded = top.containsKey(IprofFormat.MONITOR_PROFILES);
+        List<MonitorEntry> monitorEntries = optionalMonitorProfiles(top, typeNamesById);
 
-        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
+        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries,
+                        monitorEntries, monitorProfilesRecorded);
     }
 
     /**
@@ -473,6 +515,58 @@ public final class IprofParser {
     /** Whether an iprof type name, such as {@code int}, names a primitive type or {@code void}. */
     private static boolean isPrimitiveProfileType(String typeName) {
         return JavaKind.fromTypeString(MetaUtil.toInternalName(typeName)) != JavaKind.Object;
+    }
+
+    /**
+     * Returns the parsed {@code monitorProfiles} entries, or an empty list when the section is
+     * absent. Records are {@code [typeId, count]} pairs, and the section has at most one entry, at
+     * the global context {@code 0:0}. A {@code null} section is rejected, unlike in the other
+     * sections, because {@link ParsedIprofProfile#monitorProfilesRecorded} tells an absent section
+     * from an empty one.
+     */
+    private static List<MonitorEntry> optionalMonitorProfiles(EconomicMap<String, Object> top, Map<Integer, String> typeNamesById) {
+        if (!top.containsKey(IprofFormat.MONITOR_PROFILES)) {
+            return Collections.emptyList();
+        }
+        Object value = top.get(IprofFormat.MONITOR_PROFILES);
+        if (!(value instanceof List)) {
+            throw new IprofFormatException("Key '" + IprofFormat.MONITOR_PROFILES + "' must be a JSON array");
+        }
+        @SuppressWarnings("unchecked")
+        List<Object> profiles = (List<Object>) value;
+        if (profiles.size() > 1) {
+            throw new IprofFormatException("Key '" + IprofFormat.MONITOR_PROFILES + "' must contain at most one global entry");
+        }
+        List<MonitorEntry> result = new ArrayList<>(profiles.size());
+        for (Object element : profiles) {
+            EconomicMap<String, Object> entry = asObject(element, IprofFormat.MONITOR_PROFILES);
+            String ctx = requireString(entry, IprofFormat.CTX);
+            if (!"0:0".equals(ctx)) {
+                throw new IprofFormatException("Monitor profile context must be the global sentinel '0:0' but found '" + ctx + "'");
+            }
+            List<Object> rawRecords = requireList(entry, IprofFormat.RECORDS);
+            if (rawRecords.size() % VIRTUAL_INVOKE_RECORD_SIZE != 0) {
+                throw new IprofFormatException("Monitor records length " + rawRecords.size() + " for context '" + ctx + "' is not a multiple of " + VIRTUAL_INVOKE_RECORD_SIZE);
+            }
+            long[] records = new long[rawRecords.size()];
+            for (int i = 0; i < rawRecords.size(); i++) {
+                records[i] = asLong(rawRecords.get(i), IprofFormat.RECORDS);
+            }
+            for (int i = 0; i < records.length; i += VIRTUAL_INVOKE_RECORD_SIZE) {
+                if (records[i] < 0 || records[i] > Integer.MAX_VALUE || !typeNamesById.containsKey((int) records[i])) {
+                    throw new IprofFormatException("Monitor context '" + ctx + "' references undeclared type id " + records[i]);
+                }
+                int typeId = (int) records[i];
+                if (isPrimitiveProfileType(typeNamesById.get(typeId))) {
+                    throw new IprofFormatException("Monitor context '" + ctx + "' references primitive type " + typeNamesById.get(typeId));
+                }
+                if (records[i + 1] < 0) {
+                    throw new IprofFormatException("Negative monitor count for context '" + ctx + "'");
+                }
+            }
+            result.add(new MonitorEntry(records));
+        }
+        return result;
     }
 
     /**

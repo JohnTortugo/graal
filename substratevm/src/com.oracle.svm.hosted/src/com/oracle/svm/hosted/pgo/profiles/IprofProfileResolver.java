@@ -110,6 +110,17 @@ public final class IprofProfileResolver {
     }
 
     /**
+     * The descriptor of the profile type {@code typeId}, as {@link #descriptorForTypeId} gives it.
+     *
+     * @param typeId the type's id in the profile
+     * @param typeNamesById the profile's {@code types} table: type names by type id
+     * @return the descriptor, or {@code null} if the table lacks the id
+     */
+    public static String descriptorForProfileType(int typeId, Map<Integer, String> typeNamesById) {
+        return descriptorForTypeId(typeId, typeNamesById);
+    }
+
+    /**
      * The descriptor of the profile type {@code typeId}, as JVMCI writes it: {@code I}, {@code [I},
      * {@code Ljava/lang/String;} and {@code LFoo$$Lambda.0x1234;} for {@code int}, {@code [I},
      * {@code java.lang.String} and the hidden class {@code Foo$$Lambda/0x1234}. Returns

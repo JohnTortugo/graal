@@ -216,7 +216,8 @@ public class DevirtualizationUtil {
         double totalProbability = 1.0;
         for (Devirtualization devirtualization : devirtualizations) {
             double invokeRelativeProbability = devirtualization.probability();
-            double trueSuccessorProbability = Math.min(1.0, invokeRelativeProbability / totalProbability);
+            /* Case frequencies may add up to slightly more than the call's; never go negative. */
+            double trueSuccessorProbability = totalProbability <= 0.0 ? 1.0 : Math.max(0.0, Math.min(1.0, invokeRelativeProbability / totalProbability));
             totalProbability -= invokeRelativeProbability;
             devirtualizeAndCreateBranch(coreProviders, inliningProvider, graph, invoke, returnMerge, returnValuePhi, exceptionMerge, exceptionObjectPhi, trueSuccessorProbability,
                             devirtualization);

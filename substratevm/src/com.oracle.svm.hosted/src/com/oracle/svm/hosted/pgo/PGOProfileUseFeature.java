@@ -32,21 +32,25 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.pgo.IntrinsicInliningPolicy;
 import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.MonitorEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.CallCountDiagnostics;
@@ -59,11 +63,15 @@ import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
 import com.oracle.svm.hosted.pgo.profiles.ProfiledInliningProvider;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup;
+import com.oracle.svm.hosted.phases.priorityinline.SubstratePolicyFactory;
 import com.oracle.svm.hosted.phases.priorityinline.SubstratePriorityInliningPhase;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
 import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.core.common.GraalOptions;
@@ -77,6 +85,7 @@ import jdk.graal.compiler.phases.common.AbstractInliningPhase;
 import jdk.graal.compiler.phases.tiers.HighTierContext;
 import jdk.graal.compiler.phases.tiers.Suites;
 import jdk.graal.compiler.phases.util.Providers;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
  * Optimizes the image with a profile recorded by a {@code --pgo-instrument} image ({@code --pgo}).
@@ -84,9 +93,12 @@ import jdk.graal.compiler.phases.util.Providers;
  * The feature parses the iprof file or files, resolves their branch, switch, receiver, call-count
  * and stack-sample entries against the hosted universe, and applies them to every compilation root
  * before the inliner runs and to every callee the priority inliner expands.
+ * <p>
+ * It also gives the monitor profiles to {@code --pgo-monitor-fields}, the sampled hot roots to the
+ * inline intrinsics, and the samples and call counts to the code layout.
  */
 @AutomaticallyRegisteredFeature
-final class PGOProfileUseFeature implements InternalFeature {
+public final class PGOProfileUseFeature implements InternalFeature {
 
     /** Options of profile use; all but {@code --pgo} turn parts of it off or add output. */
     static final class Options {
@@ -109,17 +121,30 @@ final class PGOProfileUseFeature implements InternalFeature {
                        "until a context recorded for the same call matches.")//
         static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
 
-        /** Off to measure what {@code callCountProfiles} add to the inliner's hotness. */
-        @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root.")//
+        /** Off to measure what inline intrinsics in hot roots save, against their code size. */
+        @Option(help = "Emit array and string intrinsics inline instead of calling the shared stubs in compilation roots whose inclusive sample share reaches " +
+                       "PGOHotRootMinInclusiveShare. Saves the call and stub prologue, which dominates on short strings, at a code-size cost confined to hot roots.")//
+        static final HostedOptionKey<Boolean> PGOInlineIntrinsicsInHotRoots = new HostedOptionKey<>(true);
+
+        /** Off to measure what {@code callCountProfiles} add to the inliner and the code order. */
+        @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root, and to order code in the image.")//
         static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
 
         /** Off to measure stack samples, as the {@code pgo-samples-disabled} gate run does. */
-        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles and self time.")//
+        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles, self time, intrinsics in hot roots " +
+                       "and sampled code layout.")//
         static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
 
         /** The {@code pgo end-to-end} gate task turns this on and checks the printed numbers. */
         @Option(help = "Print detailed statistics on how the profile was resolved and applied. By default one summary line is printed.")//
         static final HostedOptionKey<Boolean> PGOPrintStatistics = new HostedOptionKey<>(false);
+
+        /** Off to keep the monitor fields that the analysis asks for, as without a profile. */
+        @APIOption(name = "pgo-monitor-fields")//
+        @Option(help = "Use monitorProfiles to omit inline monitor fields from synchronized types not observed during training. " +
+                       "On by default with --pgo; without --pgo the default is ignored and setting it is an error. " +
+                       "Runtime synchronization remains correct through the secondary monitor map.")//
+        static final HostedOptionKey<Boolean> PGOUseMonitorProfiles = new HostedOptionKey<>(true);
         // @formatter:on
 
         /**
@@ -147,6 +172,28 @@ final class PGOProfileUseFeature implements InternalFeature {
         }
     }
 
+    /** Emits intrinsics inline in compilation roots the sampling profile shows to be hot. */
+    @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
+    private static final class HotRootIntrinsicInliningPolicy implements IntrinsicInliningPolicy {
+        /** The sampled stacks, for the inclusive share of each root. */
+        private final SamplingHotness hotness;
+        /** The smallest inclusive share of a hot root, {@code PGOHotRootMinInclusiveShare}. */
+        private final double minInclusiveShare;
+
+        private HotRootIntrinsicInliningPolicy(SamplingHotness hotness, double minInclusiveShare) {
+            this.hotness = hotness;
+            this.minInclusiveShare = minInclusiveShare;
+        }
+
+        @Override
+        public boolean emitIntrinsicsInline(ResolvedJavaMethod compilationRoot) {
+            if (!(compilationRoot instanceof HostedMethod hosted)) {
+                return false;
+            }
+            return hotness.inclusiveTimeShare(hosted) >= minInclusiveShare;
+        }
+    }
+
     /** Weight of a profile given without {@code :weight}. */
     private static final double DEFAULT_WEIGHT = 1.0;
     /** Prefix of the lines the feature prints during the build. */
@@ -162,6 +209,28 @@ final class PGOProfileUseFeature implements InternalFeature {
     private SamplingHotness samplingHotness;
     /** The image's universe, set in {@link #beforeCompilation}. */
     private HostedUniverse hostedUniverse;
+    /** The resolved profile for the code layout, set in {@link #beforeCompilation}. */
+    private static IprofProfilesLookup codeLayoutLookup;
+    /** The sampled hotness for the code layout, set in {@link #beforeCompilation}. */
+    private static SamplingHotness codeLayoutHotness;
+
+    /**
+     * The resolved profile for the code layout.
+     *
+     * @return the profile, or {@code null} without {@code --pgo}
+     */
+    public static PGOProfilesLookup codeLayoutProfiles() {
+        return codeLayoutLookup;
+    }
+
+    /**
+     * Sampled self time for the code layout.
+     *
+     * @return the hotness, or {@code null} if the profile has no non-idle samples
+     */
+    public static SamplingHotness codeLayoutHotness() {
+        return codeLayoutHotness;
+    }
 
     private static String profilePath() {
         return Options.PGOProfileUse.getValue();
@@ -177,6 +246,11 @@ final class PGOProfileUseFeature implements InternalFeature {
         return path != null && !path.isEmpty();
     }
 
+    /** Whether the user passed {@code --pgo-monitor-fields}; its default does not count. */
+    private static boolean monitorFieldsRequested() {
+        return Options.PGOUseMonitorProfiles.hasBeenSet() && Options.PGOUseMonitorProfiles.getValue();
+    }
+
     /**
      * Whether to print the detailed statistics; the {@code pgo end-to-end} gate task reads them.
      *
@@ -188,13 +262,42 @@ final class PGOProfileUseFeature implements InternalFeature {
 
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {
-        return enabled();
+        return enabled() || monitorFieldsRequested();
     }
 
     /** Parses and merges the iprof files early, so that a bad file stops the build at once. */
     @Override
     public void afterRegistration(AfterRegistrationAccess access) {
+        if (monitorFieldsRequested() && !enabled()) {
+            throw UserError.abort("--pgo-monitor-fields requires --pgo");
+        }
+        /* The feature runs only with --pgo or --pgo-monitor-fields, so --pgo is set from here on. */
         parsedProfile = parseProfile(profilePath());
+        if (Options.PGOUseMonitorProfiles.getValue() && parsedProfile != null) {
+            ParsedIprofProfile profile = parsedProfile;
+            if (!profile.monitorProfilesRecorded()) {
+                /* Without monitor data no field is omitted; only an explicit request warns. */
+                if (monitorFieldsRequested()) {
+                    LogUtils.warning("--pgo-monitor-fields requested but the profile contains no monitorProfiles; retaining statically required monitor fields");
+                }
+            } else {
+                Set<String> observedTypes = new HashSet<>();
+                long events = 0;
+                for (MonitorEntry entry : profile.monitorEntries()) {
+                    long[] records = entry.records();
+                    for (int i = 0; i + 1 < records.length; i += 2) {
+                        if (records[i + 1] > 0) {
+                            String descriptor = IprofProfileResolver.descriptorForProfileType((int) records[i], profile.typeNamesById());
+                            if (descriptor != null) {
+                                observedTypes.add(descriptor);
+                                events += records[i + 1];
+                            }
+                        }
+                    }
+                }
+                ImageSingletons.add(MonitorProfiledTypes.class, new MonitorProfiledTypes(observedTypes, events));
+            }
+        }
     }
 
     /** The --pgo option as the user gave it, for messages. */
@@ -386,6 +489,11 @@ final class PGOProfileUseFeature implements InternalFeature {
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
         hostedUniverse = ((FeatureImpl.BeforeCompilationAccessImpl) access).getUniverse();
+        if (ImageSingletons.contains(MonitorProfiledTypes.class) && printStatistics()) {
+            MonitorProfiledTypes monitors = ImageSingletons.lookup(MonitorProfiledTypes.class);
+            info("monitor profiles: observed types=%d, events=%d; statically synchronized types=%d, retained fields=%d, omitted fields=%d",
+                            monitors.observedTypes(), monitors.recordedEvents(), monitors.synchronizedTypes(), monitors.retainedTypes(), monitors.omittedTypes());
+        }
         if (parsedProfile != null) {
             profilesLookup = IprofProfileResolver.resolve(parsedProfile, hostedUniverse, PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue());
             profilesLookup.setConditionalContextFallback(Options.PGOConditionalContextFallback.getValue());
@@ -400,11 +508,16 @@ final class PGOProfileUseFeature implements InternalFeature {
                     info("sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)",
                                     samplingHotness.nonIdleSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
                 }
+                if (Options.PGOInlineIntrinsicsInHotRoots.getValue() && !ImageSingletons.contains(IntrinsicInliningPolicy.class)) {
+                    ImageSingletons.add(IntrinsicInliningPolicy.class, new HotRootIntrinsicInliningPolicy(samplingHotness, ProfiledInliningProvider.Options.PGOHotRootMinInclusiveShare.getValue()));
+                }
             } else if (profilesLookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
                 samplingHotness = new SamplingHotness(Map.of());
             }
         }
+        codeLayoutLookup = profilesLookup;
+        codeLayoutHotness = samplingHotness != null && samplingHotness.nonIdleSamples() > 0 ? samplingHotness : null;
         parsedProfile = null;
     }
 
@@ -643,6 +756,9 @@ final class PGOProfileUseFeature implements InternalFeature {
         if (samplingHotness != null) {
             info("sampling hotness: %d compilation roots with samples, %d without", samplingHotness.sampledRootCount(), samplingHotness.unsampledRootCount());
         }
+        info("receiver specialization: %s", SubstratePriorityInliningPhase.receiverSpecializationStatistics());
+        info("exact receiver sets: %s", SubstratePriorityInliningPhase.exactReceiverSetStatistics());
+        info("escape inlining: %s", SubstratePolicyFactory.SubstrateExpanderPolicy.escapeInlineStatistics());
     }
 
     /** Prints how the compiler used each category of the profile {@code lookup}, one line each. */

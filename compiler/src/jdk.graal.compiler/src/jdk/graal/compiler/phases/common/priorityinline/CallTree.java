@@ -502,6 +502,14 @@ public class CallTree extends Graph {
         return expandCutoffNodeBypassPolicies(node);
     }
 
+    /**
+     * Lets a subclass drop inline-cache cases that the receiver can no longer have, for example
+     * after inlining replaced the receiver by a merge of allocations and constants. Called from
+     * {@link InlineCacheNode#enhanceParameters()} before the children are enhanced.
+     */
+    public void refineInlineCacheChildren(@SuppressWarnings("unused") InlineCacheNode node) {
+    }
+
     public CallTreeNode replaceWithDirectIfApplicable(CallTreeNode node) {
         Invoke invoke = node.invoke();
         if (invoke != null && invoke.asNode().isAlive()) {
@@ -827,6 +835,11 @@ public class CallTree extends Graph {
     @SuppressWarnings("unused")
     public void devirtualizeHotCallees(CoreProviders coreProviders) {
         // Hook for subclass
+    }
+
+    /** Whether the consumed execution profile marks this call as one that must be inlined. */
+    public boolean profileForcesInline(CallTreeNode node) {
+        return policy.profileForcesInline(node);
     }
 
     /**

@@ -89,6 +89,25 @@ public class SubgraphNode extends ParentNode {
         this.intrinsic = intrinsic;
     }
 
+    /**
+     * Creates a copy of this node that is dispatched on the exact receiver type {@code type}. The
+     * copy takes over the parsed subgraph and the children of this node, which must not be used
+     * afterwards (it is left without children and without a graph reference).
+     */
+    public SubgraphNode specializeForReceiverType(ResolvedJavaType type, double newFrequency) {
+        assert !intrinsic : "intrinsic graphs are not specialized: " + this;
+        SubgraphNode specialized = callTree().add(new SubgraphNode(compilationRootPosition(), invoke(), newFrequency, subgraph, false, dispatchedMethod, type, type, benefits, false));
+        for (CallTreeNode child : children().snapshot()) {
+            child.replaceAtPredecessor(null);
+            specialized.addChild(child);
+        }
+        return specialized;
+    }
+
+    public boolean isIntrinsic() {
+        return intrinsic;
+    }
+
     @Override
     public Map<Object, Object> getDebugProperties(Map<Object, Object> map) {
         Map<Object, Object> debugProperties = super.getDebugProperties(map);
@@ -285,7 +304,7 @@ public class SubgraphNode extends ParentNode {
     @Override
     public boolean isForceInlined() {
         return targetMethod() != null && (targetMethod().shouldBeInlined() || callTree().matchesForceInlineFilter(targetMethod()) ||
-                        callTree().matchDirectedInline(this) != null);
+                        callTree().matchDirectedInline(this) != null || callTree().profileForcesInline(this));
     }
 
     @Override
