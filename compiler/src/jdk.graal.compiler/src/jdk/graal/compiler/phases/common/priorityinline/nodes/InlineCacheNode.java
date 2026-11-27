@@ -34,12 +34,14 @@ import java.util.function.Consumer;
 
 import org.graalvm.collections.EconomicSet;
 
+import jdk.graal.compiler.core.common.type.ObjectStamp;
 import jdk.graal.compiler.debug.DebugCloseable;
 import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.graph.NodeClass;
 import jdk.graal.compiler.graph.NodeSourcePosition;
 import jdk.graal.compiler.nodeinfo.NodeInfo;
 import jdk.graal.compiler.nodes.Invoke;
+import jdk.graal.compiler.nodes.NodeView;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.java.MethodCallTargetNode;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
@@ -122,7 +124,7 @@ public class InlineCacheNode extends ParentNode {
     public static final NodeClass<InlineCacheNode> TYPE = NodeClass.create(InlineCacheNode.class);
 
     private final int maxDispatches;
-    private final Dispatch dispatch;
+    private Dispatch dispatch;
 
     /**
      * The original method intended as the target for this call-tree node.
@@ -138,6 +140,29 @@ public class InlineCacheNode extends ParentNode {
      * Flag indicating whether the fallback invoke should be marked as polymorphic.
      */
     private boolean isPolymorphic;
+
+    /**
+     * True when this node guards a call that is already direct, in order to specialize the inlined
+     * body for one profiled receiver type. The node must then not be folded back into a plain
+     * direct call while the receiver type is still unknown; see {@link #enhanceParameters()}.
+     */
+    private boolean directCallSpecialization;
+
+    /** Inlining rounds this cache has waited for the call that produces its receiver. */
+    private int receiverProducerWaits;
+    private static final int MAX_RECEIVER_PRODUCER_WAITS = 2;
+
+    /**
+     * Records one more wait for the receiver-producing call and tells whether waiting is still
+     * allowed. Waiting is bounded so a producer that is never inlined cannot hold the cache back.
+     */
+    public boolean waitForReceiverProducer() {
+        if (receiverProducerWaits >= MAX_RECEIVER_PRODUCER_WAITS) {
+            return false;
+        }
+        receiverProducerWaits++;
+        return true;
+    }
 
     public InlineCacheNode(NodeSourcePosition compilationRootPosition, Invoke invoke, ResolvedJavaMethod originalTargetMethod, double frequency, AbstractJavaProfile<?, ?> profile, int maxDispatches) {
         super(compilationRootPosition, TYPE, invoke, frequency);
@@ -239,6 +264,8 @@ public class InlineCacheNode extends ParentNode {
     public void inline(CoreProviders context, Consumer<CallTreeNode> considerChild, Consumer<CallTreeNode> removeChild,
                     Consumer<EconomicSet<Node>> trackCanonicalizable) {
         callTree().state().incNumMethodsInlined();
+        /* The receiver may have become a merge of known allocations since the children were made. */
+        callTree().refineInlineCacheChildren(this);
         //
         // Step 1: Identify inlined and postponed cases.
         //
@@ -358,13 +385,57 @@ public class InlineCacheNode extends ParentNode {
         }
     }
 
-    @Override
-    public boolean enhanceParameters() {
-        CallTreeNode direct = callTree().replaceWithDirectIfApplicable(this);
-        if (direct != this) {
-            callTree().restoreSubtreeInvariants(direct, false);
+    /**
+     * Marks this node as a receiver-type specialization of a direct call. The call already has a
+     * single target; the inline cache exists only to give the inlined body an exact receiver type.
+     */
+    public void markDirectCallSpecialization() {
+        this.directCallSpecialization = true;
+    }
+
+    public boolean isDirectCallSpecialization() {
+        return directCallSpecialization;
+    }
+
+    /**
+     * Replaces the receiver-type profile after the children were narrowed to the types the receiver
+     * can have, so that the profiles derived for postponed or empty caches match the children.
+     */
+    public void setReceiverTypeProfile(JavaTypeProfile profile) {
+        this.dispatch = new ReceiverTypeDispatch(profile);
+    }
+
+    public void setMethodProfile(JavaMethodProfile profile) {
+        this.dispatch = new MethodDispatch(profile);
+    }
+
+    public AbstractJavaProfile<?, ?> getProfile() {
+        return dispatch.profile();
+    }
+
+    private boolean receiverTypeIsExact() {
+        Invoke invoke = invoke();
+        if (invoke == null || invoke.callTarget().arguments().isEmpty()) {
             return true;
         }
+        return invoke.callTarget().arguments().get(0).stamp(NodeView.DEFAULT) instanceof ObjectStamp objectStamp && objectStamp.isExactType();
+    }
+
+    @Override
+    public boolean enhanceParameters() {
+        /*
+         * A direct-call specialization keeps its guard until the receiver type is known from the
+         * stamp; only then is the guard redundant and the node can become a plain direct call.
+         */
+        if (!directCallSpecialization || receiverTypeIsExact()) {
+            CallTreeNode direct = callTree().replaceWithDirectIfApplicable(this);
+            if (direct != this) {
+                callTree().restoreSubtreeInvariants(direct, false);
+                return true;
+            }
+        }
+
+        callTree().refineInlineCacheChildren(this);
 
         boolean changed = false;
         for (CallTreeNode child : children()) {

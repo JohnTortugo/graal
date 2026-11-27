@@ -40,8 +40,12 @@ import org.graalvm.collections.EconomicSet;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.nodes.InliningLog;
+import jdk.graal.compiler.nodes.Invoke;
 import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.ValuePhiNode;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
+import jdk.graal.compiler.nodes.util.GraphUtil;
 import jdk.graal.compiler.phases.common.inlining.InliningUtil;
 import jdk.graal.compiler.phases.common.priorityinline.data.BenefitCostTuple;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CallTreeNode;
@@ -145,13 +149,36 @@ public class Inliner {
             }
         }
         inlineQueuedRootChildren(callTree, front, child -> {
-            if (child.isMarkedInlined()) {
+            if (child.isMarkedInlined() && !postponedForReceiverProducer(child, root)) {
                 assert child instanceof ParentNode : "Child must be a ParentNode but is " + child;
                 front.add(child);
             } else {
                 addRootChild(root, child);
             }
         });
+    }
+
+    /**
+     * An inline cache whose receiver comes from a call that is still a cutoff (or an expanded but
+     * not inlined body) among the root children waits for that call, at most two rounds (see
+     * {@link InlineCacheNode#waitForReceiverProducer}). Once the producer is inlined, the receiver
+     * is usually a merge of allocations with known types and the cache can be refined to fewer cases
+     * without a fallback.
+     */
+    private static boolean postponedForReceiverProducer(CallTreeNode child, SubgraphNode root) {
+        if (!(child instanceof InlineCacheNode cache)) {
+            return false;
+        }
+        CallTreeNode producer = receiverProducer(cache, root.children());
+        if (producer == null || !(producer instanceof CutoffNode || (producer instanceof SubgraphNode && !producer.isMarkedInlined()))) {
+            return false;
+        }
+        if (!cache.waitForReceiverProducer()) {
+            return false;
+        }
+        InliningUtil.logInliningDecision(cache.getDebug(), "postponing %s until its receiver producer %s is inlined", cache, producer);
+        cache.markNotInlined();
+        return true;
     }
 
     /**
@@ -164,8 +191,22 @@ public class Inliner {
         StructuredGraph compilerGraph = root.getReadonlySubgraph();
         HighTierContext context = callTree.getContext();
         EconomicSet<Node> canonicalizableNodes = EconomicSet.create();
+        EconomicSet<CallTreeNode> deferred = EconomicSet.create();
         while (!front.isEmpty()) {
             CallTreeNode node = front.poll();
+            if (node instanceof InlineCacheNode cache && front instanceof ArrayDeque<CallTreeNode> deque && deferred.add(node)) {
+                /*
+                 * Inline the call that produces the receiver first: afterwards the receiver is
+                 * often a merge of allocations with known types and the cache needs fewer cases.
+                 */
+                CallTreeNode producer = receiverProducer(cache, deque);
+                if (producer != null) {
+                    deque.remove(producer);
+                    deque.addFirst(node);
+                    deque.addFirst(producer);
+                    continue;
+                }
+            }
             if (node.invoke().asNode().isAlive()) {
                 if (node.parent() != null) {
                     callTree.snapshotDirectedInliningCallsites(node);
@@ -200,6 +241,38 @@ public class Inliner {
         }
 
         callTree.getCanonicalizer().applyIncremental(compilerGraph, context, canonicalizableNodes);
+    }
+
+    /**
+     * The queued node whose invoke produces the receiver of {@code cache} (through merges and
+     * proxies), or {@code null}.
+     */
+    private static CallTreeNode receiverProducer(InlineCacheNode cache, Iterable<CallTreeNode> candidates) {
+        Invoke invoke = cache.invoke();
+        if (invoke == null || !invoke.asNode().isAlive() || invoke.callTarget().arguments().isEmpty()) {
+            return null;
+        }
+        EconomicSet<ValueNode> seen = EconomicSet.create();
+        ArrayDeque<ValueNode> work = new ArrayDeque<>();
+        work.add(invoke.callTarget().arguments().get(0));
+        while (!work.isEmpty()) {
+            ValueNode value = GraphUtil.unproxify(work.poll());
+            if (!seen.add(value)) {
+                continue;
+            }
+            if (value instanceof ValuePhiNode phi) {
+                for (ValueNode input : phi.values()) {
+                    work.add(input);
+                }
+            } else if (value instanceof Invoke producer) {
+                for (CallTreeNode candidate : candidates) {
+                    if (candidate != null && candidate != cache && candidate.invoke() == producer) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     void inlineForceInlinedRootChildAndRestoreInvariants(CallTree callTree, ParentNode child) {

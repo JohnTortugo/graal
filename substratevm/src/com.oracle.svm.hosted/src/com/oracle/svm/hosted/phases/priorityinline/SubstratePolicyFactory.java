@@ -39,8 +39,14 @@ import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPh
 import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase.Options.TypicalGraphSize;
 import static jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase.Options.TypicalGraphSizeInvokeBonus;
 
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
+import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageInfo;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Platform;
@@ -48,25 +54,42 @@ import org.graalvm.nativeimage.Platforms;
 
 import com.oracle.svm.core.interpreter.InterpreterSupport;
 import com.oracle.svm.hosted.BytecodeHandlerFeature;
+import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.shared.option.HostedOptionKey;
 
+import jdk.graal.compiler.core.common.type.ObjectStamp;
 import jdk.graal.compiler.debug.DebugCloseable;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.TimerKey;
+import jdk.graal.compiler.nodes.FixedNode;
+import jdk.graal.compiler.nodes.Invoke;
+import jdk.graal.compiler.nodes.NodeView;
+import jdk.graal.compiler.nodes.ParameterNode;
+import jdk.graal.compiler.nodes.StructuredGraph;
+import jdk.graal.compiler.nodes.ValueNode;
+import jdk.graal.compiler.nodes.ValuePhiNode;
+import jdk.graal.compiler.nodes.cfg.ControlFlowGraph;
+import jdk.graal.compiler.nodes.cfg.HIRBlock;
+import jdk.graal.compiler.nodes.java.AbstractNewObjectNode;
 import jdk.graal.compiler.nodes.spi.CoreProviders;
+import jdk.graal.compiler.nodes.util.GraphUtil;
+import jdk.graal.compiler.nodes.virtual.AllocatedObjectNode;
 import jdk.graal.compiler.options.OptionKey;
 import jdk.graal.compiler.options.OptionValues;
+import jdk.graal.compiler.phases.common.inlining.InliningUtil;
 import jdk.graal.compiler.phases.common.priorityinline.CallTree;
 import jdk.graal.compiler.phases.common.priorityinline.CallTreeState;
 import jdk.graal.compiler.phases.common.priorityinline.DefaultPolicyFactory;
 import jdk.graal.compiler.phases.common.priorityinline.Expander;
 import jdk.graal.compiler.phases.common.priorityinline.Inliner;
+import jdk.graal.compiler.phases.common.priorityinline.InliningMath;
 import jdk.graal.compiler.phases.common.priorityinline.Optimizer;
 import jdk.graal.compiler.phases.common.priorityinline.PriorityInliningPhase;
 import jdk.graal.compiler.phases.common.priorityinline.TunableOptionKey;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CallTreeNode;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.CutoffNode;
 import jdk.graal.compiler.phases.common.priorityinline.nodes.ParentNode;
+import jdk.graal.compiler.phases.common.priorityinline.nodes.SubgraphNode;
 import jdk.graal.compiler.phases.common.priorityinline.tuning.BytecodeInterpreterTuningPolicy;
 import jdk.graal.compiler.phases.common.priorityinline.tuning.CompositeTuningPolicy;
 import jdk.graal.compiler.phases.common.priorityinline.tuning.TuningPolicy;
@@ -95,11 +118,121 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
 
     @Override
     public TuningPolicy createTuningPolicy(OptionValues options) {
-        TuningPolicy defaultPolicy = super.createTuningPolicy(options);
-        if (!InterpreterSupport.isEnabled() || !ImageSingletons.contains(BytecodeHandlerFeature.class)) {
-            return defaultPolicy;
+        List<TuningPolicy> policies = new ArrayList<>();
+        policies.add(super.createTuningPolicy(options));
+        policies.add(new HotRootTuningPolicy());
+        if (InterpreterSupport.isEnabled() && ImageSingletons.contains(BytecodeHandlerFeature.class)) {
+            policies.add(new CremaBytecodeHandlerStubTuningPolicy());
         }
-        return new CompositeTuningPolicy(List.of(defaultPolicy, new CremaBytecodeHandlerStubTuningPolicy()));
+        return new CompositeTuningPolicy(policies);
+    }
+
+    /**
+     * Gives every call in a hot compilation root a larger inlining budget. The inliner values a call
+     * by its frequency relative to one entry of the root and charges code size in absolute terms,
+     * so in a root that the whole program runs millions of times a callee invoked once per entry is
+     * worth as little as in a root that runs once; the exploration budget of such a root is then
+     * spent on a few large callees whose own calls stay unexpanded and whose inlining is judged
+     * harmful, and most calls are never even evaluated. The sampling profile knows which roots are
+     * hot: for those, benefits are multiplied and the size penalties on the expansion threshold
+     * divided by the configured boost, which is equivalent to pricing their code at a fraction of
+     * its size. Code growth stays bounded by the number of hot roots.
+     */
+    private static final class HotRootTuningPolicy extends TuningPolicy {
+        private static double boost(CallTreeNode node) {
+            CallTree callTree = node.callTree();
+            if (!(callTree.inliningProvider() instanceof SubstrateInliningProvider inliningProvider)) {
+                return 1.0;
+            }
+            OptionValues options = node.getOptions();
+            double boost = inliningProvider.hotRootInliningBoost(options);
+            if (boost <= 1.0) {
+                return 1.0;
+            }
+            ResolvedJavaMethod rootMethod = callTree.root().getReadonlySubgraph().method();
+            if (!(rootMethod instanceof HostedMethod root) || inliningProvider.inclusiveTimeShare(root) < inliningProvider.hotRootMinInclusiveShare(options)) {
+                return 1.0;
+            }
+            return boost;
+        }
+
+        @Override
+        public double cutoffLocalBenefitAmplifier(CutoffNode node) {
+            return boost(node);
+        }
+
+        @Override
+        public double parentLocalBenefitAmplifier(ParentNode node) {
+            double boost = boost(node);
+            if (boost <= 1.0) {
+                return 1.0;
+            }
+            SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
+            return boost * coldCodeDiscount(node, inliningProvider.hotRootColdBlockFrequency(node.getOptions()), inliningProvider.hotRootMaxColdCodeDiscount(node.getOptions()));
+        }
+
+        /**
+         * The inliner charges a callee its whole node count, but the blocks of a callee that the
+         * profile shows are almost never executed (exception paths, slow paths) cost the hot path
+         * nothing once laid out of line. In a hot root, discount them: the inlining benefit is
+         * multiplied by (fixed nodes) / (fixed nodes in blocks at or above the cold frequency),
+         * capped, so that a large callee with a small hot path is priced by its hot path. Floating
+         * nodes are not scheduled here; the fixed-node ratio is the estimate.
+         */
+        private static double coldCodeDiscount(ParentNode node, double coldBlockFrequency, double maxDiscount) {
+            if (maxDiscount <= 1.0 || !(node instanceof SubgraphNode subgraph)) {
+                return 1.0;
+            }
+            StructuredGraph graph = subgraph.getReadonlySubgraph();
+            ControlFlowGraph cfg = ControlFlowGraph.newBuilder(graph).connectBlocks(true).computeFrequency(true).build();
+            int fixedNodes = 0;
+            int hotFixedNodes = 0;
+            for (HIRBlock block : cfg.getBlocks()) {
+                int count = fixedNodeCount(block);
+                fixedNodes += count;
+                if (block.getRelativeFrequency() >= coldBlockFrequency) {
+                    hotFixedNodes += count;
+                }
+            }
+            if (hotFixedNodes == 0) {
+                return 1.0;
+            }
+            return Math.min(maxDiscount, (double) fixedNodes / hotFixedNodes);
+        }
+
+        @SuppressWarnings("unused")
+        private static int fixedNodeCount(HIRBlock block) {
+            int count = 0;
+            for (FixedNode fixedNode : block.getNodes()) {
+                count++;
+            }
+            return count;
+        }
+
+        @Override
+        public boolean mustInline(ParentNode node) {
+            return false;
+        }
+
+        @Override
+        public double callGraphSizePenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double smallRootIrPenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double largeChildrenCountPenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
+
+        @Override
+        public double rootSizePenaltyMultiplier(CutoffNode node) {
+            return 1.0 / boost(node);
+        }
     }
 
     @Override
@@ -220,16 +353,30 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
          */
         private static final int SCALING_MAX_VALUE_MULTIPLIER = 2;
 
+        /** Escape inlining statistics, reported after compilation. */
+        private static final AtomicLong ESCAPE_CONSIDERED = new AtomicLong();
+        private static final AtomicLong ESCAPE_FORCED = new AtomicLong();
+
+        /** How many graphs up the call tree escape inlining follows an argument to its allocation. */
+        private static final int ESCAPE_MAX_DEPTH = 8;
+
+        private final EconomicMap<StructuredGraph, LoopCfg> loopCfgs = EconomicMap.create();
+
         private static double boostBasedOnHotness(CallTreeNode node, double value) {
             SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
-            int caiHotBonus = inliningProvider.hotBonusWhileInlining(node.getOptions());
-            if (caiHotBonus == 0) {
-                return value;
-            }
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(node.callTree());
             double hotness = samplingCallTreeState.hotness(node);
             assert 0.0 <= hotness && hotness <= 1.0;
-            return value * (1 + (caiHotBonus * hotness));
+            int scaledBonus = inliningProvider.hotBonusWhileInlining(node.getOptions());
+            int selectedContextBonus = inliningProvider.selectedContextBonusWhileInlining(node.getOptions(), hotness, samplingCallTreeState.samples(node));
+            if (scaledBonus == 0 && selectedContextBonus == 0) {
+                return value;
+            }
+            return value * hotnessMultiplier(hotness, scaledBonus, selectedContextBonus);
+        }
+
+        static double hotnessMultiplier(double hotness, int scaledBonus, int selectedContextBonus) {
+            return 1 + (scaledBonus * hotness) + selectedContextBonus;
         }
 
         private static int getFrequency(CallTree callTree) {
@@ -304,18 +451,136 @@ public class SubstratePolicyFactory extends DefaultPolicyFactory {
             }
         }
 
+        /** Forces escape inlining; see {@link #escapeInlineForced}. */
+        @Override
+        public boolean profileForcesInline(CallTreeNode node) {
+            return escapeInlineForced(node);
+        }
+
+        public static String escapeInlineStatistics() {
+            return String.format("small callees taking a caller allocation inside a loop: %d, forced inline: %d", ESCAPE_CONSIDERED.get(), ESCAPE_FORCED.get());
+        }
+
+        /** Control-flow graphs with loop information, rebuilt when the graph changed. */
+        private record LoopCfg(ControlFlowGraph cfg, int nodeIdCount, int edgeModificationCount) {
+        }
+
+        /**
+         * Escape-aware inlining. A call that is not inlined and takes a caller allocation as an
+         * argument makes that allocation escape; if the call sits inside a loop the object must be
+         * materialized before the loop and every field access in the loop goes through memory. The
+         * callee's own hotness is beside the point (it is usually cold), so such a call is forced
+         * inline when the callee is small. The argument is followed up the call tree through
+         * parameters, proxies and merges to an allocation; the loop may be in any of the graphs on
+         * the way.
+         */
+        private boolean escapeInlineForced(CallTreeNode node) {
+            CallTree callTree = node.callTree();
+            OptionValues options = node.getOptions();
+            if (!(callTree.inliningProvider() instanceof SubstrateInliningProvider inliningProvider)) {
+                return false;
+            }
+            int maxCodeSize = inliningProvider.escapeInlineMaxCodeSize(options);
+            ResolvedJavaMethod target = node.targetMethod();
+            Invoke invoke = node.invoke();
+            if (maxCodeSize <= 0 || target == null || target.getCodeSize() > maxCodeSize || invoke == null || !invoke.asNode().isAlive() || !(node instanceof CutoffNode ||
+                            node instanceof SubgraphNode)) {
+                return false;
+            }
+            if (!callTree.root().getReadonlySubgraph().globalProfileProvider().hotCaller()) {
+                return false;
+            }
+            if (node instanceof CutoffNode cutoff && InliningMath.defaultRecursionPenalty(cutoff) > 0.0) {
+                return false;
+            }
+            boolean found = false;
+            for (int i = 0; i < invoke.callTarget().arguments().size() && !found; i++) {
+                found = argumentIsLoopInvariantCallerAllocation(node, i, 0);
+            }
+            if (!found) {
+                return false;
+            }
+            ESCAPE_CONSIDERED.incrementAndGet();
+            if (isCallGraphTooBig(callTree) || isInlinedGraphTooBig(callTree)) {
+                return false;
+            }
+            ESCAPE_FORCED.incrementAndGet();
+            InliningUtil.logInliningDecision(node.getDebug(), "escape inlining forces %s: it takes a caller allocation inside a loop", node);
+            return true;
+        }
+
+        /**
+         * Whether argument {@code index} of {@code node}'s invoke is, followed up the call tree, an
+         * allocation that was made outside a loop which contains the call.
+         */
+        private boolean argumentIsLoopInvariantCallerAllocation(CallTreeNode node, int index, int depth) {
+            Invoke invoke = node.invoke();
+            if (depth > ESCAPE_MAX_DEPTH || invoke == null || !invoke.asNode().isAlive() || index >= invoke.callTarget().arguments().size()) {
+                return false;
+            }
+            ValueNode argument = invoke.callTarget().arguments().get(index);
+            if (!(argument.stamp(NodeView.DEFAULT) instanceof ObjectStamp)) {
+                return false;
+            }
+            StructuredGraph graph = invoke.asNode().graph();
+            HIRBlock invokeBlock = loopCfg(graph).blockFor(invoke.asFixedNode());
+            boolean invokeInLoop = invokeBlock != null && invokeBlock.getLoop() != null;
+            Set<ValueNode> seen = new HashSet<>();
+            ArrayDeque<ValueNode> work = new ArrayDeque<>();
+            work.add(argument);
+            while (!work.isEmpty()) {
+                ValueNode value = GraphUtil.unproxify(work.poll());
+                if (!seen.add(value)) {
+                    continue;
+                }
+                if (value instanceof ValuePhiNode phi) {
+                    for (ValueNode input : phi.values()) {
+                        work.add(input);
+                    }
+                } else if (value instanceof ParameterNode parameter) {
+                    if (node.parent() instanceof SubgraphNode caller && argumentIsLoopInvariantCallerAllocation(caller, parameter.index(), depth + 1)) {
+                        return true;
+                    }
+                } else if (value instanceof AbstractNewObjectNode || value instanceof AllocatedObjectNode) {
+                    if (invokeInLoop) {
+                        FixedNode allocation = value instanceof AllocatedObjectNode allocated ? allocated.getCommit() : (FixedNode) value;
+                        HIRBlock allocationBlock = loopCfg(graph).blockFor(allocation);
+                        if (allocationBlock != null && allocationBlock.getLoop() != invokeBlock.getLoop() && (allocationBlock.getLoop() == null || invokeBlock.getLoop().isAncestorOrSelf(
+                                        allocationBlock.getLoop()))) {
+                            return true;
+                        }
+                    } else if (depth > 0) {
+                        /* The call is inside a loop of a callee graph; the allocation is in this caller. */
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private ControlFlowGraph loopCfg(StructuredGraph graph) {
+            LoopCfg cached = loopCfgs.get(graph);
+            if (cached == null || cached.nodeIdCount != graph.nodeIdCount() || cached.edgeModificationCount != graph.getEdgeModificationCount()) {
+                ControlFlowGraph cfg = ControlFlowGraph.newBuilder(graph).connectBlocks(true).computeFrequency(false).computeLoops(true).computeDominators(true).build();
+                cached = new LoopCfg(cfg, graph.nodeIdCount(), graph.getEdgeModificationCount());
+                loopCfgs.put(graph, cached);
+            }
+            return cached.cfg;
+        }
+
         @Override
         public void updateCutoffNodePriority(CutoffNode node) {
             super.updateCutoffNodePriority(node);
             SubstrateInliningProvider inliningProvider = (SubstrateInliningProvider) node.callTree().inliningProvider();
-            int bonus = inliningProvider.hotBonusWhileExpanding(node.callTree().getOptions());
-            if (bonus == 0) {
-                return;
-            }
             SamplingCallTreeState samplingCallTreeState = SamplingCallTreeState.getSamplingCallTreeState(node.callTree());
             double hotness = samplingCallTreeState.hotness(node);
             assert 0.0 <= hotness && hotness <= 1.0;
-            double newPriority = node.getPriority() + (bonus * hotness);
+            int scaledBonus = inliningProvider.hotBonusWhileExpanding(node.callTree().getOptions());
+            int selectedContextBonus = inliningProvider.selectedContextBonusWhileExpanding(node.getOptions(), hotness, samplingCallTreeState.samples(node));
+            if (scaledBonus == 0 && selectedContextBonus == 0) {
+                return;
+            }
+            double newPriority = node.getPriority() + (scaledBonus * hotness) + selectedContextBonus;
             node.setPriorityAndMaxLeafPriority(newPriority);
         }
 

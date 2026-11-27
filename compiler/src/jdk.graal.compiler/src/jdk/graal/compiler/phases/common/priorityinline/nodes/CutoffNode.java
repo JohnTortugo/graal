@@ -101,7 +101,8 @@ public class CutoffNode extends CallTreeNode {
 
     @Override
     public boolean isForceInlined() {
-        return targetMethod().shouldBeInlined() || callTree().matchesForceInlineFilter(targetMethod()) || callTree().matchDirectedInline(this) != null;
+        return targetMethod().shouldBeInlined() || callTree().matchesForceInlineFilter(targetMethod()) || callTree().matchDirectedInline(this) != null ||
+                        callTree().profileForcesInline(this);
     }
 
     @Override

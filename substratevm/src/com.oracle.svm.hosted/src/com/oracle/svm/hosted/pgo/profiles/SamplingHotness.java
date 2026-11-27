@@ -26,6 +26,7 @@ package com.oracle.svm.hosted.pgo.profiles;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,6 +82,8 @@ public final class SamplingHotness {
     private final PrefixTree methodRootedTree;
     /** Non-idle samples per innermost method. */
     private final Map<AnalysisMethod, Long> selfSamples;
+    /** Non-idle samples with the method anywhere on the stack, counted once per sample. */
+    private final Map<AnalysisMethod, Long> inclusiveSamples;
     /** Samples whose innermost frame is not an idle leaf. */
     private final long nonIdleSamples;
     /** Samples whose innermost frame is an idle leaf; they count toward no method. */
@@ -112,6 +115,7 @@ public final class SamplingHotness {
 
         SampleAccounting<AnalysisMethod> accounting = accountSamples(stacks, frame -> (AnalysisMethod) frame.getMethod(), SamplingHotness::isIdle);
         selfSamples = accounting.selfSamples();
+        inclusiveSamples = accounting.inclusiveSamples();
         nonIdleSamples = accounting.nonIdleSamples();
         idleSamples = accounting.idleSamples();
 
@@ -142,10 +146,12 @@ public final class SamplingHotness {
      *
      * @param <M> the method type
      * @param selfSamples non-idle samples per innermost method
+     * @param inclusiveSamples non-idle samples per method anywhere on the stack, counted once per
+     *            sample
      * @param nonIdleSamples samples whose innermost frame is not an idle leaf
      * @param idleSamples samples whose innermost frame is an idle leaf
      */
-    record SampleAccounting<M>(Map<M, Long> selfSamples, long nonIdleSamples, long idleSamples) {
+    record SampleAccounting<M>(Map<M, Long> selfSamples, Map<M, Long> inclusiveSamples, long nonIdleSamples, long idleSamples) {
     }
 
     /**
@@ -162,6 +168,7 @@ public final class SamplingHotness {
      */
     static <F, M> SampleAccounting<M> accountSamples(Map<List<F>, Long> stackSamples, Function<F, M> method, Predicate<F> idleLeaf) {
         Map<M, Long> self = new HashMap<>();
+        Map<M, Long> inclusive = new HashMap<>();
         long nonIdle = 0;
         long idle = 0;
         for (Map.Entry<List<F>, Long> entry : stackSamples.entrySet()) {
@@ -177,8 +184,15 @@ public final class SamplingHotness {
             }
             nonIdle += count;
             self.merge(method.apply(leaf), count, Long::sum);
+            Set<M> onStack = new HashSet<>();
+            for (F frame : stack) {
+                M frameMethod = method.apply(frame);
+                if (onStack.add(frameMethod)) {
+                    inclusive.merge(frameMethod, count, Long::sum);
+                }
+            }
         }
-        return new SampleAccounting<>(Map.copyOf(self), nonIdle, idle);
+        return new SampleAccounting<>(Map.copyOf(self), Map.copyOf(inclusive), nonIdle, idle);
     }
 
     /**
@@ -218,6 +232,21 @@ public final class SamplingHotness {
      */
     public boolean isSampled(HostedMethod method) {
         return methodRootedTree.hasMethod(method);
+    }
+
+    /**
+     * Inclusive time of {@code method}: the share of busy processor time spent in the method or in
+     * its callees.
+     *
+     * @param method the method
+     * @return the fraction in [0, 1] of all non-idle samples that have the method somewhere on
+     *         their stack
+     */
+    public double inclusiveTimeShare(HostedMethod method) {
+        if (nonIdleSamples == 0) {
+            return 0.0;
+        }
+        return (double) inclusiveSamples.getOrDefault(method.getWrapped(), 0L) / nonIdleSamples;
     }
 
     /**

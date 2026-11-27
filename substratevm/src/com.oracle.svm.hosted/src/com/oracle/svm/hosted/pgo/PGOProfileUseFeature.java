@@ -62,6 +62,7 @@ import com.oracle.svm.hosted.pgo.profiles.PGOProfilesLookup;
 import com.oracle.svm.hosted.pgo.profiles.SamplingHotness;
 import com.oracle.svm.hosted.pgo.profiles.ProfiledInliningProvider;
 import com.oracle.svm.hosted.pgo.profiles.IprofProfilesLookup;
+import com.oracle.svm.hosted.phases.priorityinline.SubstratePolicyFactory;
 import com.oracle.svm.hosted.phases.priorityinline.SubstratePriorityInliningPhase;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
@@ -720,6 +721,9 @@ public final class PGOProfileUseFeature implements InternalFeature {
         if (samplingHotness != null) {
             info("sampling hotness: %d compilation roots with samples, %d without", samplingHotness.sampledRootCount(), samplingHotness.unsampledRootCount());
         }
+        info("receiver specialization: %s", SubstratePriorityInliningPhase.receiverSpecializationStatistics());
+        info("exact receiver sets: %s", SubstratePriorityInliningPhase.exactReceiverSetStatistics());
+        info("escape inlining: %s", SubstratePolicyFactory.SubstrateExpanderPolicy.escapeInlineStatistics());
     }
 
     /** Prints how the compiler used each category of the profile {@code lookup}, one line each. */

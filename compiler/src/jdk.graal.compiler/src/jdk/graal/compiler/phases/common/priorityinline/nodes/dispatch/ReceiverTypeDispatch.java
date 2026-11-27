@@ -124,7 +124,7 @@ public final class ReceiverTypeDispatch extends Dispatch {
     }
 
     @Override
-    protected AbstractJavaProfile<?, ?> profile() {
+    public AbstractJavaProfile<?, ?> profile() {
         return profile;
     }
 
