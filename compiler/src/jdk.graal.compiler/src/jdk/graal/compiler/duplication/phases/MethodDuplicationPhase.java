@@ -100,6 +100,7 @@ import jdk.graal.compiler.options.OptionKey;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.common.CanonicalizerPhase;
+import jdk.graal.compiler.phases.common.util.GlobalProfilesOptimizationUtility;
 import jdk.graal.compiler.phases.graph.ReentrantBlockIterator;
 import jdk.graal.compiler.phases.schedule.SchedulePhase;
 import jdk.graal.compiler.phases.util.GraphOrder;
@@ -154,7 +155,20 @@ public class MethodDuplicationPhase extends BasePhase<CoreProviders> {
         @Option(help = "Skip n duplication anchors", type = OptionType.Debug)
         public static final OptionKey<Integer> MinDuplicationAnchor = new OptionKey<>(1);
 
+        @Option(help = "When an execution profile supplies self time, only duplicate compilation units the profile reports as globally significant.", type = OptionType.Expert)
+        public static final OptionKey<Boolean> OptMethodDuplicationHotOnly = new OptionKey<>(true);
+
         // @formatter:on
+    }
+
+    /** Whether the graph's profile gives self time, as a profile-guided build's profile does. */
+    private static boolean hasSelfTime(StructuredGraph graph) {
+        return graph.globalProfileProvider().getGlobalSelfTimePercent() != StructuredGraph.GlobalProfileProvider.GLOBAL_PROFILE_PROVIDER_DISABLED;
+    }
+
+    /** Whether the profile gives the graph self time too small to be worth optimizing for. */
+    private static boolean isProfiledAsCold(StructuredGraph graph) {
+        return hasSelfTime(graph) && !GlobalProfilesOptimizationUtility.shouldPrioritizeForOptimization(graph);
     }
 
     private final CanonicalizerPhase canonicalizer;
@@ -170,6 +184,14 @@ public class MethodDuplicationPhase extends BasePhase<CoreProviders> {
 
     @Override
     protected void run(StructuredGraph graph, CoreProviders context) {
+        if (Options.OptMethodDuplicationHotOnly.getValue(graph.getOptions()) && isProfiledAsCold(graph)) {
+            /*
+             * Duplication trades code size for a denser hot path, so it is only worth paying for in
+             * compilation units the profile reports as significant. Without self-time data, as in a
+             * JIT, no unit can be ruled out and every unit is still considered.
+             */
+            return;
+        }
 
         int initialSize = graph.getNodeCount();
         DebugContext debug = graph.getDebug();
