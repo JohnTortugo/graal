@@ -54,7 +54,8 @@ import jdk.vm.ci.code.BytecodePosition;
  * {@code samplingProfiles} (stack samples). Conditional and receiver profiles, and call counts per
  * call edge, are looked up by {@link PGOContext}; call counts per method by method descriptor; the
  * stack samples are handed out as one map. All other queries, such as instanceof, image-heap and
- * monitor profiles, answer as for an absent profile.
+ * monitor profiles, answer as for an absent profile. {@code PGOProfileUseFeature} reads the
+ * monitor profiles for {@code --pgo-monitor-fields} from the parsed file itself.
  * <p>
  * {@link IprofProfileResolver} builds the tables and the {@link PGODiagnostics} once the
  * {@code HostedUniverse} is available. The tables do not change until {@link #clear} drops them.

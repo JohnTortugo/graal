@@ -76,6 +76,7 @@ import com.oracle.svm.hosted.meta.HostedMetaAccess;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedType;
 import com.oracle.svm.hosted.meta.HostedUniverse;
+import com.oracle.svm.hosted.pgo.MonitorProfiledTypes;
 import com.oracle.svm.hosted.substitute.AnnotationSubstitutionProcessor;
 import com.oracle.svm.shared.option.HostedOptionValues;
 import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
@@ -461,9 +462,21 @@ public class HostedConfiguration {
 
     /** Process the types that the analysis found as needing synchronization. */
     protected void processedSynchronizedTypes(BigBang bb, HostedUniverse hUniverse, EconomicSet<AnalysisType> immutableTypes) {
+        MonitorProfiledTypes profiles = ImageSingletons.contains(MonitorProfiledTypes.class) ? ImageSingletons.lookup(MonitorProfiledTypes.class) : null;
         for (AnalysisType type : bb.getAllSynchronizedTypes()) {
-            maybeSetMonitorField(hUniverse, immutableTypes, type);
+            /*
+             * With monitor profiles, a type that training never locked keeps no field. The types
+             * that always need one already have it and are not counted.
+             */
+            if (profiles == null || hasMonitorField(hUniverse, type) || profiles.retainMonitorField(type)) {
+                maybeSetMonitorField(hUniverse, immutableTypes, type);
+            }
         }
+    }
+
+    /** Whether {@code type} already has a monitor field, as the types that always need one do. */
+    private static boolean hasMonitorField(HostedUniverse hUniverse, AnalysisType type) {
+        return type.isInstanceClass() && hUniverse.lookup(type) instanceof HostedInstanceClass hostedClass && hostedClass.needMonitorField();
     }
 
     /**

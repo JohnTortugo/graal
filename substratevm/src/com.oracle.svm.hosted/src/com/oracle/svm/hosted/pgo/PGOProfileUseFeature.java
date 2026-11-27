@@ -32,9 +32,11 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 import org.graalvm.collections.EconomicMap;
@@ -47,6 +49,7 @@ import com.oracle.svm.hosted.FeatureImpl;
 import com.oracle.svm.hosted.meta.HostedMethod;
 import com.oracle.svm.hosted.meta.HostedUniverse;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.MonitorEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.phases.PGOApplyProfilesPhase;
 import com.oracle.svm.hosted.pgo.profiles.PGODiagnostics.CallCountDiagnostics;
@@ -84,6 +87,8 @@ import jdk.graal.compiler.phases.util.Providers;
  * The feature parses the iprof file or files, resolves their branch, switch, receiver, call-count
  * and stack-sample entries against the hosted universe, and applies them to every compilation root
  * before the inliner runs and to every callee the priority inliner expands.
+ * <p>
+ * It also gives the monitor profiles to {@code --pgo-monitor-fields}.
  */
 @AutomaticallyRegisteredFeature
 final class PGOProfileUseFeature implements InternalFeature {
@@ -120,6 +125,13 @@ final class PGOProfileUseFeature implements InternalFeature {
         /** The {@code pgo end-to-end} gate task turns this on and checks the printed numbers. */
         @Option(help = "Print detailed statistics on how the profile was resolved and applied. By default one summary line is printed.")//
         static final HostedOptionKey<Boolean> PGOPrintStatistics = new HostedOptionKey<>(false);
+
+        /** Off to keep the monitor fields that the analysis asks for, as without a profile. */
+        @APIOption(name = "pgo-monitor-fields")//
+        @Option(help = "Use monitorProfiles to omit inline monitor fields from synchronized types not observed during training. " +
+                       "On by default with --pgo; without --pgo the default is ignored and setting it is an error. " +
+                       "Runtime synchronization remains correct through the secondary monitor map.")//
+        static final HostedOptionKey<Boolean> PGOUseMonitorProfiles = new HostedOptionKey<>(true);
         // @formatter:on
 
         /**
@@ -177,6 +189,11 @@ final class PGOProfileUseFeature implements InternalFeature {
         return path != null && !path.isEmpty();
     }
 
+    /** Whether the user passed {@code --pgo-monitor-fields}; its default does not count. */
+    private static boolean monitorFieldsRequested() {
+        return Options.PGOUseMonitorProfiles.hasBeenSet() && Options.PGOUseMonitorProfiles.getValue();
+    }
+
     /**
      * Whether to print the detailed statistics; the {@code pgo end-to-end} gate task reads them.
      *
@@ -188,13 +205,42 @@ final class PGOProfileUseFeature implements InternalFeature {
 
     @Override
     public boolean isInConfiguration(IsInConfigurationAccess access) {
-        return enabled();
+        return enabled() || monitorFieldsRequested();
     }
 
     /** Parses and merges the iprof files early, so that a bad file stops the build at once. */
     @Override
     public void afterRegistration(AfterRegistrationAccess access) {
+        if (monitorFieldsRequested() && !enabled()) {
+            throw UserError.abort("--pgo-monitor-fields requires --pgo");
+        }
+        /* The feature runs only with --pgo or --pgo-monitor-fields, so --pgo is set from here on. */
         parsedProfile = parseProfile(profilePath());
+        if (Options.PGOUseMonitorProfiles.getValue() && parsedProfile != null) {
+            ParsedIprofProfile profile = parsedProfile;
+            if (!profile.monitorProfilesRecorded()) {
+                /* Without monitor data no field is omitted; only an explicit request warns. */
+                if (monitorFieldsRequested()) {
+                    LogUtils.warning("--pgo-monitor-fields requested but the profile contains no monitorProfiles; retaining statically required monitor fields");
+                }
+            } else {
+                Set<String> observedTypes = new HashSet<>();
+                long events = 0;
+                for (MonitorEntry entry : profile.monitorEntries()) {
+                    long[] records = entry.records();
+                    for (int i = 0; i + 1 < records.length; i += 2) {
+                        if (records[i + 1] > 0) {
+                            String descriptor = IprofProfileResolver.descriptorForProfileType((int) records[i], profile.typeNamesById());
+                            if (descriptor != null) {
+                                observedTypes.add(descriptor);
+                                events += records[i + 1];
+                            }
+                        }
+                    }
+                }
+                ImageSingletons.add(MonitorProfiledTypes.class, new MonitorProfiledTypes(observedTypes, events));
+            }
+        }
     }
 
     /** The --pgo option as the user gave it, for messages. */
@@ -386,6 +432,11 @@ final class PGOProfileUseFeature implements InternalFeature {
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
         hostedUniverse = ((FeatureImpl.BeforeCompilationAccessImpl) access).getUniverse();
+        if (ImageSingletons.contains(MonitorProfiledTypes.class) && printStatistics()) {
+            MonitorProfiledTypes monitors = ImageSingletons.lookup(MonitorProfiledTypes.class);
+            info("monitor profiles: observed types=%d, events=%d; statically synchronized types=%d, retained fields=%d, omitted fields=%d",
+                            monitors.observedTypes(), monitors.recordedEvents(), monitors.synchronizedTypes(), monitors.retainedTypes(), monitors.omittedTypes());
+        }
         if (parsedProfile != null) {
             profilesLookup = IprofProfileResolver.resolve(parsedProfile, hostedUniverse, PGOApplyProfilesPhase.Options.PGOPrintProfileQualityDetails.getValue());
             profilesLookup.setConditionalContextFallback(Options.PGOConditionalContextFallback.getValue());

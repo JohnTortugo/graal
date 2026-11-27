@@ -104,6 +104,7 @@ public class VerifyJavaTypeGetNameUsage extends VerifyPhase<CoreProviders> {
                     "com.oracle.svm.hosted.meta.UniverseBuilder",
                     "com.oracle.svm.hosted.methodhandles.InjectedInvokerRenamingSubstitutionProcessor",
                     "com.oracle.svm.hosted.methodhandles.MethodHandleInvokerRenamingSubstitutionProcessor",
+                    "com.oracle.svm.hosted.pgo.MonitorProfiledTypes",
                     "com.oracle.svm.hosted.pgo.PGOInstrumentationFeature",
                     "com.oracle.svm.hosted.pgo.ProfilingUtilities",
                     "com.oracle.svm.hosted.pgo.ReceiverProfileInstrumentationPhase",

@@ -37,6 +37,7 @@ import com.oracle.svm.hosted.pgo.IprofParser.CallCountEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ConditionalEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ContextFrame;
 import com.oracle.svm.hosted.pgo.IprofParser.IprofFormatException;
+import com.oracle.svm.hosted.pgo.IprofParser.MonitorEntry;
 import com.oracle.svm.hosted.pgo.IprofParser.ProfileMethod;
 import com.oracle.svm.hosted.pgo.IprofParser.ParsedIprofProfile;
 import com.oracle.svm.hosted.pgo.IprofParser.SamplingEntry;
@@ -107,6 +108,10 @@ final class IprofProfileMerger {
     private final Map<List<ContextFrame>, Map<Integer, Long>> receiverCounts = new LinkedHashMap<>();
     /** The merged {@code samplingProfiles}: scaled sample count by merged stack. */
     private final Map<List<ContextFrame>, Long> sampleCounts = new LinkedHashMap<>();
+    /** Monitor enters by merged type id, summed over the inputs. */
+    private final Map<Integer, Long> monitorCounts = new LinkedHashMap<>();
+    /** Whether every input has a {@code monitorProfiles} section; only then does the merge have one. */
+    private boolean monitorProfilesRecorded = true;
     /** The iprof version of the first input, which every other input must have too. */
     private String version;
 
@@ -255,6 +260,17 @@ final class IprofProfileMerger {
         for (SamplingEntry entry : profile.samplingEntries()) {
             sampleCounts.merge(remap(entry.context(), inputToMergedMethodId), scale(entry.count(), weight), IprofProfileMerger::addCounts);
         }
+        /*
+         * Absence means that input did not record monitor behavior, not that it observed zero
+         * monitor operations. Only an all-instrumented input set is safe for field omission.
+         */
+        monitorProfilesRecorded &= profile.monitorProfilesRecorded();
+        for (MonitorEntry entry : profile.monitorEntries()) {
+            long[] records = entry.records();
+            for (int i = 0; i + 1 < records.length; i += 2) {
+                monitorCounts.merge(inputToMergedTypeId.get((int) records[i]), scaleObservedCount(records[i + 1], weight), IprofProfileMerger::addCounts);
+            }
+        }
     }
 
     /** The name {@code profile} declares for {@code typeId}; an undeclared id is a format error. */
@@ -313,6 +329,12 @@ final class IprofProfileMerger {
         return result;
     }
 
+    /** {@link #scale}, but a count above 0 stays at least 1, so that a seen type is not lost. */
+    private static long scaleObservedCount(long count, double weight) {
+        long scaled = scale(count, weight);
+        return count > 0 ? Math.max(1, scaled) : scaled;
+    }
+
     /**
      * {@code count} times {@code weight}, rounded. Weight 1 returns {@code count} as it is, because
      * a long above 2^53 does not convert to a double exactly. A product that does not fit in a long
@@ -364,6 +386,14 @@ final class IprofProfileMerger {
         });
         List<SamplingEntry> samplingEntries = new ArrayList<>();
         sampleCounts.forEach((context, count) -> samplingEntries.add(new SamplingEntry(context, count)));
-        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries);
+        long[] monitorRecords = new long[monitorCounts.size() * 2];
+        int monitorIndex = 0;
+        for (Map.Entry<Integer, Long> entry : monitorCounts.entrySet()) {
+            monitorRecords[monitorIndex++] = entry.getKey();
+            monitorRecords[monitorIndex++] = entry.getValue();
+        }
+        List<MonitorEntry> monitorEntries = monitorProfilesRecorded ? List.of(new MonitorEntry(monitorRecords)) : List.of();
+        return new ParsedIprofProfile(version, typeNamesById, methodsById, conditionalEntries, callCountEntries, virtualInvokeEntries, samplingEntries,
+                        monitorEntries, monitorProfilesRecorded);
     }
 }
