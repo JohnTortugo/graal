@@ -43,6 +43,7 @@ import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.pgo.IntrinsicInliningPolicy;
 import com.oracle.svm.core.pgo.IprofFormat;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.FeatureImpl;
@@ -68,6 +69,9 @@ import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.shared.option.APIOption;
 import com.oracle.svm.shared.option.HostedOptionKey;
 import com.oracle.svm.shared.option.SubstrateOptionsParser;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.BuildtimeAccessOnly;
+import com.oracle.svm.shared.singletons.traits.BuiltinTraits.NoLayeredCallbacks;
+import com.oracle.svm.shared.singletons.traits.SingletonTraits;
 import com.oracle.svm.shared.util.LogUtils;
 
 import jdk.graal.compiler.core.common.GraalOptions;
@@ -81,6 +85,7 @@ import jdk.graal.compiler.phases.common.AbstractInliningPhase;
 import jdk.graal.compiler.phases.tiers.HighTierContext;
 import jdk.graal.compiler.phases.tiers.Suites;
 import jdk.graal.compiler.phases.util.Providers;
+import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 /**
  * Optimizes the image with a profile recorded by a {@code --pgo-instrument} image ({@code --pgo}).
@@ -89,8 +94,8 @@ import jdk.graal.compiler.phases.util.Providers;
  * and stack-sample entries against the hosted universe, and applies them to every compilation root
  * before the inliner runs and to every callee the priority inliner expands.
  * <p>
- * It also gives the monitor profiles to {@code --pgo-monitor-fields} and the samples and call
- * counts to the code layout.
+ * It also gives the monitor profiles to {@code --pgo-monitor-fields}, the sampled hot roots to the
+ * inline intrinsics, and the samples and call counts to the code layout.
  */
 @AutomaticallyRegisteredFeature
 public final class PGOProfileUseFeature implements InternalFeature {
@@ -116,12 +121,17 @@ public final class PGOProfileUseFeature implements InternalFeature {
                        "until a context recorded for the same call matches.")//
         static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
 
+        /** Off to measure what inline intrinsics in hot roots save, against their code size. */
+        @Option(help = "Emit array and string intrinsics inline instead of calling the shared stubs in compilation roots whose inclusive sample share reaches " +
+                       "PGOHotRootMinInclusiveShare. Saves the call and stub prologue, which dominates on short strings, at a code-size cost confined to hot roots.")//
+        static final HostedOptionKey<Boolean> PGOInlineIntrinsicsInHotRoots = new HostedOptionKey<>(true);
+
         /** Off to measure what {@code callCountProfiles} add to the inliner and the code order. */
         @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root, and to order code in the image.")//
         static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
 
         /** Off to measure stack samples, as the {@code pgo-samples-disabled} gate run does. */
-        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles, self time " +
+        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles, self time, intrinsics in hot roots " +
                        "and sampled code layout.")//
         static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
 
@@ -159,6 +169,28 @@ public final class PGOProfileUseFeature implements InternalFeature {
                     PGOUtils.raiseDefaultToO3(values);
                 }
             }
+        }
+    }
+
+    /** Emits intrinsics inline in compilation roots the sampling profile shows to be hot. */
+    @SingletonTraits(access = BuildtimeAccessOnly.class, layeredCallbacks = NoLayeredCallbacks.class)
+    private static final class HotRootIntrinsicInliningPolicy implements IntrinsicInliningPolicy {
+        /** The sampled stacks, for the inclusive share of each root. */
+        private final SamplingHotness hotness;
+        /** The smallest inclusive share of a hot root, {@code PGOHotRootMinInclusiveShare}. */
+        private final double minInclusiveShare;
+
+        private HotRootIntrinsicInliningPolicy(SamplingHotness hotness, double minInclusiveShare) {
+            this.hotness = hotness;
+            this.minInclusiveShare = minInclusiveShare;
+        }
+
+        @Override
+        public boolean emitIntrinsicsInline(ResolvedJavaMethod compilationRoot) {
+            if (!(compilationRoot instanceof HostedMethod hosted)) {
+                return false;
+            }
+            return hotness.inclusiveTimeShare(hosted) >= minInclusiveShare;
         }
     }
 
@@ -475,6 +507,9 @@ public final class PGOProfileUseFeature implements InternalFeature {
                 if (printStatistics()) {
                     info("sampling hotness: %d samples over %d sampled methods (%d idle samples excluded)",
                                     samplingHotness.nonIdleSamples(), samplingHotness.sampledMethodCount(), samplingHotness.idleSamples());
+                }
+                if (Options.PGOInlineIntrinsicsInHotRoots.getValue() && !ImageSingletons.contains(IntrinsicInliningPolicy.class)) {
+                    ImageSingletons.add(IntrinsicInliningPolicy.class, new HotRootIntrinsicInliningPolicy(samplingHotness, ProfiledInliningProvider.Options.PGOHotRootMinInclusiveShare.getValue()));
                 }
             } else if (profilesLookup.profileCategoryRecorded(IprofFormat.CALL_COUNT_PROFILES)) {
                 /* Install the same context-aware provider for call-count-only profiles. */
