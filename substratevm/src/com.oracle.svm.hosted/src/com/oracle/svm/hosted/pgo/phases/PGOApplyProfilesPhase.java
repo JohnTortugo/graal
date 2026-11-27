@@ -105,7 +105,7 @@ public final class PGOApplyProfilesPhase extends SingleRunSubphase<HighTierConte
          * Lets an image be built without branch profiles, to see what they add. The PGO
          * end-to-end test turns it off in its {@code pgo-branches-disabled} build.
          */
-        @Option(help = "Apply conditionalProfiles to IfNode branches.")//
+        @Option(help = "Apply conditionalProfiles to IfNode branches. Loop range-check versioning depends on the profiled loop frequencies they give.")//
         public static final HostedOptionKey<Boolean> PGOUseBranchProfiles = new HostedOptionKey<>(true);
         // @formatter:on
     }
