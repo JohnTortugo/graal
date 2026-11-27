@@ -30,9 +30,19 @@ import org.graalvm.nativeimage.ImageSingletons;
 import com.oracle.svm.core.SubstrateOptions;
 import com.oracle.svm.shared.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.shared.option.HostedOptionKey;
+
+import jdk.graal.compiler.options.Option;
 
 @AutomaticallyRegisteredFeature
 public class CodeLayoutOptimizationFeature implements InternalFeature {
+
+    /** Options of the code layout. */
+    static final class Options {
+        /** Off to order methods by name, as without a profile. */
+        @Option(help = "Order compiled methods by descending PGO hotness: sampled self time when the profile has samples, then call count.")//
+        static final HostedOptionKey<Boolean> PGOUseCodeLayout = new HostedOptionKey<>(true);
+    }
 
     @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
@@ -42,6 +52,8 @@ public class CodeLayoutOptimizationFeature implements InternalFeature {
     protected CodeSectionLayouter createCodeSectionLayoutOptimizer() {
         if (SubstrateOptions.useLLVMBackend()) {
             return new DefaultCodeSectionLayouter();
+        } else if (Options.PGOUseCodeLayout.getValue()) {
+            return new ProfileGuidedCodeSectionLayouter();
         } else {
             return new SortByMethodNameCodeSectionLayouter();
         }

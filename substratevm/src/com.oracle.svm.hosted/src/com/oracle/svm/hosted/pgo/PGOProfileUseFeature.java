@@ -88,10 +88,11 @@ import jdk.graal.compiler.phases.util.Providers;
  * and stack-sample entries against the hosted universe, and applies them to every compilation root
  * before the inliner runs and to every callee the priority inliner expands.
  * <p>
- * It also gives the monitor profiles to {@code --pgo-monitor-fields}.
+ * It also gives the monitor profiles to {@code --pgo-monitor-fields} and the samples and call
+ * counts to the code layout.
  */
 @AutomaticallyRegisteredFeature
-final class PGOProfileUseFeature implements InternalFeature {
+public final class PGOProfileUseFeature implements InternalFeature {
 
     /** Options of profile use; all but {@code --pgo} turn parts of it off or add output. */
     static final class Options {
@@ -114,12 +115,13 @@ final class PGOProfileUseFeature implements InternalFeature {
                        "until a context recorded for the same call matches.")//
         static final HostedOptionKey<Boolean> PGOReceiverContextFallback = new HostedOptionKey<>(true);
 
-        /** Off to measure what {@code callCountProfiles} add to the inliner's hotness. */
-        @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root.")//
+        /** Off to measure what {@code callCountProfiles} add to the inliner and the code order. */
+        @Option(help = "Use the profile's call counts to rate how hot a call edge is relative to its compilation root, and to order code in the image.")//
         static final HostedOptionKey<Boolean> PGOUseCallCounts = new HostedOptionKey<>(true);
 
         /** Off to measure stack samples, as the {@code pgo-samples-disabled} gate run does. */
-        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles and self time.")//
+        @Option(help = "Use the profile's stack samples: sampled hotness of roots and contexts, sampled callee profiles, self time " +
+                       "and sampled code layout.")//
         static final HostedOptionKey<Boolean> PGOUseStackSamples = new HostedOptionKey<>(true);
 
         /** The {@code pgo end-to-end} gate task turns this on and checks the printed numbers. */
@@ -174,6 +176,28 @@ final class PGOProfileUseFeature implements InternalFeature {
     private SamplingHotness samplingHotness;
     /** The image's universe, set in {@link #beforeCompilation}. */
     private HostedUniverse hostedUniverse;
+    /** The resolved profile for the code layout, set in {@link #beforeCompilation}. */
+    private static IprofProfilesLookup codeLayoutLookup;
+    /** The sampled hotness for the code layout, set in {@link #beforeCompilation}. */
+    private static SamplingHotness codeLayoutHotness;
+
+    /**
+     * The resolved profile for the code layout.
+     *
+     * @return the profile, or {@code null} without {@code --pgo}
+     */
+    public static PGOProfilesLookup codeLayoutProfiles() {
+        return codeLayoutLookup;
+    }
+
+    /**
+     * Sampled self time for the code layout.
+     *
+     * @return the hotness, or {@code null} if the profile has no non-idle samples
+     */
+    public static SamplingHotness codeLayoutHotness() {
+        return codeLayoutHotness;
+    }
 
     private static String profilePath() {
         return Options.PGOProfileUse.getValue();
@@ -456,6 +480,8 @@ final class PGOProfileUseFeature implements InternalFeature {
                 samplingHotness = new SamplingHotness(Map.of());
             }
         }
+        codeLayoutLookup = profilesLookup;
+        codeLayoutHotness = samplingHotness != null && samplingHotness.nonIdleSamples() > 0 ? samplingHotness : null;
         parsedProfile = null;
     }
 

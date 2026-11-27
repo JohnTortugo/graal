@@ -216,7 +216,7 @@ public final class SamplingHotness {
      * @param method the method
      * @return {@code true} if the method has a tree
      */
-    private boolean isSampled(HostedMethod method) {
+    public boolean isSampled(HostedMethod method) {
         return methodRootedTree.hasMethod(method);
     }
 
@@ -226,7 +226,7 @@ public final class SamplingHotness {
      * @param method the method
      * @return the fraction in [0, 1] of all non-idle samples whose innermost frame lies in it
      */
-    private double selfTimeShare(HostedMethod method) {
+    public double selfTimeShare(HostedMethod method) {
         if (nonIdleSamples == 0) {
             return 0.0;
         }
